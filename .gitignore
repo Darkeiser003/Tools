@@ -1,0 +1,5 @@
+# Artefactos generados localmente; el build distribuible solo conserva el binario.
+dist/
+rust/target/
+reports/*/
+*.bak-*

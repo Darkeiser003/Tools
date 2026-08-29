@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# AppRun: integración ligera con las herramientas del sistema anfitrión.
+
+set -uo pipefail
+APPDIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+source "$APPDIR/scripts/host-tools.sh"
+
+launch_menu_in_terminal() {
+    local terminal
+    for terminal in x-terminal-emulator konsole gnome-terminal kgx xfce4-terminal kitty alacritty foot wezterm mate-terminal tilix xterm; do
+        command -v "$terminal" >/dev/null 2>&1 || continue
+        export LTOOLS_TERMINAL_LAUNCH=1
+        case "$terminal" in
+            gnome-terminal|kgx)
+                "$terminal" --wait -- "$APPDIR/AppRun" menu &
+                ;;
+            konsole)
+                "$terminal" -e "$APPDIR/AppRun" menu &
+                ;;
+            xfce4-terminal)
+                "$terminal" --disable-server --command="$APPDIR/AppRun menu" &
+                ;;
+            alacritty)
+                "$terminal" -e "$APPDIR/AppRun" menu &
+                ;;
+            wezterm)
+                "$terminal" start -- "$APPDIR/AppRun" menu &
+                ;;
+            *)
+                "$terminal" "$APPDIR/AppRun" menu &
+                ;;
+        esac
+        printf 'Menú abierto en %s.\n' "$terminal"
+        return 0
+    done
+    printf 'No se encontró una terminal gráfica para mostrar el menú.\n' >&2
+    printf 'Abre una terminal y ejecuta este AppImage con el argumento «menu».\n' >&2
+    return 1
+}
+
+if [[ "${1:-}" == --doctor ]]; then
+    shift
+    host_doctor "$@"
+    exit $?
+fi
+
+if [[ "${1:-}" == --fuse-check ]]; then
+    host_fuse_report
+    exit $?
+fi
+
+# Al abrir un AppImage desde el gestor de archivos normalmente no existe un
+# TTY. El menú es interactivo, así que necesita una terminal visible. Se evita
+# la recursión con una variable de entorno y se permite desactivar este
+# comportamiento para pruebas o integraciones que ya proporcionen una terminal.
+if [[ "$#" -eq 0 && ! -t 0 && ! -t 1 && "${LTOOLS_TERMINAL_LAUNCH:-0}" != 1 &&
+    "${LTOOLS_NO_AUTO_TERMINAL:-0}" != 1 ]]; then
+    launch_menu_in_terminal
+    exit $?
+fi
+
+host_preflight "$@"
+
+# Rust es el backend normal del AppImage. --bash permite usar la fachada
+# Bash como recuperación compatible sin duplicar el contenido del AppImage.
+use_bash=0
+filtered=()
+for arg in "$@"; do
+    if [[ "$arg" == --bash ]]; then
+        use_bash=1
+    else
+        filtered+=("$arg")
+    fi
+done
+if [[ "$use_bash" -eq 1 ]]; then
+    exec "$APPDIR/ltools.sh" "${filtered[@]}"
+else
+    exec "$APPDIR/ltools.sh" --rust "${filtered[@]}"
+fi

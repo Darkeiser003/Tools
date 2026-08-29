@@ -1,0 +1,11 @@
+[package]
+name = "ltools"
+version = "0.3.0"
+edition = "2021"
+description = "Núcleo nativo y seguro para LTools"
+license = "MIT"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

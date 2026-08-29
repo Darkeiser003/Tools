@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=LTools
+Comment=Auditoría y mantenimiento seguro del sistema
+Exec=ltools menu %U
+Icon=ltools
+Terminal=true
+Categories=System;
