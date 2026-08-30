@@ -1,11 +1,10 @@
 use crate::common::{
     canonical, clean, command_exists, command_output, command_output_owned, device, directory_size,
-    human_bytes, Context,
+    human_bytes, same_device, Context,
 };
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{self, Write};
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -60,7 +59,7 @@ fn find_prefix_markers(path: &Path, dev: u64, found: &mut HashSet<PathBuf>) {
             Ok(v) => v,
             Err(_) => continue,
         };
-        if metadata.file_type().is_symlink() || metadata.dev() != dev {
+        if metadata.file_type().is_symlink() || !same_device(&child, dev) {
             continue;
         }
         if metadata.is_file() && child.file_name().is_some_and(|n| n == "system.reg") {
@@ -79,7 +78,7 @@ fn find_prefix_markers(path: &Path, dev: u64, found: &mut HashSet<PathBuf>) {
 }
 
 pub fn prefix_kind(path: &Path) -> String {
-    let text = path.to_string_lossy();
+    let text = path.to_string_lossy().replace('\\', "/");
     if text.contains("/.Trash-") || text.contains("/Trash/") {
         "trash-prefix".into()
     } else if text.ends_with("/.wine") {
@@ -124,7 +123,7 @@ pub fn default_roots(
     } else {
         roots.extend_from_slice(explicit);
     }
-    if full && explicit.is_empty() {
+    if full && explicit.is_empty() && !cfg!(windows) {
         roots.extend([
             PathBuf::from("/opt"),
             PathBuf::from("/usr/local/share"),
@@ -138,7 +137,7 @@ pub fn default_roots(
             std::env::var("LTOOLS_NO_MOUNTS").ok().as_deref(),
             Some("1") | Some("true") | Some("yes") | Some("si") | Some("sí")
         );
-    if auto_mounts && command_exists("findmnt") {
+    if auto_mounts && full && explicit.is_empty() && !cfg!(windows) && command_exists("findmnt") {
         if let Some(mounts) = command_output("findmnt", &["-rn", "-o", "TARGET"]) {
             for mount in mounts.lines().filter(|p| {
                 p.starts_with("/mnt/") || p.starts_with("/media/") || p.starts_with("/run/media/")
@@ -147,6 +146,21 @@ pub fn default_roots(
                 if !roots.contains(&path) {
                     roots.push(path);
                 }
+            }
+        }
+    }
+    #[cfg(windows)]
+    if explicit.is_empty() && include_home {
+        for folder in ["Documents", "Downloads", "Desktop", "Games", "AppData"] {
+            let path = home.join(folder);
+            if path.exists() && !roots.contains(&path) {
+                roots.push(path);
+            }
+        }
+        for drive in b'A'..=b'Z' {
+            let path = PathBuf::from(format!("{}:\\", drive as char));
+            if path.exists() && !roots.contains(&path) {
+                roots.push(path);
             }
         }
     }
@@ -164,7 +178,7 @@ fn collect_large(path: &Path, dev: u64, min: u64, output: &mut Vec<(u64, PathBuf
             Ok(v) => v,
             Err(_) => continue,
         };
-        if meta.file_type().is_symlink() || meta.dev() != dev {
+        if meta.file_type().is_symlink() || !same_device(&child, dev) {
             continue;
         }
         if meta.is_file() && meta.len() >= min {
@@ -218,7 +232,7 @@ fn collect_files(
             Ok(v) => v,
             Err(_) => continue,
         };
-        if meta.file_type().is_symlink() || meta.dev() != dev {
+        if meta.file_type().is_symlink() || !same_device(&child, dev) {
             continue;
         }
         if meta.is_file() && predicate(&child) {
@@ -506,15 +520,31 @@ pub fn run(ctx: &Context, args: &[String], games: bool) -> Result<(), String> {
         ))
     });
     fs::create_dir_all(&out).map_err(|e| format!("no se pudo crear el informe: {e}"))?;
+    let phase_total = if duplicates { 7 } else { 6 };
+    println!(
+        "Auditoría {}: {} ruta(s); las rutas grandes pueden tardar.",
+        if full { "completa" } else { "rápida" },
+        roots.len()
+    );
+    for root in &roots {
+        println!("  Ruta: {}", root.display());
+    }
+    println!("Fase 1/{phase_total}: detectando prefijos...");
     let prefixes = discover_prefixes(&roots);
     write_prefix_report(&out, &prefixes).map_err(|e| e.to_string())?;
+    println!("Fase 2/{phase_total}: archivos grandes...");
     write_large_files(&out, &roots, min_size).map_err(|e| e.to_string())?;
+    println!("Fase 3/{phase_total}: AppImages...");
     write_appimages(&out, &roots).map_err(|e| e.to_string())?;
+    println!("Fase 4/{phase_total}: instaladores y archivos...");
     write_installers(&out, &roots).map_err(|e| e.to_string())?;
+    println!("Fase 5/{phase_total}: máquinas virtuales...");
     write_virtual_machines(&out, &roots).map_err(|e| e.to_string())?;
+    println!("Fase 6/{phase_total}: aplicaciones y uso de directorios...");
     write_desktops(&out, &ctx.home).map_err(|e| e.to_string())?;
     write_directory_usage(&out, &roots).map_err(|e| e.to_string())?;
     if duplicates {
+        println!("Fase 7/{phase_total}: duplicados por SHA-256...");
         write_duplicates(&out, &roots, min_size).map_err(|e| e.to_string())?;
     }
     let mut summary = File::create(out.join("summary.txt")).map_err(|e| e.to_string())?;

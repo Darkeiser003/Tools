@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ltools.dev/schema/ltools-terminal-integration-v1.json",
+  "title": "LTools optional terminal integration",
+  "type": "object",
+  "required": [
+    "schema", "application", "version", "platform", "integration", "host",
+    "entrypoint", "working_directory_argument", "command_argument",
+    "open_arguments", "capability_request", "required_terminal_capability", "fallback"
+  ],
+  "properties": {
+    "schema": { "const": "ltools-terminal-integration-v1" },
+    "application": { "const": "LTools" },
+    "version": { "type": "string" },
+    "platform": { "enum": ["linux", "windows"] },
+    "integration": {
+      "type": "object",
+      "required": ["optional", "standalone_releases_require_it", "exclusive_host_family"],
+      "properties": {
+        "optional": { "const": true },
+        "standalone_releases_require_it": { "const": false },
+        "exclusive_host_family": { "const": "lterminal" }
+      },
+      "additionalProperties": false
+    },
+    "host": {
+      "type": "object",
+      "required": ["id", "family", "product", "known_products"],
+      "properties": {
+        "id": { "enum": ["lterminal", "winslim-terminal"] },
+        "family": { "const": "lterminal" },
+        "product": { "enum": ["LTerminal", "WinSlim Terminal"] },
+        "known_products": {
+          "type": "array",
+          "contains": { "const": "LTerminal" },
+          "minContains": 1,
+          "items": { "enum": ["LTerminal", "WinSlim Terminal"] }
+        }
+      },
+      "additionalProperties": false
+    },
+    "entrypoint": {
+      "type": "object",
+      "required": ["command", "args", "interactive"],
+      "properties": {
+        "command": { "enum": ["ltools", "ltools.exe"] },
+        "args": { "const": ["menu"] },
+        "interactive": { "const": true }
+      },
+      "additionalProperties": false
+    },
+    "working_directory_argument": { "const": "--open-path" },
+    "command_argument": { "const": "--command" },
+    "open_arguments": { "const": ["--open-path", "PATH", "--command", "COMMAND", "--", "menu"] },
+    "capability_request": { "const": ["--ltools-capabilities", "--format", "json"] },
+    "required_terminal_capability": { "const": "lterminal-startup-v1" },
+    "fallback": { "const": "explicit-only" }
+  },
+  "additionalProperties": false
+}

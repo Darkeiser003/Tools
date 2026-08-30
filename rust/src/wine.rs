@@ -1,9 +1,13 @@
 use crate::audit::{default_roots, discover_prefixes, prefix_kind};
+#[cfg(not(windows))]
+use crate::common::run_command;
 use crate::common::{
     ask, backup, canonical, critical_path, device, directory_size, file_contains, human_bytes,
-    move_to_trash, run_command, Context,
+    move_to_trash, Context,
 };
 use std::fs::{self, File};
+#[cfg(windows)]
+use std::io::Read;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -21,14 +25,26 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
 fn list(ctx: &Context, args: &[String]) -> Result<(), String> {
     let roots = parse_roots(ctx, args);
     let prefixes = discover_prefixes(&roots);
-    println!("Prefijos detectados: {}", prefixes.len());
-    for (n, p) in prefixes.iter().enumerate() {
+    let include_mount_roots = args.iter().any(|arg| arg == "--include-mount-roots");
+    let visible: Vec<_> = prefixes
+        .iter()
+        .filter(|prefix| include_mount_roots || !prefix.mount_root)
+        .collect();
+    println!("Prefijos detectados: {}", visible.len());
+    for (n, p) in visible.iter().enumerate() {
         println!(
             "{:3}) {:18} {:>8}  {}",
             n + 1,
             p.kind,
             human_bytes(p.bytes),
             p.path.display()
+        );
+    }
+    let hidden_mounts = prefixes.len().saturating_sub(visible.len());
+    if hidden_mounts > 0 {
+        println!(
+            "{} candidato(s) de raíz de montaje omitido(s); usa --include-mount-roots para inspeccionarlos.",
+            hidden_mounts
         );
     }
     Ok(())
@@ -76,6 +92,7 @@ fn create(ctx: &Context, args: &[String]) -> Result<(), String> {
         .map(PathBuf::from)
         .or_else(|| crate::common::prompt_path("Ruta del nuevo prefijo: "))
         .ok_or("falta --dest")?;
+    let dest = absolute_path(&dest)?;
     validate_destination(&dest)?;
     let arch = value(args, "--arch").unwrap_or_else(|| "win64".into());
     println!("Se creará un prefijo {arch} en {}", dest.display());
@@ -123,6 +140,7 @@ fn migrate(ctx: &Context, args: &[String]) -> Result<(), String> {
         .map(PathBuf::from)
         .or_else(|| crate::common::prompt_path("Ruta del nuevo prefijo: "))
         .ok_or("falta --dest")?;
+    let dest = absolute_path(&dest)?;
     let source = canonical(&source).ok_or("el origen no existe")?;
     if !looks_like_prefix(&source) {
         return Err("el origen no parece un prefijo Wine".into());
@@ -251,36 +269,62 @@ fn migrate(ctx: &Context, args: &[String]) -> Result<(), String> {
         println!("Simulación: no se copiaría ni modificaría el origen.");
         return Ok(());
     }
-    if !crate::common::command_exists("rsync") {
-        return Err("rsync es necesario para verificar la copia".into());
-    }
-    fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
-    for item in &items {
-        let args = vec![
-            "-aH".into(),
-            "--info=progress2".into(),
-            "--partial".into(),
-            source.join(item).display().to_string(),
-            format!("{}/", dest.display()),
-        ];
-        if !run_command("rsync", &args, false).map_err(|e| e.to_string())? {
-            return Err(format!("falló la copia de {item}"));
+    #[cfg(not(windows))]
+    {
+        if !crate::common::command_exists("rsync") {
+            return Err("rsync es necesario para verificar la copia".into());
+        }
+        fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+        for item in &items {
+            let args = vec![
+                "-aH".into(),
+                "--info=progress2".into(),
+                "--partial".into(),
+                source.join(item).display().to_string(),
+                format!("{}/", dest.display()),
+            ];
+            if !run_command("rsync", &args, false).map_err(|e| e.to_string())? {
+                return Err(format!("falló la copia de {item}"));
+            }
+        }
+        for item in &items {
+            let args = vec![
+                "-aHn".into(),
+                "--delete".into(),
+                "--itemize-changes".into(),
+                source.join(item).display().to_string(),
+                format!("{}/", dest.display()),
+            ];
+            let output = Command::new("rsync")
+                .args(&args)
+                .output()
+                .map_err(|e| e.to_string())?;
+            if !output.status.success()
+                || !String::from_utf8_lossy(&output.stdout).trim().is_empty()
+            {
+                return Err(format!("verificación con diferencias en {item}"));
+            }
         }
     }
-    for item in &items {
-        let args = vec![
-            "-aHn".into(),
-            "--delete".into(),
-            "--itemize-changes".into(),
-            source.join(item).display().to_string(),
-            format!("{}/", dest.display()),
-        ];
-        let output = Command::new("rsync")
-            .args(&args)
-            .output()
-            .map_err(|e| e.to_string())?;
-        if !output.status.success() || !String::from_utf8_lossy(&output.stdout).trim().is_empty() {
-            return Err(format!("verificación con diferencias en {item}"));
+    #[cfg(windows)]
+    {
+        fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+        // Keep both sides in the same Windows path representation. Under
+        // Wine, mixing a canonical \\?\\Z: source with a /tmp destination
+        // makes metadata calls recurse inside the MinGW runtime.
+        let copy_dest = fs::canonicalize(&dest).unwrap_or_else(|_| dest.clone());
+        for item in &items {
+            println!("Copiando: {item}");
+            copy_tree(&source.join(item), &copy_dest.join(item)).map_err(|e| e.to_string())?;
+        }
+        println!("Verificando que el destino coincide con el origen...");
+        for item in &items {
+            let source_item = source.join(item);
+            let dest_item = copy_dest.join(item);
+            let equal = tree_equal(&source_item, &dest_item).map_err(|e| e.to_string())?;
+            if !equal {
+                return Err(format!("verificación con diferencias en {item}"));
+            }
         }
     }
     if !looks_like_prefix(&dest) {
@@ -343,6 +387,96 @@ fn migrate(ctx: &Context, args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(windows)]
+fn copy_tree(source: &Path, destination: &Path) -> std::io::Result<()> {
+    let metadata = fs::symlink_metadata(source)?;
+    if metadata.file_type().is_symlink() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "no se copian enlaces simbólicos de prefijos Windows",
+        ));
+    }
+    if metadata.is_dir() {
+        fs::create_dir_all(destination)?;
+        for entry in fs::read_dir(source)? {
+            let entry = entry?;
+            copy_tree(&entry.path(), &destination.join(entry.file_name()))?;
+        }
+    } else if metadata.is_file() {
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        // Use an explicit stream instead of fs::copy: the MinGW stdlib path
+        // can recurse inside Wine when CopyFileW is given a Z: mapped path.
+        // The streaming path is portable and gives identical content.
+        let mut input = File::open(source)?;
+        let mut output = File::create(destination)?;
+        std::io::copy(&mut input, &mut output)?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn tree_equal(left: &Path, right: &Path) -> std::io::Result<bool> {
+    // Keep verification iterative: some Wine/MinGW combinations overflow the
+    // stack even for an empty directory when a recursive filesystem walk is
+    // used. The explicit work list is also safer for very large prefixes.
+    let mut pending = vec![(left.to_path_buf(), right.to_path_buf())];
+    while let Some((left_path, right_path)) = pending.pop() {
+        let left_meta = fs::symlink_metadata(&left_path)?;
+        let right_meta = match fs::symlink_metadata(&right_path) {
+            Ok(value) => value,
+            Err(_) => return Ok(false),
+        };
+        if left_meta.file_type().is_symlink() || right_meta.file_type().is_symlink() {
+            return Ok(false);
+        }
+        if left_meta.is_file() || right_meta.is_file() {
+            if !left_meta.is_file() || !right_meta.is_file() || left_meta.len() != right_meta.len()
+            {
+                return Ok(false);
+            }
+            let mut a = File::open(&left_path)?;
+            let mut b = File::open(&right_path)?;
+            // Allocate buffers on the heap: Wine's Windows thread stacks can
+            // be smaller than the combined 2 MiB needed for stack arrays.
+            let mut left_buf = vec![0_u8; 1024 * 1024];
+            let mut right_buf = vec![0_u8; 1024 * 1024];
+            loop {
+                let left_read = a.read(&mut left_buf)?;
+                let right_read = b.read(&mut right_buf)?;
+                if left_read != right_read || left_buf[..left_read] != right_buf[..right_read] {
+                    return Ok(false);
+                }
+                if left_read == 0 {
+                    break;
+                }
+            }
+            continue;
+        }
+        if !left_meta.is_dir() || !right_meta.is_dir() {
+            return Ok(false);
+        }
+        let mut left_entries = Vec::new();
+        for entry in fs::read_dir(&left_path)? {
+            left_entries.push(entry?.file_name());
+        }
+        let mut right_entries = Vec::new();
+        for entry in fs::read_dir(&right_path)? {
+            right_entries.push(entry?.file_name());
+        }
+        left_entries.sort();
+        right_entries.sort();
+        if left_entries != right_entries {
+            return Ok(false);
+        }
+        for name in left_entries {
+            pending.push((left_path.join(&name), right_path.join(&name)));
+        }
+    }
+    Ok(true)
+}
+
 fn parse_roots(ctx: &Context, args: &[String]) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     for pair in args.windows(2) {
@@ -366,6 +500,14 @@ fn value_any(args: &[String], keys: &[&str]) -> Option<String> {
     args.windows(2)
         .find(|w| keys.iter().any(|key| w[0] == *key))
         .map(|w| w[1].clone())
+}
+fn absolute_path(path: &Path) -> Result<PathBuf, String> {
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    std::env::current_dir()
+        .map(|cwd| cwd.join(path))
+        .map_err(|e| format!("no se pudo resolver la ruta {}: {e}", path.display()))
 }
 fn looks_like_prefix(path: &Path) -> bool {
     path.is_dir() && (path.join("system.reg").is_file() || path.join("drive_c").is_dir())
@@ -407,7 +549,12 @@ fn selected_items(source: &Path, args: &[String]) -> Result<Vec<String>, String>
         include
     };
     items.retain(|item| {
-        !item.contains('/') && source.join(item).exists() && !exclude.contains(item)
+        !item.contains('/')
+            && !item.contains('\\')
+            && item != "."
+            && item != ".."
+            && source.join(item).exists()
+            && !exclude.contains(item)
     });
     items.sort();
     items.dedup();
@@ -469,28 +616,113 @@ fn has_locks(path: &Path) -> bool {
 
 fn check_space(dest: &Path, required: u64) -> Result<(), String> {
     let parent = dest.parent().unwrap_or(Path::new("/"));
+    #[cfg(windows)]
+    let available_bytes = {
+        let escaped = parent
+            .to_string_lossy()
+            .replace('\\', "\\\\")
+            .replace('\'', "''");
+        let script = format!(
+            "$p='{}'; [IO.DriveInfo]::new([IO.Path]::GetPathRoot($p)).AvailableFreeSpace",
+            escaped
+        );
+        Command::new("powershell")
+            .args(["-NoProfile", "-Command", &script])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .trim()
+                    .parse::<u64>()
+                    .ok()
+            })
+    };
+    #[cfg(not(windows))]
     let output = Command::new("df")
         .args(["-Pk"])
         .arg(parent)
         .output()
         .map_err(|e| e.to_string())?;
+    #[cfg(not(windows))]
     let binding = String::from_utf8_lossy(&output.stdout);
+    #[cfg(not(windows))]
     let line = binding.lines().last().unwrap_or("");
+    #[cfg(not(windows))]
     let available_kb = line
         .split_whitespace()
         .nth(3)
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(0);
-    println!(
-        "Espacio disponible: {}",
-        human_bytes(available_kb.saturating_mul(1024))
-    );
-    if available_kb.saturating_mul(1024) <= required {
-        return Err("no hay espacio suficiente en el destino".into());
+    #[cfg(not(windows))]
+    let available_bytes = Some(available_kb.saturating_mul(1024));
+    if let Some(available_bytes) = available_bytes {
+        println!("Espacio disponible: {}", human_bytes(available_bytes));
+        if available_bytes <= required {
+            return Err("no hay espacio suficiente en el destino".into());
+        }
+    } else {
+        println!("Espacio disponible: no se pudo consultar; se comprobará durante la copia.");
     }
     Ok(())
 }
 
+#[cfg(windows)]
+fn write_defaults(ctx: &Context, dest: &Path, steam_proton: bool) -> Result<(), String> {
+    let dir = ctx.home.join("AppData/Local/LTools");
+    let file = dir.join("default-prefix.ps1");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let old = if file.exists() {
+        Some(backup(&file).map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
+    let mut output = File::create(&file).map_err(|e| e.to_string())?;
+    writeln!(
+        output,
+        "$env:WINEPREFIX = '{}'",
+        dest.display().to_string().replace('\'', "''")
+    )
+    .map_err(|e| e.to_string())?;
+    if steam_proton {
+        writeln!(
+            output,
+            "$env:STEAM_COMPAT_DATA_PATH = '{}'",
+            dest.display().to_string().replace('\'', "''")
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    if let Some(plan) = &ctx.plan {
+        if let Some(old) = old {
+            plan.record(
+                "restore-file",
+                &file,
+                "executed",
+                true,
+                &old.display().to_string(),
+                "windows-defaults",
+            )
+            .map_err(|e| e.to_string())?;
+        } else {
+            plan.record(
+                "remove-created",
+                &file,
+                "executed",
+                true,
+                "",
+                "windows-defaults",
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    println!(
+        "Default Windows de Wine/Proton actualizado: {}",
+        file.display()
+    );
+    Ok(())
+}
+
+#[cfg(not(windows))]
 fn write_defaults(ctx: &Context, dest: &Path, steam_proton: bool) -> Result<(), String> {
     let dir = ctx.home.join(".config/wine-prefix-manager");
     let file = dir.join("default-prefix.sh");
@@ -542,6 +774,63 @@ fn write_defaults(ctx: &Context, dest: &Path, steam_proton: bool) -> Result<(), 
     Ok(())
 }
 
+#[cfg(windows)]
+fn activate_shell(ctx: &Context, dest: &Path) -> Result<(), String> {
+    if !ask("¿Activar este prefijo en el perfil de PowerShell?") {
+        return Ok(());
+    }
+    let profile = ctx
+        .home
+        .join("Documents/PowerShell/Microsoft.PowerShell_profile.ps1");
+    if let Some(parent) = profile.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let old = if profile.exists() {
+        Some(backup(&profile).map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
+    let mut content = if profile.is_file() {
+        fs::read_to_string(&profile).map_err(|e| e.to_string())?
+    } else {
+        String::new()
+    };
+    let block = format!(
+        "\n# LTools: prefijo Wine gestionado\n$env:WINEPREFIX = '{}'\n",
+        dest.display().to_string().replace('\'', "''")
+    );
+    if !content.contains("# LTools: prefijo Wine gestionado") {
+        content.push_str(&block);
+        fs::write(&profile, content).map_err(|e| e.to_string())?;
+    }
+    if let Some(plan) = &ctx.plan {
+        if let Some(old) = old {
+            plan.record(
+                "restore-file",
+                &profile,
+                "executed",
+                true,
+                &old.display().to_string(),
+                "powershell-profile",
+            )
+            .map_err(|e| e.to_string())?;
+        } else {
+            plan.record(
+                "remove-created",
+                &profile,
+                "executed",
+                true,
+                "",
+                "powershell-profile",
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    println!("Default activado en: {}", profile.display());
+    Ok(())
+}
+
+#[cfg(not(windows))]
 fn activate_shell(ctx: &Context, dest: &Path) -> Result<(), String> {
     if !ask("¿Activar este WINEPREFIX en tus shells y en environment.d?") {
         println!("No se modificaron las shells.");
@@ -625,10 +914,18 @@ fn activate_shell(ctx: &Context, dest: &Path) -> Result<(), String> {
 
 fn update_heroic(ctx: &Context, dest: &Path) -> Result<(), String> {
     let expr = "walk(if type == \"object\" then (if has(\"defaultWinePrefix\") then .defaultWinePrefix=$parent else . end | if has(\"defaultWinePrefixDir\") then .defaultWinePrefixDir=$parent else . end | if has(\"winePrefix\") then .winePrefix=$prefix else . end) else . end)";
-    for file in [
-        ctx.home.join(".config/heroic/config.json"),
-        ctx.home.join(".config/heroic/store/config.json"),
-    ] {
+    let files = if cfg!(windows) {
+        vec![
+            ctx.home.join("AppData/Roaming/heroic/config.json"),
+            ctx.home.join("AppData/Roaming/heroic/store/config.json"),
+        ]
+    } else {
+        vec![
+            ctx.home.join(".config/heroic/config.json"),
+            ctx.home.join(".config/heroic/store/config.json"),
+        ]
+    };
+    for file in files {
         if !file.is_file() {
             continue;
         }
@@ -650,15 +947,15 @@ fn update_heroic(ctx: &Context, dest: &Path) -> Result<(), String> {
             }
             let old = backup(&file).map_err(|e| e.to_string())?;
             let script = r#"
-                my $parent = $ENV{CACHYOS_HEROIC_PARENT};
-                my $prefix = $ENV{CACHYOS_HEROIC_PREFIX};
+                my $parent = $ENV{LTOOLS_HEROIC_PARENT};
+                my $prefix = $ENV{LTOOLS_HEROIC_PREFIX};
                 s/("defaultWinePrefix"\s*:\s*")[^"]*(")/$1 . $parent . $2/ge;
                 s/("defaultWinePrefixDir"\s*:\s*")[^"]*(")/$1 . $parent . $2/ge;
                 s/("winePrefix"\s*:\s*")[^"]*(")/$1 . $prefix . $2/ge;
             "#;
             let ok = Command::new("perl")
-                .env("CACHYOS_HEROIC_PARENT", &parent)
-                .env("CACHYOS_HEROIC_PREFIX", dest.display().to_string())
+                .env("LTOOLS_HEROIC_PARENT", &parent)
+                .env("LTOOLS_HEROIC_PREFIX", dest.display().to_string())
                 .args(["-0pi", "-e", script])
                 .arg(&file)
                 .status()
@@ -725,12 +1022,20 @@ fn update_heroic(ctx: &Context, dest: &Path) -> Result<(), String> {
 }
 
 fn rewrite_configs(ctx: &Context, old: &Path, new: &Path) -> Result<(), String> {
-    let roots = [
-        ctx.home.join(".config"),
-        ctx.home.join(".local/share/lutris"),
-        ctx.home.join(".local/share/umu"),
-        ctx.home.join(".var/app"),
-    ];
+    let roots = if cfg!(windows) {
+        vec![
+            ctx.home.join("AppData/Roaming/heroic"),
+            ctx.home.join("AppData/Roaming/lutris"),
+            ctx.home.join("AppData/Local/umu"),
+        ]
+    } else {
+        vec![
+            ctx.home.join(".config"),
+            ctx.home.join(".local/share/lutris"),
+            ctx.home.join(".local/share/umu"),
+            ctx.home.join(".var/app"),
+        ]
+    };
     let mut files = Vec::new();
     for root in roots {
         find_text_candidates(&root, &mut files, 0);

@@ -6,7 +6,7 @@
 set -uo pipefail
 export LC_ALL=C
 
-VERSION="0.1.0"
+VERSION="0.3.0"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd -P)"
 # shellcheck disable=SC1091

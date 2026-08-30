@@ -5,6 +5,9 @@ edition = "2021"
 description = "Núcleo nativo y seguro para LTools"
 license = "MIT"
 
+[dependencies]
+libc = "0.2"
+
 [profile.release]
 strip = true
 lto = true

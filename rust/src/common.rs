@@ -1,8 +1,8 @@
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone)]
 pub struct Context {
@@ -24,7 +24,16 @@ impl Plan {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| home_dir().join(".local/state"))
                 .join("ltools/plans");
-            base.join(format!("plan-{}-{}.tsv", timestamp(), std::process::id()))
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or_default();
+            base.join(format!(
+                "plan-{}-{}-{}.tsv",
+                timestamp(),
+                unique,
+                std::process::id()
+            ))
         });
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -61,15 +70,11 @@ impl Plan {
 }
 
 pub fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
+    crate::platform::home_dir()
 }
 
 pub fn timestamp() -> String {
-    // date is available on all supported Unix systems; avoid adding a time crate
-    // to the first standalone build.
-    command_output("date", &["+%Y%m%d-%H%M%S"]).unwrap_or_else(|| "unknown-time".into())
+    crate::platform::timestamp()
 }
 
 pub fn clean(value: &str) -> String {
@@ -77,9 +82,11 @@ pub fn clean(value: &str) -> String {
 }
 
 pub fn command_exists(name: &str) -> bool {
-    std::env::var_os("PATH")
-        .map(|path| std::env::split_paths(&path).any(|dir| dir.join(name).is_file()))
-        .unwrap_or(false)
+    crate::platform::command_exists(name)
+}
+
+pub fn platform_tools() -> &'static [&'static str] {
+    crate::platform::host_tools()
 }
 
 pub fn command_output(program: &str, args: &[&str]) -> Option<String> {
@@ -130,33 +137,7 @@ pub fn run_command(program: &str, args: &[String], dry_run: bool) -> io::Result<
 }
 
 pub fn run_with_sudo(program: &str, args: &[String], dry_run: bool) -> io::Result<bool> {
-    if dry_run {
-        return run_command(program, args, true);
-    }
-    if libc_geteuid() == 0 {
-        return run_command(program, args, false);
-    }
-    if command_exists("sudo") {
-        let mut sudo_args = vec![program.to_string()];
-        sudo_args.extend_from_slice(args);
-        return run_command("sudo", &sudo_args, false);
-    }
-    eprintln!("Se necesita sudo para esta operación.");
-    Ok(false)
-}
-
-// Avoid a libc dependency just for geteuid: /proc/self/status is available on
-// Linux, which is the primary target of LTools.
-fn libc_geteuid() -> u32 {
-    fs::read_to_string("/proc/self/status")
-        .ok()
-        .and_then(|s| {
-            s.lines()
-                .find(|l| l.starts_with("Uid:"))
-                .and_then(|l| l.split_whitespace().nth(1))
-                .and_then(|v| v.parse().ok())
-        })
-        .unwrap_or(1)
+    crate::platform::run_with_privilege(program, args, dry_run)
 }
 
 pub fn shell_display(value: &str) -> String {
@@ -191,7 +172,27 @@ pub fn canonical(path: &Path) -> Option<PathBuf> {
 }
 
 pub fn device(path: &Path) -> Option<u64> {
-    fs::symlink_metadata(path).ok().map(|m| m.dev())
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        fs::symlink_metadata(path).ok().map(|m| m.dev())
+    }
+    #[cfg(windows)]
+    {
+        fs::symlink_metadata(path).ok().map(|_| 0)
+    }
+}
+
+pub fn same_device(path: &Path, expected: u64) -> bool {
+    #[cfg(unix)]
+    {
+        device(path) == Some(expected)
+    }
+    #[cfg(windows)]
+    {
+        let _ = expected;
+        path.exists()
+    }
 }
 
 pub fn directory_size(path: &Path, dev: Option<u64>) -> u64 {
@@ -199,7 +200,7 @@ pub fn directory_size(path: &Path, dev: Option<u64>) -> u64 {
         Ok(m) => m,
         Err(_) => return 0,
     };
-    if metadata.file_type().is_symlink() || dev.is_some_and(|d| metadata.dev() != d) {
+    if metadata.file_type().is_symlink() || dev.is_some_and(|d| !same_device(path, d)) {
         return 0;
     }
     if metadata.is_file() {
@@ -218,34 +219,8 @@ pub fn directory_size(path: &Path, dev: Option<u64>) -> u64 {
         .unwrap_or(0)
 }
 
-pub fn is_mount_root(path: &Path) -> bool {
-    command_output_owned(
-        "findmnt",
-        &[
-            "-rn".into(),
-            "-T".into(),
-            path.display().to_string(),
-            "-o".into(),
-            "TARGET".into(),
-        ],
-    )
-    .map(|v| v.trim() == path.display().to_string())
-    .unwrap_or(false)
-}
-
 pub fn critical_path(path: &Path) -> bool {
-    let p = path.to_string_lossy();
-    if matches!(
-        p.as_ref(),
-        "/" | "/home" | "/mnt" | "/media" | "/opt" | "/usr" | "/var" | "/etc" | "/boot" | "/run"
-    ) {
-        return true;
-    }
-    is_mount_root(path)
-        || p.ends_with("/steamapps")
-        || p.ends_with("/compatdata")
-        || p.ends_with("/steamapps/common")
-        || p.ends_with("/files/share/default_pfx")
+    crate::platform::critical_path(path)
 }
 
 pub fn ask(question: &str) -> bool {
@@ -275,31 +250,7 @@ pub fn prompt_path(question: &str) -> Option<PathBuf> {
 }
 
 pub fn move_to_trash(path: &Path, dry_run: bool) -> io::Result<bool> {
-    if !path.exists() {
-        eprintln!("No existe: {}", path.display());
-        return Ok(false);
-    }
-    let path = canonical(path).unwrap_or_else(|| path.to_path_buf());
-    if critical_path(&path) {
-        eprintln!("Bloqueado por seguridad: {}", path.display());
-        return Ok(false);
-    }
-    if dry_run {
-        println!("Simulación: se movería a la papelera: {}", path.display());
-        return Ok(true);
-    }
-    if command_exists("gio") {
-        return Ok(Command::new("gio")
-            .args(["trash", "--"])
-            .arg(&path)
-            .status()?
-            .success());
-    }
-    if command_exists("trash-put") {
-        return Ok(Command::new("trash-put").arg(&path).status()?.success());
-    }
-    eprintln!("No se encontró gio ni trash-put.");
-    Ok(false)
+    crate::platform::move_to_trash(path, dry_run)
 }
 
 pub fn read_lines(path: &Path) -> Vec<String> {
@@ -320,9 +271,13 @@ pub fn backup(path: &Path) -> io::Result<PathBuf> {
     let stamp = timestamp();
     let backup = PathBuf::from(format!("{}.bak-{}", path.display(), stamp));
     fs::copy(path, &backup)?;
-    let mut permissions = fs::metadata(path)?.permissions();
-    permissions.set_mode(0o600);
-    let _ = fs::set_permissions(&backup, permissions);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(path)?.permissions();
+        permissions.set_mode(0o600);
+        let _ = fs::set_permissions(&backup, permissions);
+    }
     Ok(backup)
 }
 

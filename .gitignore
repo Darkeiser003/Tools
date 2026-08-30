@@ -1,5 +1,108 @@
-# Artefactos generados localmente; el build distribuible solo conserva el binario.
+# LTools — fuentes que sí deben versionarse:
+# scripts, Rust/Cargo.lock, documentación, recursos AppImage y tests.
+
+# Artefactos distribuibles y staging local.
 dist/
+build/
+out/
+artifacts/
+release/
+.ltools-build.*
+.appimage-builder/
+*.AppImage
+*.appimage
+*.tar.gz
+*.tar.xz
+*.tar.zst
+*.zip
+*.7z
+*.deb
+*.rpm
+*.pkg.tar
+*.pkg.tar.*
+*.msi
+*.dmg
+
+# Rust/Cargo. Cargo.lock se conserva: LTools es una aplicación distribuible.
+target/
 rust/target/
-reports/*/
+**/target/
+rust/target/windows/
+*.rs.bk
+*.pdb
+*.exe
+
+# Node, JavaScript y gestores de frontend/herramientas auxiliares.
+node_modules/
+.npm/
+.pnpm-store/
+.yarn/
+.parcel-cache/
+.turbo/
+.next/
+.svelte-kit/
+coverage/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Python y otras caches de tooling.
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# Informes, planes, resultados y temporales de pruebas.
+reports/
+rust-audit-*/
+test-results/
+.test-results/
+.tmp/
+tmp/
+*.plan.tsv
+*-plan.tsv
+migrate-plan.tsv
+cleanup-plan.tsv
+*.profraw
+
+# Estado incremental y salidas locales del builder Windows.
+windows/.build-state.json
+dist/windows/.build-state.json
+
+# Logs generados por builds, smoke/E2E y herramientas locales.
+*.log
+*.log.*
+build-*.tsv
+*-timings.tsv
+
+# Backups creados por migraciones y editores.
+*.bak
 *.bak-*
+*.old
+*~
+*.swp
+*.swo
+
+# IDE, sistema operativo y metadatos locales.
+.idea/
+.vscode/
+.fleet/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Caches locales habituales; no afectan a scripts ni a documentación.
+.cache/
+.local/
+.direnv/
+.env
+.env.*
+!.env.example

@@ -5,10 +5,14 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
-    audit::run(ctx, args, true)?;
     let out = value(args, "--out")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(format!("rust-games-{}", crate::common::timestamp())));
+    let mut audit_args = args.to_vec();
+    if value(args, "--out").is_none() {
+        audit_args.extend(["--out".into(), out.display().to_string()]);
+    }
+    audit::run(ctx, &audit_args, true)?;
     let validation = out.join("configuration-validation.tsv");
     let mut file = File::create(&validation).map_err(|e| e.to_string())?;
     writeln!(file, "app\tconfig\tstatus\tfield\tvalue\tnote").map_err(|e| e.to_string())?;
@@ -28,6 +32,114 @@ fn value(args: &[String], wanted: &str) -> Option<String> {
     args.windows(2)
         .find(|pair| pair[0] == wanted)
         .map(|pair| pair[1].clone())
+}
+
+fn heroic_configs(ctx: &Context) -> Vec<PathBuf> {
+    if cfg!(windows) {
+        vec![
+            ctx.home.join("AppData/Roaming/heroic/config.json"),
+            ctx.home.join("AppData/Roaming/heroic/store/config.json"),
+        ]
+    } else {
+        vec![
+            ctx.home.join(".config/heroic/config.json"),
+            ctx.home.join(".config/heroic/store/config.json"),
+        ]
+    }
+}
+
+fn lutris_configs(ctx: &Context) -> Vec<PathBuf> {
+    if cfg!(windows) {
+        vec![
+            ctx.home.join("AppData/Roaming/lutris/system.yml"),
+            ctx.home.join("AppData/Local/lutris/system.yml"),
+        ]
+    } else {
+        vec![
+            ctx.home.join(".local/share/lutris/system.yml"),
+            ctx.home.join(".config/lutris/system.yml"),
+        ]
+    }
+}
+
+fn lutris_games_dir(ctx: &Context) -> PathBuf {
+    if cfg!(windows) {
+        ctx.home.join("AppData/Roaming/lutris/games")
+    } else {
+        ctx.home.join(".local/share/lutris/games")
+    }
+}
+
+fn umu_root(ctx: &Context) -> PathBuf {
+    if cfg!(windows) {
+        ctx.home.join("AppData/Local/umu")
+    } else {
+        ctx.home.join(".local/share/umu")
+    }
+}
+
+fn steam_configs(ctx: &Context) -> Vec<PathBuf> {
+    let mut configs = if cfg!(windows) {
+        vec![
+            ctx.home
+                .join("AppData/Roaming/Steam/steamapps/libraryfolders.vdf"),
+            ctx.home
+                .join("AppData/Local/Steam/steamapps/libraryfolders.vdf"),
+            PathBuf::from("C:/Program Files (x86)/Steam/steamapps/libraryfolders.vdf"),
+            PathBuf::from("C:/Program Files/Steam/steamapps/libraryfolders.vdf"),
+        ]
+    } else {
+        vec![
+            ctx.home
+                .join(".local/share/Steam/steamapps/libraryfolders.vdf"),
+            ctx.home.join(".steam/steam/steamapps/libraryfolders.vdf"),
+        ]
+    };
+    configs.sort();
+    configs.dedup();
+    configs
+}
+
+fn config_roots(ctx: &Context) -> Vec<PathBuf> {
+    if cfg!(windows) {
+        vec![
+            ctx.home.join("AppData/Roaming/heroic"),
+            ctx.home.join("AppData/Roaming/lutris"),
+            ctx.home.join("AppData/Local/umu"),
+            ctx.home.join("AppData/Local/Steam/config"),
+            ctx.home.join("AppData/Local/Steam/steamapps"),
+            ctx.home.join("AppData/Roaming/Steam/config"),
+            ctx.home.join("AppData/Roaming/Steam/steamapps"),
+        ]
+    } else {
+        vec![
+            ctx.home.join(".config/heroic"),
+            ctx.home.join(".config/lutris"),
+            ctx.home.join(".local/share/lutris/games"),
+            ctx.home.join(".local/share/Steam/config"),
+            ctx.home.join(".local/share/Steam/steamapps"),
+            ctx.home.join("Games/Heroic/GamesConfig"),
+        ]
+    }
+}
+
+fn configured_path_status(value: &str) -> &'static str {
+    let path = Path::new(value);
+    let windows_absolute = value.len() >= 3
+        && value.as_bytes().get(1) == Some(&b':')
+        && value
+            .as_bytes()
+            .get(2)
+            .is_some_and(|byte| *byte == b'\\' || *byte == b'/');
+    if path.is_absolute() || windows_absolute {
+        if path.exists() {
+            "path-exists"
+        } else {
+            "path-missing"
+        }
+    } else {
+        "literal"
+    }
 }
 
 fn row(
@@ -52,10 +164,7 @@ fn row(
 }
 
 fn validate_heroic(ctx: &Context, out: &mut File) {
-    for config in [
-        ctx.home.join(".config/heroic/config.json"),
-        ctx.home.join(".config/heroic/store/config.json"),
-    ] {
+    for config in heroic_configs(ctx) {
         if !config.is_file() {
             continue;
         }
@@ -99,20 +208,11 @@ fn validate_heroic(ctx: &Context, out: &mut File) {
                 continue;
             }
             if let Some(path) = quoted_value(line) {
-                let status = if path.starts_with('/') {
-                    if Path::new(&path).exists() {
-                        "path-exists"
-                    } else {
-                        "path-missing"
-                    }
-                } else {
-                    "literal"
-                };
                 row(
                     out,
                     "Heroic",
                     &config,
-                    status,
+                    configured_path_status(&path),
                     line.split('"').nth(1).unwrap_or("field"),
                     &path,
                     "campo detectado",
@@ -123,10 +223,7 @@ fn validate_heroic(ctx: &Context, out: &mut File) {
 }
 
 fn validate_lutris(ctx: &Context, out: &mut File) {
-    for config in [
-        ctx.home.join(".local/share/lutris/system.yml"),
-        ctx.home.join(".config/lutris/system.yml"),
-    ] {
+    for config in lutris_configs(ctx) {
         if !config.is_file() {
             continue;
         }
@@ -138,16 +235,11 @@ fn validate_lutris(ctx: &Context, out: &mut File) {
                     .split_once(':')
                     .map(|(_, v)| v.trim().trim_matches(['\'', '"']))
                     .unwrap_or("");
-                let status = if Path::new(value).is_dir() {
-                    "path-exists"
-                } else {
-                    "path-missing"
-                };
                 row(
                     out,
                     "Lutris",
                     &config,
-                    status,
+                    configured_path_status(value),
                     line.trim().split(':').next().unwrap_or("path"),
                     value,
                     "configuración YAML",
@@ -155,7 +247,7 @@ fn validate_lutris(ctx: &Context, out: &mut File) {
             }
         }
     }
-    let games_dir = ctx.home.join(".local/share/lutris/games");
+    let games_dir = lutris_games_dir(ctx);
     if let Ok(entries) = fs::read_dir(games_dir) {
         for entry in entries
             .flatten()
@@ -174,11 +266,7 @@ fn validate_lutris(ctx: &Context, out: &mut File) {
                     out,
                     "Lutris",
                     &path,
-                    if Path::new(value).is_dir() {
-                        "path-exists"
-                    } else {
-                        "path-missing"
-                    },
+                    configured_path_status(value),
                     "prefix",
                     value,
                     "juego Lutris",
@@ -189,7 +277,7 @@ fn validate_lutris(ctx: &Context, out: &mut File) {
 }
 
 fn validate_umu(ctx: &Context, out: &mut File) {
-    let root = ctx.home.join(".local/share/umu");
+    let root = umu_root(ctx);
     if !root.is_dir() {
         return;
     }
@@ -226,11 +314,7 @@ fn validate_umu(ctx: &Context, out: &mut File) {
 }
 
 fn validate_steam(ctx: &Context, out: &mut File) {
-    for config in [
-        ctx.home
-            .join(".local/share/Steam/steamapps/libraryfolders.vdf"),
-        ctx.home.join(".steam/steam/steamapps/libraryfolders.vdf"),
-    ] {
+    for config in steam_configs(ctx) {
         if !config.is_file() {
             continue;
         }
@@ -271,15 +355,7 @@ fn collect_config_files(ctx: &Context, out: &Path) -> Result<(), String> {
         File::create(out.join("configuration-binaries.tsv")).map_err(|e| e.to_string())?;
     writeln!(db, "bytes\thuman\tformat\tapp\tsqlite_header\tpath").map_err(|e| e.to_string())?;
     writeln!(bin, "bytes\thuman\tformat\tapp\tpath").map_err(|e| e.to_string())?;
-    let roots = [
-        ctx.home.join(".config/heroic"),
-        ctx.home.join(".config/lutris"),
-        ctx.home.join(".local/share/lutris/games"),
-        ctx.home.join(".local/share/Steam/config"),
-        ctx.home.join(".local/share/Steam/steamapps"),
-        ctx.home.join("Games/Heroic/GamesConfig"),
-    ];
-    for root in roots {
+    for root in config_roots(ctx) {
         collect_known(&root, &mut db, &mut bin, 0);
     }
     Ok(())

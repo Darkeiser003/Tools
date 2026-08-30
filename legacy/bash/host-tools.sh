@@ -3,6 +3,8 @@
 
 set -uo pipefail
 
+VERSION="0.3.0"
+
 host_have() { command -v "$1" >/dev/null 2>&1; }
 
 host_fuse_available() {
@@ -222,6 +224,12 @@ host_preflight() {
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     case "${1:-}" in
+        --version)
+            printf '%s %s\n' "$(basename "$0")" "$VERSION"
+            ;;
+        -h|--help)
+            printf 'Uso: %s [--doctor [--install-missing]|--fuse-check]\n' "$0"
+            ;;
         --fuse-check|fuse|fuse-check)
             host_fuse_report
             ;;

@@ -2,7 +2,7 @@
 Type=Application
 Name=LTools
 Comment=Auditoría y mantenimiento seguro del sistema
-Exec=ltools menu %U
+Exec=ltools %U
 Icon=ltools
-Terminal=true
+Terminal=false
 Categories=System;

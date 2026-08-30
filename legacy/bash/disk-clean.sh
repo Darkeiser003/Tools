@@ -111,6 +111,7 @@ parse_args() {
                 [[ $# -ge 2 ]] || die "--rollback requiere un fichero"
                 ROLLBACK_PATH="$2"; shift 2 ;;
             --force) FORCE=1; shift ;;
+            --version) printf '%s %s\n' "$SCRIPT_NAME" "$VERSION"; exit 0 ;;
             -h|--help) usage; exit 0 ;;
             *) die "opción desconocida: $1" ;;
         esac

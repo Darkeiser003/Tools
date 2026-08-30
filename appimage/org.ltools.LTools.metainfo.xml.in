@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.ltools.LTools</id>
+  <name>LTools</name>
+  <summary>Auditoría y mantenimiento seguro del sistema</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="org.ltools">
+    <name>LTools contributors</name>
+  </developer>
+  <url type="homepage">https://github.com/Darkeiser003/Tools</url>
+  <description>
+    <p>Herramientas modulares para auditar discos, paquetes, aplicaciones,
+    juegos, Wine, Proton y servicios del sistema.</p>
+  </description>
+  <launchable type="desktop-id">ltools.desktop</launchable>
+  <provides>
+    <binary>ltools</binary>
+  </provides>
+  <releases>
+    <release version="@VERSION@" date="2026-08-29" />
+  </releases>
+  <content_rating type="oars-1.1" />
+</component>

@@ -1,18 +1,98 @@
 mod audit;
 mod common;
+mod compat;
 mod games;
 mod i18n;
 mod packages;
+mod platform;
 mod system;
 mod wine;
 
 use common::{home_dir, Context, Plan};
 use std::env;
 use std::io::{self, Write};
-use std::os::unix::fs::FileTypeExt;
 use std::path::PathBuf;
+#[cfg(unix)]
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub const VERSION: &str = "0.3.0";
+
+#[cfg(unix)]
+static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+
+#[cfg(unix)]
+extern "C" fn handle_interrupt(_: libc::c_int) {
+    INTERRUPTED.store(true, Ordering::SeqCst);
+}
+
+#[cfg(unix)]
+fn install_interrupt_handler() {
+    // The handler only flips an atomic flag; user-facing work stays in
+    // normal Rust code after the interrupted read returns.
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = handle_interrupt as *const () as libc::sighandler_t;
+        libc::sigemptyset(&mut action.sa_mask);
+        action.sa_flags = 0;
+        libc::sigaction(libc::SIGINT, &action, std::ptr::null_mut());
+    }
+}
+
+#[cfg(not(unix))]
+fn install_interrupt_handler() {}
+
+#[cfg(unix)]
+fn interrupt_requested() -> bool {
+    INTERRUPTED.load(Ordering::SeqCst)
+}
+
+#[cfg(not(unix))]
+fn interrupt_requested() -> bool {
+    false
+}
+
+fn finish_after_interrupt() -> bool {
+    if interrupt_requested() {
+        println!("\nInterrupción recibida. Saliendo de LTools.");
+        true
+    } else {
+        false
+    }
+}
+
+#[cfg(unix)]
+fn read_menu_line() -> io::Result<Option<String>> {
+    let mut bytes = Vec::new();
+    loop {
+        let mut byte = [0_u8; 1];
+        let count = unsafe { libc::read(libc::STDIN_FILENO, byte.as_mut_ptr().cast(), 1) };
+        if count == 0 {
+            return Ok(None);
+        }
+        if count < 0 {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::EINTR) {
+                return Err(io::Error::from(io::ErrorKind::Interrupted));
+            }
+            return Err(error);
+        }
+        bytes.push(byte[0]);
+        if byte[0] == b'\n' {
+            return Ok(Some(String::from_utf8_lossy(&bytes).into_owned()));
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn read_menu_line() -> io::Result<Option<String>> {
+    let mut answer = String::new();
+    let count = io::stdin().read_line(&mut answer)?;
+    if count == 0 {
+        Ok(None)
+    } else {
+        Ok(Some(answer))
+    }
+}
 
 fn usage() {
     println!("{} Rust {VERSION}", i18n::text("app.title"));
@@ -26,8 +106,10 @@ fn usage() {
     println!("  prefix      {}", i18n::text("help.prefix"));
     println!("  defaults    {}", i18n::text("help.defaults"));
     println!("  system      {}", i18n::text("help.system"));
+    println!("              {}", i18n::text("help.system.options"));
     println!("  doctor      {}", i18n::text("help.doctor"));
     println!("  rollback    {}", i18n::text("help.rollback"));
+    println!("  capabilities  {}", i18n::text("help.capabilities"));
     println!();
     println!("{}", i18n::text("help.common"));
     println!("{}", i18n::text("help.clean.options"));
@@ -36,15 +118,122 @@ fn usage() {
     println!("{}", i18n::text("help.compat"));
 }
 
+enum MenuSelection {
+    Command(String, Vec<String>),
+    Continue,
+    Quit,
+}
+
+fn execute_action(command: &str, ctx: &Context, args: &[String]) -> Result<(), String> {
+    match command {
+        "audit" | "disk-audit" => audit::run(ctx, args, false),
+        "games" | "game-audit" | "wine-audit" => games::run(ctx, args),
+        "packages" | "pkg-audit" | "package-audit" => packages::run(ctx, args),
+        "clean" | "cleanup" => packages::clean(ctx, args),
+        "prefix" | "wine" => wine::run(ctx, args),
+        "system" | "services" | "systemctl" => system::run(ctx, args),
+        "doctor" | "diagnose" => host_doctor(),
+        "defaults" | "paths" => show_defaults(ctx),
+        "capabilities" | "compat" => compat::run(args),
+        _ => {
+            usage();
+            Err(format!("comando desconocido: {command}"))
+        }
+    }
+}
+
+fn clear_screen() {
+    if env::var_os("LTOOLS_NO_CLEAR").is_some() {
+        return;
+    }
+    // ANSI funciona en las terminales Linux habituales y en las consolas
+    // modernas de Windows. Se mantiene dentro de Rust para que el mismo
+    // comportamiento llegue al binario, AppImage y ejecutable Windows.
+    print!("\x1b[2J\x1b[H");
+    let _ = io::stdout().flush();
+}
+
+fn run_interactive_menu(base_args: &[String], dry_run: bool, plan_path: Option<PathBuf>) {
+    let mut requested_plan_path = plan_path;
+    let mut first_menu = true;
+    loop {
+        if !first_menu {
+            clear_screen();
+        }
+        first_menu = false;
+        let (command, mut args) = match menu_choice() {
+            MenuSelection::Command(command, selected_args) => (command, selected_args),
+            MenuSelection::Continue => continue,
+            MenuSelection::Quit => return,
+        };
+        let mut action_args = base_args.to_vec();
+        action_args.append(&mut args);
+        let is_submenu = matches!(command.as_str(), "clean" | "system")
+            && action_args.iter().any(|arg| arg == "menu");
+        let plan = match Plan::create(requested_plan_path.take(), &format!("rust-{command}")) {
+            Ok(plan) => plan,
+            Err(error) => {
+                eprintln!("No se pudo crear el plan: {error}");
+                continue;
+            }
+        };
+        let ctx = Context {
+            home: home_dir(),
+            dry_run,
+            plan_path: Some(plan.path.clone()),
+            plan: Some(plan),
+        };
+        let result = execute_action(&command, &ctx, &action_args);
+        if is_submenu && result.is_ok() {
+            // El submenú ya gestiona su navegación. Al salir con Enter/q,
+            // volver directamente al menú que lo abrió, sin una pausa extra.
+            continue;
+        }
+        match result {
+            Ok(()) => println!("Operación terminada correctamente."),
+            Err(error) => eprintln!("Error: {error}"),
+        }
+        println!("Plan: {}", ctx.plan_path.as_ref().unwrap().display());
+        print!("Pulsa Enter para volver al menú, o q para salir: ");
+        let _ = io::stdout().flush();
+        match read_menu_line() {
+            Ok(Some(answer)) if answer.trim().eq_ignore_ascii_case("q") => return,
+            Ok(Some(_)) => println!(),
+            Ok(None) => return,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted || interrupt_requested() => {
+                finish_after_interrupt();
+                return;
+            }
+            Err(_) => return,
+        }
+    }
+}
+
 fn main() {
     let raw: Vec<String> = env::args().skip(1).collect();
     apply_language(&raw);
+    install_interrupt_handler();
     if raw.iter().any(|a| a == "--version") {
         println!("ltools-rs {VERSION}");
         return;
     }
-    if raw.is_empty() || raw.iter().any(|a| a == "--help" || a == "-h") {
+    if raw.iter().any(|a| a == "--capabilities") {
+        if let Err(error) = compat::run(&raw) {
+            eprintln!("Error: {error}");
+            std::process::exit(2);
+        }
+        return;
+    }
+    if raw.iter().any(|a| a == "--help" || a == "-h") {
         usage();
+        return;
+    }
+    // El ejecutable distribuido es autónomo: al abrirlo sin argumentos entra
+    // directamente en su menú interactivo. Los lanzadores de cada plataforma
+    // solo se ocupan de proporcionar una ventana de terminal cuando hace
+    // falta; el backend normal sigue siendo exclusivamente Rust.
+    if raw.is_empty() {
+        run_interactive_menu(&[], false, None);
         return;
     }
     // Acepta tanto `comando --opciones` como `--opciones comando ...`.
@@ -72,7 +261,7 @@ fn main() {
             _ => break,
         }
     }
-    let (mut command, args) = if command_index < raw.len() && !raw[command_index].starts_with('-') {
+    let (command, args) = if command_index < raw.len() && !raw[command_index].starts_with('-') {
         let mut args = raw[..command_index].to_vec();
         args.extend_from_slice(&raw[command_index + 1..]);
         (raw[command_index].clone(), args)
@@ -124,13 +313,21 @@ fn main() {
         }
         return;
     }
-    if command == "menu" || command == "m" {
-        command = match menu_choice() {
-            Some(choice) => choice,
-            None => return,
-        };
+    if matches!(command.as_str(), "capabilities" | "compat") {
+        if let Err(error) = compat::run(&filtered) {
+            eprintln!("Error: {error}");
+            std::process::exit(2);
+        }
+        return;
     }
-    if command == "doctor" || command == "diagnose" {
+    if command == "menu" || command == "m" {
+        run_interactive_menu(&filtered, dry_run, plan_path);
+        return;
+    }
+    if matches!(
+        command.as_str(),
+        "doctor" | "diagnose" | "fuse" | "fuse-check"
+    ) {
         if let Err(error) = host_doctor() {
             eprintln!("Error: {error}");
             std::process::exit(1);
@@ -150,20 +347,7 @@ fn main() {
         plan_path: Some(plan.path.clone()),
         plan: Some(plan.clone()),
     };
-    let result = match command.as_str() {
-        "audit" | "disk-audit" => audit::run(&ctx, &filtered, false),
-        "games" | "game-audit" | "wine-audit" => games::run(&ctx, &filtered),
-        "packages" | "pkg-audit" | "package-audit" => packages::run(&ctx, &filtered),
-        "clean" | "cleanup" => packages::clean(&ctx, &filtered),
-        "prefix" | "wine" => wine::run(&ctx, &filtered),
-        "system" | "services" | "systemctl" => system::run(&ctx, &filtered),
-        "doctor" | "diagnose" => host_doctor(),
-        "defaults" | "paths" => show_defaults(&ctx),
-        _ => {
-            usage();
-            Err(format!("comando desconocido: {command}"))
-        }
-    };
+    let result = execute_action(&command, &ctx, &filtered);
     if let Err(error) = result {
         eprintln!("Error: {error}");
         std::process::exit(1);
@@ -171,7 +355,7 @@ fn main() {
     println!("Plan: {}", ctx.plan_path.unwrap().display());
 }
 
-fn menu_choice() -> Option<String> {
+fn menu_choice() -> MenuSelection {
     println!("{} Rust {VERSION}", i18n::text("menu.title"));
     println!("  1) {}", i18n::text("menu.audit"));
     println!("  2) {}", i18n::text("menu.games"));
@@ -180,25 +364,126 @@ fn menu_choice() -> Option<String> {
     println!("  5) {}", i18n::text("menu.defaults"));
     println!("  6) {}", i18n::text("menu.system"));
     println!("  7) {}", i18n::text("menu.doctor"));
+    println!("  8) {}", i18n::text("menu.packages"));
     println!("  h) {}", i18n::text("menu.help"));
     println!("  q) {}", i18n::text("menu.quit"));
     print!("{}", i18n::text("menu.prompt"));
     let _ = io::stdout().flush();
-    let mut answer = String::new();
-    io::stdin().read_line(&mut answer).ok()?;
+    let answer = match read_menu_line() {
+        Ok(Some(answer)) if !finish_after_interrupt() => answer,
+        Ok(Some(_)) | Ok(None) => return MenuSelection::Quit,
+        Err(error) if error.kind() == io::ErrorKind::Interrupted || interrupt_requested() => {
+            finish_after_interrupt();
+            return MenuSelection::Quit;
+        }
+        Err(_) => return MenuSelection::Quit,
+    };
     match answer.trim().to_lowercase().as_str() {
-        "1" => Some("audit".into()),
-        "2" => Some("games".into()),
-        "3" => Some("clean".into()),
-        "4" => Some("prefix".into()),
-        "5" => Some("defaults".into()),
-        "6" => Some("system".into()),
-        "7" => Some("doctor".into()),
+        "" => MenuSelection::Quit,
+        "1" => menu_audit()
+            .map(|args| MenuSelection::Command("audit".into(), args))
+            .unwrap_or(MenuSelection::Quit),
+        "2" => menu_games()
+            .map(|args| MenuSelection::Command("games".into(), args))
+            .unwrap_or(MenuSelection::Quit),
+        "3" => MenuSelection::Command("clean".into(), vec!["menu".into()]),
+        "4" => MenuSelection::Command("prefix".into(), vec!["list".into()]),
+        "5" => MenuSelection::Command("defaults".into(), Vec::new()),
+        "6" => MenuSelection::Command("system".into(), vec!["menu".into()]),
+        "7" => MenuSelection::Command("doctor".into(), Vec::new()),
+        "8" => menu_packages()
+            .map(|args| MenuSelection::Command("packages".into(), args))
+            .unwrap_or(MenuSelection::Quit),
+        "q" | "quit" | "salir" => MenuSelection::Quit,
         "h" => {
             usage();
+            MenuSelection::Continue
+        }
+        _ => {
+            println!("Opción no válida.");
+            MenuSelection::Continue
+        }
+    }
+}
+
+fn menu_input(prompt: &str) -> Option<String> {
+    print!("{prompt}");
+    let _ = io::stdout().flush();
+    match read_menu_line() {
+        Ok(None) => None,
+        Ok(_) if finish_after_interrupt() => None,
+        Ok(Some(answer)) => Some(answer.trim().to_string()),
+        Err(error) if error.kind() == io::ErrorKind::Interrupted || interrupt_requested() => {
+            finish_after_interrupt();
             None
         }
-        _ => None,
+        Err(_) => None,
+    }
+}
+
+fn menu_yes_no(prompt: &str, default: bool) -> Option<bool> {
+    let answer = menu_input(prompt)?;
+    if answer.is_empty() {
+        return Some(default);
+    }
+    Some(matches!(
+        answer.to_lowercase().as_str(),
+        "y" | "yes" | "s" | "si" | "sí"
+    ))
+}
+
+fn menu_audit() -> Option<Vec<String>> {
+    println!("\nAuditoría general");
+    println!("El escaneo rápido no añade automáticamente discos montados.");
+    let full = menu_yes_no("¿Escaneo completo, incluyendo montajes? [y/N] ", false)?;
+    let duplicates = menu_yes_no("¿Buscar duplicados por SHA-256? [y/N] ", false)?;
+    let root = menu_input("Ruta adicional (vacío para ninguna): ")?;
+    let out = menu_input("Directorio de informe (vacío para el predeterminado): ")?;
+    let mut args = Vec::new();
+    if full {
+        args.push("--full".into());
+    } else {
+        args.push("--no-mounts".into());
+    }
+    if duplicates {
+        args.push("--duplicates".into());
+    }
+    if !root.is_empty() {
+        args.extend(["--root".into(), root]);
+    }
+    if !out.is_empty() {
+        args.extend(["--out".into(), out]);
+    }
+    Some(args)
+}
+
+fn menu_games() -> Option<Vec<String>> {
+    println!("\nAuditoría de juegos, Wine y Proton");
+    let full = menu_yes_no("¿Escaneo completo, incluyendo montajes? [y/N] ", false)?;
+    let root = menu_input("Ruta adicional (vacío para ninguna): ")?;
+    let out = menu_input("Directorio de informe (vacío para el predeterminado): ")?;
+    let mut args = Vec::new();
+    if full {
+        args.push("--full".into());
+    } else {
+        args.push("--no-mounts".into());
+    }
+    if !root.is_empty() {
+        args.extend(["--root".into(), root]);
+    }
+    if !out.is_empty() {
+        args.extend(["--out".into(), out]);
+    }
+    Some(args)
+}
+
+fn menu_packages() -> Option<Vec<String>> {
+    println!("\nInventario de paquetes y almacenes");
+    let out = menu_input("Directorio de informe (vacío para el predeterminado): ")?;
+    if out.is_empty() {
+        Some(Vec::new())
+    } else {
+        Some(vec!["--out".into(), out])
     }
 }
 
@@ -255,8 +540,12 @@ fn show_defaults(ctx: &Context) -> Result<(), String> {
 
 fn command_path(name: &str) -> String {
     if common::command_exists(name) {
-        common::command_output("sh", &["-c", &format!("command -v {name}")])
-            .unwrap_or_else(|| "instalado".into())
+        if cfg!(windows) {
+            common::command_output("where", &[name]).unwrap_or_else(|| "instalado".into())
+        } else {
+            common::command_output("sh", &["-c", &format!("command -v {name}")])
+                .unwrap_or_else(|| "instalado".into())
+        }
     } else {
         "no instalado".into()
     }
@@ -264,39 +553,23 @@ fn command_path(name: &str) -> String {
 
 fn host_doctor() -> Result<(), String> {
     println!("=== LTools host diagnostics ===");
-    for tool in [
-        "findmnt",
-        "sha256sum",
-        "rsync",
-        "jq",
-        "perl",
-        "wine",
-        "wineboot",
-        "winetricks",
-        "paccache",
-        "systemctl",
-        "journalctl",
-        "ps",
-        "gio",
-    ] {
+    for tool in common::platform_tools() {
         if common::command_exists(tool) {
             println!("  OK      {tool}");
         } else {
             println!("  MISSING {tool}");
         }
     }
-    let fuse_device = std::fs::metadata("/dev/fuse")
-        .map(|metadata| metadata.file_type().is_char_device())
-        .unwrap_or(false);
-    let fusermount = common::command_exists("fusermount3") || common::command_exists("fusermount");
     println!(
         "  FUSE    {}",
-        if fuse_device && fusermount {
+        if platform::fuse_available() {
             "available"
         } else {
             "missing (AppImage extraction fallback is available)"
         }
     );
+    #[cfg(windows)]
+    println!("  Sistema Windows: systemctl/journalctl/FUSE no aplican en esta plataforma.");
     Ok(())
 }
 fn print_heroic_paths(file: &std::path::Path) {

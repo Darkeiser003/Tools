@@ -9,7 +9,7 @@ ltools_normalize_lang() {
     raw="${raw,,}"
     code="${raw%%[_-]*}"
     case "$code" in
-        es|en|de|fr|pt|it) printf '%s' "$code" ;;
+        es|en|de|fr|pt|it|ca|nl|pl) printf '%s' "$code" ;;
         *) printf 'es' ;;
     esac
 }
@@ -105,6 +105,45 @@ ltools_t() {
         it:menu.quit) printf 'Esci' ;;
         it:menu.prompt) printf 'Scegli un’opzione: ' ;;
         it:menu.invalid) printf 'Opzione non valida.' ;;
+        ca:menu.title) printf '=== LTools %s ===' "${2:-}" ;;
+        ca:menu.audit) printf 'Auditar discs, paquets i aplicacions' ;;
+        ca:menu.games) printf 'Auditar jocs, Wine i Proton' ;;
+        ca:menu.clean) printf 'Netejar paquets, cau i rutes' ;;
+        ca:menu.prefix) printf 'Crear o migrar un prefix Wine' ;;
+        ca:menu.defaults) printf 'Mostrar rutes i valors predeterminats de Wine/Proton' ;;
+        ca:menu.packages) printf 'Inventari de paquets i botigues' ;;
+        ca:menu.system) printf 'Serveis, processos i dimonis del sistema' ;;
+        ca:menu.doctor) printf 'Diagnòstic de dependències i del sistema' ;;
+        ca:menu.help) printf 'Ajuda' ;;
+        ca:menu.quit) printf 'Sortir' ;;
+        ca:menu.prompt) printf 'Tria una opció: ' ;;
+        ca:menu.invalid) printf 'Opció no vàlida.' ;;
+        nl:menu.title) printf '=== LTools %s ===' "${2:-}" ;;
+        nl:menu.audit) printf 'Schijven, pakketten en toepassingen controleren' ;;
+        nl:menu.games) printf 'Games, Wine en Proton controleren' ;;
+        nl:menu.clean) printf 'Pakketten, caches en paden opruimen' ;;
+        nl:menu.prefix) printf 'Wine-prefix maken of migreren' ;;
+        nl:menu.defaults) printf 'Standaardpaden van Wine/Proton tonen' ;;
+        nl:menu.packages) printf 'Pakketten- en store-inventaris' ;;
+        nl:menu.system) printf 'Systeemdiensten, processen en daemons' ;;
+        nl:menu.doctor) printf 'Afhankelijkheden en systeem diagnosticeren' ;;
+        nl:menu.help) printf 'Help' ;;
+        nl:menu.quit) printf 'Afsluiten' ;;
+        nl:menu.prompt) printf 'Kies een optie: ' ;;
+        nl:menu.invalid) printf 'Ongeldige optie.' ;;
+        pl:menu.title) printf '=== LTools %s ===' "${2:-}" ;;
+        pl:menu.audit) printf 'Audyt dysków, pakietów i aplikacji' ;;
+        pl:menu.games) printf 'Audyt gier, Wine i Proton' ;;
+        pl:menu.clean) printf 'Czyszczenie pakietów, pamięci podręcznych i ścieżek' ;;
+        pl:menu.prefix) printf 'Tworzenie lub migracja prefiksu Wine' ;;
+        pl:menu.defaults) printf 'Pokaż domyślne ścieżki Wine/Proton' ;;
+        pl:menu.packages) printf 'Inwentaryzacja pakietów i sklepów' ;;
+        pl:menu.system) printf 'Usługi systemowe, procesy i demony' ;;
+        pl:menu.doctor) printf 'Diagnostyka zależności i systemu' ;;
+        pl:menu.help) printf 'Pomoc' ;;
+        pl:menu.quit) printf 'Wyjście' ;;
+        pl:menu.prompt) printf 'Wybierz opcję: ' ;;
+        pl:menu.invalid) printf 'Nieprawidłowa opcja.' ;;
         *) ltools_i18n_set es; ltools_t "$key" "$@" ;;
     esac
 }

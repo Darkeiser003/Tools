@@ -2,12 +2,50 @@ use crate::common::{
     ask, command_exists, command_output, human_bytes, move_to_trash, run_command, run_with_sudo,
     Context,
 };
+use crate::i18n;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 fn query(program: &str, args: &[&str]) -> String {
-    command_output(program, args).unwrap_or_default()
+    Command::new(program)
+        .env("LC_ALL", "C")
+        .args(args)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .trim_end()
+                .to_string()
+        })
+        .unwrap_or_default()
+}
+
+fn normalize_manager(value: &str) -> &str {
+    match value {
+        "apt" => "apt-get",
+        "xbps" => "xbps-remove",
+        other => other,
+    }
+}
+
+fn removal_command(manager: &str) -> Option<(&'static str, Vec<String>)> {
+    Some(match manager {
+        "pacman" => ("pacman", vec!["-Rns".into()]),
+        "apt-get" => ("apt-get", vec!["remove".into()]),
+        "dnf" => ("dnf", vec!["remove".into()]),
+        "yum" => ("yum", vec!["remove".into()]),
+        "zypper" => ("zypper", vec!["remove".into()]),
+        "apk" => ("apk", vec!["del".into()]),
+        "xbps-remove" => ("xbps-remove", vec!["-R".into()]),
+        "brew" => ("brew", vec!["uninstall".into()]),
+        "snap" => ("snap", vec!["remove".into()]),
+        "flatpak" => ("flatpak", vec!["uninstall".into(), "--delete-data".into()]),
+        "pamac" => ("pamac", vec!["remove".into()]),
+        _ => return None,
+    })
 }
 
 pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
@@ -38,6 +76,7 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
         "dpkg-query",
         "rpm",
         "dnf",
+        "yum",
         "zypper",
         "apk",
         "xbps-query",
@@ -46,6 +85,7 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
         "snap",
         "flatpak",
         "brew",
+        "pamac",
         "nix-env",
         "guix",
         "eopkg",
@@ -229,6 +269,9 @@ fn collect_artifacts_dir(path: &Path, file: &mut File, depth: usize) {
 }
 
 pub fn clean(ctx: &Context, args: &[String]) -> Result<(), String> {
+    if args.iter().any(|arg| arg == "menu") {
+        return menu(ctx);
+    }
     let mut packages = Vec::new();
     let mut paths = Vec::new();
     let mut orphans = false;
@@ -308,6 +351,46 @@ pub fn clean(ctx: &Context, args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn menu(ctx: &Context) -> Result<(), String> {
+    loop {
+        println!("\n{}", i18n::text("menu.clean.title"));
+        println!("  1) {}", i18n::text("menu.clean.orphans"));
+        println!("  2) {}", i18n::text("menu.clean.caches"));
+        println!("  3) {}", i18n::text("menu.clean.flatpak"));
+        println!("  4) {}", i18n::text("menu.clean.path"));
+        println!("  5) {}", i18n::text("menu.clean.package"));
+        println!("  q) {}", i18n::text("menu.back"));
+        print!("{}", i18n::text("menu.prompt"));
+        let _ = std::io::stdout().flush();
+        let mut answer = String::new();
+        if std::io::stdin()
+            .read_line(&mut answer)
+            .map_err(|e| e.to_string())?
+            == 0
+        {
+            return Ok(());
+        }
+        match answer.trim().to_lowercase().as_str() {
+            "1" => clean(ctx, &["--orphans".into()])?,
+            "2" => clean(ctx, &["--package-caches".into()])?,
+            "3" => clean(ctx, &["--flatpak-unused".into()])?,
+            "4" => {
+                if let Some(path) = crate::common::prompt_path("Ruta: ") {
+                    clean(ctx, &["--path".into(), path.display().to_string()])?;
+                }
+            }
+            "5" => {
+                if let Some(package) = crate::common::prompt_path("Paquete: ") {
+                    clean(ctx, &["--package".into(), package.display().to_string()])?;
+                }
+            }
+            "" | "q" | "b" | "back" | "volver" | "retour" | "zurück" | "voltar" | "indietro"
+            | "torna" | "terug" | "wstecz" => return Ok(()),
+            _ => println!("{}", i18n::text("menu.invalid")),
+        }
+    }
+}
+
 fn remove_package(
     ctx: &Context,
     package: &str,
@@ -315,15 +398,18 @@ fn remove_package(
     requested_manager: Option<&str>,
 ) -> Result<(), String> {
     let manager = requested_manager
+        .map(normalize_manager)
         .map(str::to_string)
         .or_else(|| {
             [
                 "pacman",
                 "apt-get",
                 "dnf",
+                "yum",
                 "zypper",
                 "apk",
                 "xbps-remove",
+                "pamac",
                 "brew",
                 "snap",
                 "flatpak",
@@ -361,18 +447,8 @@ fn remove_package(
     } else {
         dependency_note = "el gestor resolverá dependencias; revisar su resumen".into();
     }
-    let (program, mut args): (&str, Vec<String>) = match manager.as_str() {
-        "pacman" => ("pacman", vec!["-Rns".into()]),
-        "apt-get" => ("apt-get", vec!["remove".into()]),
-        "dnf" => ("dnf", vec!["remove".into()]),
-        "zypper" => ("zypper", vec!["remove".into()]),
-        "apk" => ("apk", vec!["del".into()]),
-        "xbps-remove" => ("xbps-remove", vec!["-R".into()]),
-        "brew" => ("brew", vec!["uninstall".into()]),
-        "snap" => ("snap", vec!["remove".into()]),
-        "flatpak" => ("flatpak", vec!["uninstall".into(), "--delete-data".into()]),
-        _ => return Err(format!("gestor no soportado para eliminar: {manager}")),
-    };
+    let (program, mut args) = removal_command(&manager)
+        .ok_or_else(|| format!("gestor no soportado para eliminar: {manager}"))?;
     let display = format!("{program} {}", args.join(" "));
     if !ask(&format!(
         "¿Eliminar {package} con {display}? Dependencias: {dependency_note}"
@@ -384,7 +460,7 @@ fn remove_package(
     }
     args.push("--".into());
     args.push(package.into());
-    let ok = run_with_sudo("pacman", &args, ctx.dry_run).map_err(|e| e.to_string())?;
+    let ok = run_with_sudo(program, &args, ctx.dry_run).map_err(|e| e.to_string())?;
     if ok {
         if let Some(plan) = &ctx.plan {
             plan.record(
@@ -530,4 +606,25 @@ fn referenced(path: &Path, home: &Path) -> bool {
         .unwrap_or(false)
 }
 
-use std::process::Command;
+#[cfg(test)]
+mod tests {
+    use super::{normalize_manager, removal_command};
+
+    #[test]
+    fn normalizes_manager_aliases_without_changing_real_commands() {
+        assert_eq!(normalize_manager("apt"), "apt-get");
+        assert_eq!(normalize_manager("xbps"), "xbps-remove");
+        assert_eq!(normalize_manager("dnf"), "dnf");
+        assert_eq!(normalize_manager("pamac"), "pamac");
+    }
+
+    #[test]
+    fn removal_commands_target_the_selected_manager() {
+        assert_eq!(removal_command("dnf").unwrap().0, "dnf");
+        assert_eq!(removal_command("yum").unwrap().0, "yum");
+        assert_eq!(removal_command("pamac").unwrap().0, "pamac");
+        assert_eq!(removal_command("apt-get").unwrap().0, "apt-get");
+        assert_eq!(removal_command("pacman").unwrap().0, "pacman");
+        assert!(removal_command("unsupported").is_none());
+    }
+}

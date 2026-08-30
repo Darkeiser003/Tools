@@ -127,6 +127,7 @@ safe_name() {
 parse_args() {
     [[ $# -gt 0 ]] || { usage; exit 0; }
     case "$1" in
+        --version) printf '%s %s\n' "$SCRIPT_NAME" "$VERSION"; exit 0 ;;
         create|clone|migrate) ACTION="$1"; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "acción desconocida: $1" ;;
@@ -159,6 +160,7 @@ parse_args() {
             --force) FORCE=1; shift ;;
             --batch-mode) BATCH_MODE=1; shift ;;
             --dry-run) DRY_RUN=1; shift ;;
+            --version) printf '%s %s\n' "$SCRIPT_NAME" "$VERSION"; exit 0 ;;
             --plan)
                 [[ $# -ge 2 ]] || die "--plan requiere un fichero"
                 PLAN_PATH="$2"; shift 2 ;;

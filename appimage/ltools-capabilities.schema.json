@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ltools.dev/schema/ltools-capabilities-v1.json",
+  "title": "LTools capabilities",
+  "type": "object",
+  "required": ["schema", "application", "version", "platform", "entrypoints", "features", "terminal_integration", "distribution", "external_integrations"],
+  "properties": {
+    "schema": { "const": "ltools-capabilities-v1" },
+    "application": { "const": "LTools" },
+    "version": { "type": "string" },
+    "platform": { "enum": ["linux", "windows"] },
+    "entrypoints": { "type": "object" },
+    "features": { "type": "array", "items": { "type": "string" } },
+    "terminal_integration": {
+      "type": "object",
+      "required": ["schema", "capability_request", "open_request", "fallback_allowed"],
+      "properties": {
+        "schema": { "const": "lterminal-startup-v1" },
+        "capability_request": { "type": "array", "items": { "type": "string" } },
+        "open_request": { "type": "array", "items": { "type": "string" } },
+        "fallback_allowed": { "type": "boolean" }
+      }
+    },
+    "distribution": { "type": "object" },
+    "external_integrations": {
+      "type": "object",
+      "required": ["lterminal", "optional", "standalone_releases_require_it"],
+      "properties": {
+        "lterminal": { "type": "string" },
+        "optional": { "type": "boolean" },
+        "standalone_releases_require_it": { "type": "boolean" }
+      }
+    }
+  }
+}

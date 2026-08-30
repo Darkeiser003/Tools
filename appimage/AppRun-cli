@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Perfil CLI del AppImage: usa la terminal desde la que se invoca.
+# El backend sigue siendo Rust; este archivo solo evita abrir otra ventana.
+
+set -u
+APPDIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+export LTOOLS_NO_AUTO_TERMINAL=1
+exec "$APPDIR/AppRun-main" "$@"

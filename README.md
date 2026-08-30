@@ -1,148 +1,486 @@
-# LTools
+# LTools (0.3.0)
 
-`ltools.sh` es el punto de entrada único de LTools para mantenimiento de CachyOS:
+Herramientas modulares para auditar, organizar y mantener un equipo Linux,
+con especial atención a CachyOS/Arch, juegos, Wine, Proton y prefijos
+distribuidos entre varios discos. LTools usa un backend Rust nativo; los
+scripts Bash se limitan a lanzadores, builders, pruebas y compatibilidad legacy.
+El usuario puede utilizar el menú o el mismo conjunto de comandos desde una
+terminal, un AppImage o un paquete portable de Windows.
 
-- auditoría general de discos, paquetes y aplicaciones;
-- auditoría de juegos, Wine, Proton, Lutris, Heroic y Steam;
-- limpieza protegida de paquetes, cachés y rutas;
-- creación, clonado y migración verificable de prefijos Wine;
-- listado de prefijos Wine y Proton existentes.
-- comprobación de rutas efectivas y defaults de Wine, winetricks, Proton y Steam.
-- inventario de gestores, paquetes instalados por ámbito y archivos de paquetes descargados.
-- consulta y control protegido de servicios, daemons, procesos y journal mediante systemd.
+| | |
+|---|---|
+| Versión | 0.3.0 |
+| Plataformas | Linux x86_64 · Windows x86_64 portable |
+| Runtime | Rust 2021 · Bash solo para lanzadores/build/tests legacy |
+| Distribución | AppImage terminal, AppImage CLI, tarball Linux y ZIP Windows |
+| Licencia | MIT |
+| Idiomas | Español, inglés, alemán, francés, portugués, italiano, catalán, neerlandés y polaco |
+| Proyecto | [Darkeiser003/Tools](https://github.com/Darkeiser003/Tools) |
 
-La marca del producto es **LTools**. CachyOS, Arch y otras distribuciones se
-refieren únicamente al sistema compatible, no al nombre de la aplicación.
+LTools no es una herramienta de borrado ciego. Sus operaciones de limpieza y
+migración comprueban rutas críticas, dependencias, espacio disponible,
+bloqueos y contenido. Las operaciones modificadoras piden confirmación,
+admiten `--dry-run` y generan planes reversibles cuando corresponde.
 
-## Uso rápido
+## Índice
 
-Sin argumentos se abre el menú:
+- [Qué hace](#qué-hace)
+- [Requisitos](#requisitos)
+- [Instalación y primer uso](#instalación-y-primer-uso)
+- [Comandos](#comandos)
+- [Auditoría de Wine, Proton y juegos](#auditoría-de-wine-proton-y-juegos)
+- [Migración de prefijos](#migración-de-prefijos)
+- [Paquetes y limpieza](#paquetes-y-limpieza)
+- [Salud y gestión del sistema](#salud-y-gestión-del-sistema)
+- [Build y distribución](#build-y-distribución)
+- [Integración JSON y terminal](#integración-json-y-terminal)
+- [Arquitectura](#arquitectura)
+- [Idiomas](#idiomas)
+- [Logs, planes y rollback](#logs-planes-y-rollback)
+- [Pruebas](#pruebas)
+- [Seguridad y límites](#seguridad-y-límites)
+
+## Qué hace
+
+- Audita discos, directorios, archivos grandes, duplicados, caches, basura,
+  instaladores, AppImages, máquinas virtuales y artefactos de compilación.
+- Localiza juegos y prefijos Wine/Proton en Home, Steam, Lutris, Heroic, UMU,
+  Bottles y bibliotecas montadas, evitando confundir un punto de montaje con
+  un prefijo.
+- Inspecciona cada prefijo: tamaño, arquitectura, versión Windows, runners,
+  bloqueos, ejecutables, MSI, programas instalados y contenido relevante.
+- Muestra las rutas efectivas de Wine, `wineboot`, winetricks, Proton, Steam,
+  Heroic, Lutris y UMU, además de las variables activas.
+- Inventaría gestores y formatos de paquetes del sistema y del usuario:
+  pacman/AUR, dpkg/apt, rpm/dnf/yum/zypper, apk, XBPS, pkg, Homebrew,
+  Flatpak, Snap y Pamac cuando están instalados.
+- Limpia huérfanos, caches y rutas seleccionadas sin ejecutarlas si el usuario
+  no confirma la operación.
+- Gestiona servicios, daemons, procesos y journal mediante `systemctl` en
+  Linux, y usa PowerShell, `sc.exe`, `tasklist`, `taskkill` y `wevtutil` en
+  Windows, con diagnósticos que distinguen capacidades no disponibles.
+- Genera AppImage con fallback de extracción si FUSE no está disponible y un
+  ZIP portable nativo para Windows.
+
+## Requisitos
+
+### Para utilizarlo
+
+En Linux, el AppImage lleva el backend de LTools. Las funciones dependen de
+las herramientas que existan en el equipo; `doctor` las enumera y propone el
+paquete adecuado para el gestor detectado.
+
+Para auditorías y limpieza suelen ser útiles `findmnt`, `sha256sum`, `gio`,
+`ps` y el gestor de paquetes local. Para Wine se necesitan `wine`, `wineboot`
+y, opcionalmente, `winetricks`. Para migraciones se recomienda `rsync`.
+`systemctl` y `journalctl` solo aplican a sistemas con systemd.
+En Windows el módulo equivalente usa las herramientas nativas del sistema y
+eleva mediante UAC únicamente las acciones que lo necesitan.
+
+### Para compilar
+
+- Rust y Cargo, con el proyecto en edición 2021.
+- Bash, `tar` y las utilidades habituales del sistema.
+- `appimagetool` para generar AppImage.
+- `appstreamcli` se usa para validar los metadatos de escritorio cuando está
+  instalado.
+- En Windows nativo: PowerShell 5.1+, Rust mediante rustup, MSVC/Visual
+  Studio Build Tools y Windows SDK.
+- Para compilación cruzada Windows desde Linux: target GNU de Rust y MinGW;
+  la ejecución y las pruebas Windows se reservan a Windows nativo.
+
+## Instalación y primer uso
+
+### AppImage Linux
+
+```bash
+chmod +x ltools-0.3.0-linux-x86_64.AppImage
+./ltools-0.3.0-linux-x86_64.AppImage
+```
+
+Si el AppImage se distribuye junto al lanzador auxiliar, este detecta FUSE y
+activa automáticamente la extracción temporal cuando haga falta:
+
+```bash
+./run-ltools.sh
+./run-ltools.sh --doctor
+./run-ltools.sh games --full
+```
+
+El lanzador auxiliar es opcional y no forma parte del tarball runtime.
+
+### Tarball Linux
+
+Descomprime el tarball conservando su estructura y ejecuta `./ltools.sh`. El
+paquete runtime contiene únicamente la fachada, el backend Rust, documentación
+y tests; no incluye builders, módulos Bash legacy ni código de otra plataforma.
+
+### Windows portable
+
+Descomprime el ZIP y ejecuta `ltools.exe`, `ltools.cmd` o:
+
+```powershell
+.\ltools.ps1
+.\ltools.ps1 doctor
+```
+
+La release Windows no incluye módulos Bash, FUSE, Wine, Proton ni comandos
+Linux. Las capacidades no aplicables se muestran como tales.
+
+## Comandos
+
+Sin argumentos se abre el menú interactivo:
 
 ```bash
 ./ltools.sh
 ```
 
-También se puede usar por comandos:
+Rust es el backend normal y único. `--rust` se conserva como opción compatible
+del lanzador, pero ya no selecciona una implementación alternativa:
 
 ```bash
-./ltools.sh audit --full --duplicates --min-size-mb 100
+./ltools.sh --rust audit --full --duplicates --min-size-mb 100
 ./ltools.sh games --full --root /mnt/JuegosLinux
 ./ltools.sh packages
+./ltools.sh defaults
 ./ltools.sh doctor
-./ltools.sh --lang en menu
-./ltools.sh clean --menu --report "$HOME/Informes/disk-audit-..."
+./ltools.sh system status
+./ltools.sh system services
+./ltools.sh system processes
+./ltools.sh rollback --plan /tmp/ltools-plan.tsv
+./ltools.sh capabilities --format json
+```
+
+| Comando | Función |
+|---|---|
+| `audit` | Discos, aplicaciones, archivos grandes y duplicados |
+| `games` | Juegos, runners, Wine, Proton, Steam, Lutris, Heroic y UMU |
+| `packages` | Gestores, paquetes instalados, AUR y archivos descargados |
+| `clean` | Limpieza protegida de paquetes, caches y rutas |
+| `prefix` | Listar, inspeccionar, crear y migrar prefijos |
+| `defaults` | Rutas efectivas y defaults de las herramientas |
+| `system` | Servicios, procesos, daemons y journal |
+| `doctor` | Dependencias, FUSE y diagnóstico del anfitrión |
+| `rollback` | Recuperar operaciones registradas en un plan |
+
+Cada módulo ofrece ayuda propia:
+
+```bash
+./ltools.sh audit --help
+./ltools.sh games --help
+./ltools.sh packages --help
+./ltools.sh clean --help
+./ltools.sh prefix --help
+./ltools.sh system --help
+./ltools.sh --lang en --rust --help
+```
+
+## Integración JSON y terminal
+
+LTools puede describir sus capacidades con un contrato estable y legible por
+máquinas:
+
+```bash
+./ltools.sh capabilities --format json > ltools-capabilities.json
+```
+
+El descriptor se incluye también en el tarball Linux, el AppImage y el ZIP
+portable Windows junto con `ltools-capabilities.schema.json`. Un frontend puede
+usar `entrypoints.menu` para abrir el menú y `terminal_integration` para saber
+qué protocolo necesita la terminal anfitriona.
+
+Para una integración directa basta con distribuir también
+`ltools-terminal.json`; es la versión reducida del contrato destinada única y
+exclusivamente a la integración con la familia LTerminal. Es opcional: no se
+lee ni se necesita para ejecutar el AppImage, el AppImage CLI, el tarball ni el
+`.exe` portable. `ltools-terminal.schema.json` permite validar el descriptor
+antes de instalarlo.
+
+El mismo contrato sirve para las dos variantes del host: el descriptor Linux
+identifica `LTerminal` y usa `ltools`; el descriptor generado por el builder
+Windows identifica `WinSlim Terminal` y usa `ltools.exe`. Esto prepara la
+compatibilidad cruzada sin mezclar los lanzamientos autónomos con la
+integración del host.
+
+LTools no puede invocar una API nativa de una terminal que no la exponga. Para
+integrarse directamente con LTerminal, esta debe implementar la consulta
+`--ltools-capabilities --format json` y la apertura con
+`--open-path RUTA --command COMANDO -- menu`, declarando `lterminal-startup-v1`.
+AppRun lo detecta y registra el diagnóstico. Si LTerminal está instalado pero
+no ofrece todavía ese protocolo, LTools no cambia silenciosamente a Konsole:
+informa del motivo y termina para evitar abrir la aplicación en la terminal
+equivocada. El fallback puede autorizarse conscientemente con
+`LTOOLS_ALLOW_TERMINAL_FALLBACK=1`, o puede seleccionarse una terminal concreta
+con `LTOOLS_TERMINAL=konsole`. `LTOOLS_TERMINAL=lterminal` exige LTerminal y
+nunca usa otra terminal. LTools no modifica LTerminal.
+
+## Salud y gestión del sistema
+
+El módulo `system` separa diagnóstico de acciones. No considera un servicio
+`not-found` como fallo real, explica los `inactive/dead` normales de servicios
+`oneshot`, identifica `active/exited` como tareas terminadas y avisa cuando un
+servicio está `masked` (por ejemplo `power-profiles-daemon`, que no se cambia
+automáticamente).
+
+```bash
+./ltools.sh system status
+./ltools.sh system failed --journal
+./ltools.sh system services --scope both --filter noteworthy
+./ltools.sh system services --filter all --category docker --search container
+./ltools.sh system processes --sort memory --limit 20
+./ltools.sh system journal --level error --hours 6 --limit 100
+./ltools.sh system dependencies --unit docker.service --reverse
+./ltools.sh system export --scope both --format json --out /tmp/ltools-system.json
+```
+
+Los servicios se muestran en columnas completas, sin truncar descripciones, y
+se agrupan por Steam, KDE, Docker, VMware, Wine, red, audio, sesión y sistema.
+Las acciones disponibles son `start`, `stop`, `restart`, `enable`, `disable`,
+`mask` y `unmask`:
+
+```bash
+./ltools.sh --dry-run --plan /tmp/service-plan.tsv \
+  system service restart docker.service
+```
+
+Siempre se pide confirmación. Las acciones del sistema requieren `sudo` cuando
+corresponde; las consultas no modifican nada. En el menú se encuentran en
+«Gestionar servicios, procesos y journal», junto con filtros interactivos,
+dependencias y exportación TSV/JSON.
+
+El AppImage principal es autónomo. Al abrirlo sin argumentos, desde el gestor de
+archivos o desde otra terminal, busca un emulador de terminal del sistema, abre
+una ventana nueva y ejecuta el menú Rust con `LTOOLS_SHELL`, `$SHELL` cuando es
+compatible, o Bash/sh como fallback. No necesita LTerminal y no se bloquea porque LTerminal esté
+ausente, desactualizado o sea incompatible. `LTOOLS_TERMINAL` permite escoger un
+emulador concreto; `LTOOLS_TERMINAL=lterminal` activa deliberadamente la
+integración externa.
+
+## Auditoría de Wine, Proton y juegos
+
+La auditoría busca rutas habituales y también bibliotecas indicadas por
+configuraciones de Steam, Heroic, Lutris y UMU. Clasifica los resultados por
+origen y evita contar como prefijo independiente:
+
+- puntos de montaje completos;
+- `default_pfx` que pertenece a un runner;
+- directorios ya contenidos dentro de otro prefijo detectado;
+- rutas inexistentes o inaccesibles.
+
+En modo completo revisa Home, `/opt`, `/usr/local/share`, caches, bibliotecas
+Steam y las rutas montadas que se indiquen con `--root`.
+
+```bash
+./ltools.sh games --full --root "$HOME" --root /mnt/JuegosLinux
+./ltools.sh prefix list
+./ltools.sh prefix list --include-mount-roots
+./ltools.sh prefix inspect --path "$HOME/.wine"
+./ltools.sh defaults
+```
+
+## Migración de prefijos
+
+La migración mueve el contenido de un prefijo a un destino dado; no mete un
+prefijo dentro de otro ni fusiona varios `drive_c`. Para varios orígenes crea
+un destino independiente dentro de la carpeta central.
+
+```bash
 ./ltools.sh prefix migrate \
   --source "$HOME/.wine" \
   --dest /mnt/JuegosLinux/prefixes/wine-main \
-  --select --rewrite-configs --set-defaults --remove-source
+  --select \
+  --rewrite-configs \
+  --set-defaults \
+  --update-launchers \
+  --remove-source
 ```
 
-Cada módulo conserva su ayuda completa:
+Antes de copiar comprueba que el destino no sea peligroso, que haya espacio y
+que no existan bloqueos activos. Después compara el contenido. Solo tras la
+verificación y la confirmación del usuario ofrece retirar el origen a la
+papelera. Si una referencia de Lutris, Heroic, UMU o Steam no se puede
+actualizar automáticamente, se informa de la aplicación, el fichero y la ruta
+que debe revisarse.
+
+`--set-defaults` configura el `WINEPREFIX` persistente y hace backup. También
+puede activarse en la shell con `--activate-shell`. Steam/Proton no tiene un
+default global único seguro: Steam gestiona un `compatdata` por AppID.
+
+## Paquetes y limpieza
+
+`packages` sondea los gestores disponibles en lugar de recorrer el disco sin
+criterio. Separa paquetes del sistema, externos/AUR, Flatpak, Snap y archivos
+descargados. La eliminación usa el gestor que el usuario seleccione y no está
+fijada accidentalmente a pacman. Antes de retirar un paquete se comprueban
+dependencias y, si existen, se ofrece cancelar o resolverlas mediante el
+gestor correspondiente.
+
+Ejemplos seguros:
 
 ```bash
-./ltools.sh prefix list
-./ltools.sh prefix inspect
-./ltools.sh defaults
-./ltools.sh system status
-./ltools.sh system services
-./ltools.sh system --user services
-./ltools.sh clean --dry-run --path "$HOME/.cache/paru" --plan /tmp/limpieza.tsv
-./ltools.sh rollback --plan /tmp/limpieza.tsv
-./ltools.sh --rust games --full --dry-run
-./ltools.sh packages --help
-./ltools.sh audit --help
-./ltools.sh games --help
-./ltools.sh clean --help
-./ltools.sh prefix --help
+./ltools.sh packages --out "$HOME/Informes/ltools-packages"
+./ltools.sh clean --dry-run --package-caches --plan /tmp/ltools-clean.tsv
+./ltools.sh clean --dry-run --path "$HOME/.cache/paru" --plan /tmp/ltools-cache.tsv
+./ltools.sh rollback --plan /tmp/ltools-cache.tsv
 ```
 
-El lanzador y los módulos deben permanecer en el mismo directorio. Los módulos siguen disponibles para compatibilidad y recuperación; el uso normal recomendado es siempre `ltools.sh`.
+El modo de limpieza no incluye automáticamente bibliotecas de juegos, máquinas
+virtuales, prefijos ni puntos de montaje. Esas rutas requieren selección
+explícita y mantienen los bloqueos de seguridad.
 
-La limpieza y la migración mantienen sus confirmaciones y bloqueos de seguridad. La migración no retira el origen hasta verificar la copia y recibir las frases de confirmación correspondientes.
+## Build y distribución
 
-La migración por lotes es uno-a-uno: selecciona varios orígenes y el programa crea un destino independiente para cada uno dentro de la carpeta central elegida. El contenido de cada origen se copia directamente en su destino; no se fusionan varios prefijos en uno porque sus registros y `drive_c` entrarían en conflicto.
-
-`--set-defaults` genera el entorno persistente para Wine/winetricks. Con
-`--activate-shell` también ofrece activarlo en `.bashrc`, `.zshrc` y
-`environment.d`, siempre con backup. `--update-launchers` actualiza los
-defaults globales compatibles de Heroic y revisa referencias de Lutris, UMU y
-Steam con copia de seguridad. Steam/Proton usa un `compatdata` por AppID; no
-se inventa un default global que pueda romper juegos.
-
-Durante la migración por lotes, las confirmaciones por prefijo son preguntas sencillas `[y/N]`. Se conserva la verificación de la copia, la comprobación de bloqueos y la retirada reversible a la papelera.
-
-El modo por lotes no establece un `WINEPREFIX` global, ya que solo puede haber un default activo. Para fijar uno concreto usa después `--set-defaults` en una migración individual.
-
-La arquitectura modular y la hoja de ruta de la implementación Rust están en [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
-La interfaz prevista con LTerminal está descrita en
-[`docs/LTERMINAL-INTEGRATION.md`](docs/LTERMINAL-INTEGRATION.md).
-
-El backend Rust ya cubre auditoría, juegos/configuraciones, paquetes,
-limpieza, prefijos, defaults, systemd/procesos y rollback. Se selecciona con
-`--rust` o mediante `rust-tools.sh`; conserva los TSV y planes compatibles.
-Compílalo con `cargo build --release --manifest-path rust/Cargo.toml`. La
-paridad exacta de todos los informes Bash y la salida JSON versionada siguen
-siendo ampliaciones pendientes.
-
-## Build distribuible
-
-Para validar y empaquetar todo el proyecto en un único archivo:
+Build Linux completa:
 
 ```bash
-./build.sh
-./build.sh --non-interactive --fast --no-tests
+./build.sh --non-interactive --fast
+```
+
+La build Linux ejecuta rustfmt, Clippy, tests Rust, sintaxis Bash, contratos,
+compilación release, tarball, AppImage, smoke, E2E de migración/rollback y E2E
+de menús y funciones. También valida AppStream, FUSE, idiomas, gestores de
+paquetes, duplicados y las rutas efectivas del ecosistema Wine. No ejecuta
+binarios Windows mediante Wine.
+
+La salida Linux ofrece tres entregables de uso:
+
+- `ltools-VERSION-linux-ARQUITECTURA.AppImage`: AppImage autónomo; abre su
+  propia ventana de terminal al ejecutarse sin argumentos.
+- `ltools-VERSION-linux-ARQUITECTURA-cli.AppImage`: perfil CLI; usa siempre la
+  terminal desde la que se invoca y nunca abre otra ventana.
+- `ltools-VERSION-linux-ARQUITECTURA.tar.gz`: paquete runtime para integrarlo
+  manualmente. En Windows, `ltools.exe` es el ejecutable nativo dentro del ZIP
+  portable. El builder Windows deja también el `.exe` suelto para lanzarlo
+  desde el explorador y abrir su consola propia.
+
+Cada paquete incluye `ltools-capabilities.json`. Además, `ltools-terminal.json`
+es un tercer entregable lógico, exclusivo para integraciones como LTerminal:
+contiene el protocolo, los argumentos de apertura y la capacidad que debe
+anunciar la terminal. No es necesario para ejecutar el AppImage ni el `.exe`.
+
+Opciones frecuentes:
+
+```bash
 ./build.sh --clean --output /tmp/ltools-dist
 ./build.sh --appimage --no-package
 ./build.sh --non-interactive --no-smoke --no-e2e
 ./build.sh --appimage --require-fuse
 ```
 
-El build comprueba Rust, Clippy, rustfmt y la sintaxis Bash, compila el backend
-release y genera `dist/ltools-VERSION-linux-ARQUITECTURA.tar.gz` y
-`dist/ltools-VERSION-linux-ARQUITECTURA.AppImage` (o el directorio
-indicado con `--output`). El AppImage incluye un preflight que detecta las
-herramientas del sistema y ofrece instalarlas según el gestor disponible. El
-build ejecuta además smoke tests y una prueba E2E aislada de migración y
-rollback. También comprueba las dependencias de empaquetado y la capacidad
-FUSE del equipo. El build no instala paquetes ni modifica el sistema.
+El builder Windows está en `windows/build.ps1` y usa MSVC por defecto:
 
-`--require-fuse` convierte la comprobación en obligatoria y detiene la build
-si falta `/dev/fuse` o `fusermount3`/`fusermount`. Sin esa opción se genera el
-AppImage igualmente y se valida el modo de extracción, que es compatible con
-equipos sin FUSE.
-
-Desde el AppImage puedes revisar las dependencias del equipo con:
-
-```bash
-./dist/ltools-*.AppImage --doctor
-./dist/ltools-*.AppImage --fuse-check
+```powershell
+.\windows\build.ps1
+.\windows\build.ps1 -Fast
+.\windows\build.ps1 -Force -NoRun
+.\windows\build.ps1 -Target x86_64-pc-windows-gnu
 ```
 
-Si el sistema no tiene FUSE disponible, un AppImage directo puede fallar antes
-de iniciar. La build genera `dist/run-ltools.sh`, que detecta FUSE y
-activa automáticamente `APPIMAGE_EXTRACT_AND_RUN=1` como fallback seguro:
+Mantiene su estado incremental en `dist/windows/.build-state.json`, separa el
+target en `rust/target/windows` y genera un ZIP portable por arquitectura.
 
-```bash
-./dist/run-ltools.sh --doctor
-./dist/run-ltools.sh games --full
+## Arquitectura
+
+El proyecto mantiene dos capas compatibles:
+
+```text
+.
+├── ltools.sh                 Lanzador compatible del backend Rust
+├── rust/
+│   ├── Cargo.toml            Backend nativo y metadata de la aplicación
+│   └── src/                  Núcleo compartido y adaptadores por plataforma
+│       └── platform/         Implementaciones Linux y Windows aisladas
+├── platform/
+│   └── linux/
+│       └── build.sh          Builder Linux/AppImage
+├── legacy/
+│   └── bash/                 Compatibilidad opcional, no backend
+├── appimage/                 AppRun, desktop, icono y metadata AppStream
+├── windows/                  Builder, lanzadores y tests nativos Windows
+├── tests/                    Contratos y lanzadores compatibles
+│   └── linux/                Smoke y E2E Linux/AppImage
+└── build.sh                  Lanzador compatible del builder Linux
 ```
 
-`--doctor --install-missing` ofrece instalar las dependencias detectadas,
-incluido FUSE. En CachyOS/Arch propone `fuse2`; en Debian/Ubuntu y Fedora
-propone `fuse3`. También puedes ejecutar `sudo modprobe fuse` si el paquete ya
-está instalado.
+Rust es el único backend de LTools para Linux, AppImage y Windows. Los scripts
+`.sh` restantes son lanzadores, builders, harnesses de prueba o compatibilidad
+legacy; no se invocan como implementación funcional normal ni se empaquetan en
+el tarball/AppImage.
 
-Cada build deja el registro de la apertura directa en
-`dist/appimage-smoke.log`. Si la ejecución falla, el build se detiene y muestra
-el motivo real del runtime AppImage, en lugar de entregar silenciosamente un
-archivo que no abre.
+## Idiomas
 
-Las pruebas se pueden ejecutar sin empaquetar:
+El idioma se obtiene de `LTOOLS_LANG`, `LC_ALL`, `LC_MESSAGES` o `LANG` y se
+puede forzar en una ejecución:
 
 ```bash
-./tests/smoke.sh --binary rust/target/release/ltools
-./tests/e2e.sh --binary rust/target/release/ltools
+LTOOLS_LANG=en ./ltools.sh --help
+./ltools.sh --lang de menu
+./ltools.sh --lang fr defaults
 ```
 
-El backend Rust es el predeterminado del AppImage. `--bash` permite usar la
-fachada Bash de compatibilidad.
+Los códigos soportados son `es`, `en`, `de`, `fr`, `pt`, `it`, `ca`, `nl` y
+`pl`. `auto` usa el locale del entorno y, si no hay traducción, se usa español.
+Los tests comprueban normalización como `en_US.UTF-8` y `pt-BR`, además de todos
+los catálogos disponibles.
+
+## Logs, planes y rollback
+
+Cada build guarda una transcripción y una tabla de tiempos:
+
+```text
+dist/build-AAAAMMDD-HHMMSS-PID.log
+dist/build-AAAAMMDD-HHMMSS-PID-timings.tsv
+dist/appimage-smoke.log
+```
+
+El log registra configuración, comandos, códigos de salida y duración. Las
+operaciones modificadoras aceptan `--plan FICHERO`; el plan describe acciones
+ejecutadas y permite lanzar `rollback --plan FICHERO`. `--dry-run` no crea
+destinos ni modifica datos.
+
+## Pruebas
+
+Para ejecutar la batería completa:
+
+```bash
+./build.sh --non-interactive --fast
+```
+
+Pruebas individuales:
+
+```bash
+cargo test --manifest-path rust/Cargo.toml --all-targets
+cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings
+./tests/contracts.sh
+./tests/linux/smoke.sh --binary rust/target/release/ltools
+./tests/linux/e2e.sh --binary rust/target/release/ltools
+./tests/linux/menu-e2e.sh --binary rust/target/release/ltools
+```
+
+En Windows nativo:
+
+```powershell
+.\windows\build.ps1 -Force
+```
+
+El smoke y la E2E Windows están en `windows/tests/` y prueban el ejecutable,
+informes, copia verificada, planes, listado y papelera nativa. Deben ejecutarse
+en Windows; el pipeline Linux solo compila/verifica estáticamente el target
+Windows y no invoca Wine.
+
+## Seguridad y límites
+
+- Nunca se debe ejecutar una limpieza o migración real sin revisar primero el
+  informe y probar `--dry-run`.
+- `/`, `/home`, `/mnt`, `/opt`, `/usr`, `/var`, `/etc`, `/boot`, `/run`, puntos
+  de montaje, `steamapps`, `compatdata` y runners compartidos tienen bloqueo
+  adicional o requieren selección explícita.
+- La detección de configuraciones SQLite y binarias es conservadora: muestra
+  rutas y avisos cuando no puede modificar un formato con seguridad.
+- Heroic, Lutris, UMU y Steam se actualizan solo en formatos conocidos y con
+  copia de seguridad. Las referencias restantes se reportan para revisión
+  manual.
+- La build no instala paquetes ni modifica el sistema. `doctor --install-missing`
+  solo ofrece instalaciones cuando el usuario las solicita.
+- Los artefactos generados, caches, informes, logs, targets y dependencias de
+  frontend están excluidos por `.gitignore`; `Cargo.lock` sí se versiona.

@@ -1,79 +1,277 @@
 #!/usr/bin/env bash
-# AppRun: integración ligera con las herramientas del sistema anfitrión.
+# AppRun: lanzador Linux del backend Rust de LTools.
 
 set -uo pipefail
 APPDIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-source "$APPDIR/scripts/host-tools.sh"
+BACKEND="${LTOOLS_BINARY:-}"
+if [[ -z "$BACKEND" ]]; then
+    for candidate in \
+        "$APPDIR/rust/target/release/ltools" \
+        "$APPDIR/rust/target/debug/ltools"; do
+        if [[ -x "$candidate" ]]; then
+            BACKEND="$candidate"
+            break
+        fi
+    done
+fi
+[[ -x "$BACKEND" ]] || {
+    printf 'No se encontró el backend Rust dentro del AppImage.\n' >&2
+    exit 2
+}
 
 launch_menu_in_terminal() {
-    local terminal
-    for terminal in x-terminal-emulator konsole gnome-terminal kgx xfce4-terminal kitty alacritty foot wezterm mate-terminal tilix xterm; do
-        command -v "$terminal" >/dev/null 2>&1 || continue
-        export LTOOLS_TERMINAL_LAUNCH=1
-        case "$terminal" in
-            gnome-terminal|kgx)
-                "$terminal" --wait -- "$APPDIR/AppRun" menu &
-                ;;
-            konsole)
-                "$terminal" -e "$APPDIR/AppRun" menu &
-                ;;
-            xfce4-terminal)
-                "$terminal" --disable-server --command="$APPDIR/AppRun menu" &
-                ;;
-            alacritty)
-                "$terminal" -e "$APPDIR/AppRun" menu &
-                ;;
-            wezterm)
-                "$terminal" start -- "$APPDIR/AppRun" menu &
-                ;;
-            *)
-                "$terminal" "$APPDIR/AppRun" menu &
+    local terminal launch_log lterminal target terminal_mode shell shell_command
+    launch_log="${LTOOLS_LAUNCH_LOG:-${XDG_STATE_HOME:-${HOME:-/tmp}/.local/state}/ltools/launcher.log}"
+    mkdir -p -- "$(dirname -- "$launch_log")" 2>/dev/null || launch_log="/tmp/ltools-launcher.log"
+
+    launch_terminal() {
+        local pid status
+        {
+            printf '[%s] starting' "$(date --iso-8601=seconds 2>/dev/null || date)"
+            printf ' command='
+            printf '%q ' "$@"
+            printf '\n'
+        } >>"$launch_log"
+        # Detach the terminal from the AppImage process.  Without an
+        # inherited stdin and SIGHUP protection, some AppImage runtimes wait
+        # for the child during mount cleanup and the no-TTY launch can hang.
+        nohup "$@" >>"$launch_log" 2>&1 </dev/null &
+        pid=$!
+        sleep 0.25
+        if kill -0 "$pid" 2>/dev/null; then
+            printf '[%s] started pid=%s\n' "$(date --iso-8601=seconds 2>/dev/null || date)" "$pid" >>"$launch_log"
+            return 0
+        fi
+        if wait "$pid" 2>/dev/null; then
+            status=0
+        else
+            status=$?
+        fi
+        printf '[%s] failed status=%s\n' "$(date --iso-8601=seconds 2>/dev/null || date)" "$status" >>"$launch_log"
+        return 1
+    }
+
+    select_shell() {
+        local candidate requested
+        requested="${LTOOLS_SHELL:-${SHELL:-}}"
+        # fish no es compatible con la sintaxis POSIX que usamos para
+        # entregar el ejecutable al emulador; Bash es el fallback portable.
+        case "${requested##*/}" in
+            bash|sh|dash|zsh)
+                [[ -x "$requested" ]] && printf '%s\n' "$requested" && return 0
                 ;;
         esac
-        printf 'Menú abierto en %s.\n' "$terminal"
+        for candidate in bash /bin/bash sh /bin/sh; do
+            if [[ "$candidate" == */* && -x "$candidate" ]] ||
+                [[ "$candidate" != */* ]] && command -v "$candidate" >/dev/null 2>&1; then
+                if [[ "$candidate" == */* ]]; then
+                    printf '%s\n' "$candidate"
+                else
+                    command -v "$candidate"
+                fi
+                return 0
+            fi
+        done
+        return 1
+    }
+
+    launch_standard_terminal() {
+        local selected_terminal="$1" selected_shell="$2" selected_target="$3"
+        printf -v shell_command 'exec %q menu' "$selected_target"
+        case "$selected_terminal" in
+            x-terminal-emulator)
+                launch_terminal "$selected_terminal" -e "$selected_shell" -lc "$shell_command"
+                ;;
+            gnome-terminal|kgx)
+                launch_terminal "$selected_terminal" --wait -- "$selected_shell" -lc "$shell_command"
+                ;;
+            konsole)
+                launch_terminal "$selected_terminal" --separate -e "$selected_shell" -lc "$shell_command"
+                ;;
+            xfce4-terminal)
+                # Esta terminal recibe un único string en --command; el
+                # backend sigue siendo el binario Rust y no un script Bash.
+                launch_terminal "$selected_terminal" --disable-server \
+                    --command="$selected_shell -lc $(printf '%q' "$shell_command")"
+                ;;
+            kitty)
+                launch_terminal "$selected_terminal" --title LTools "$selected_shell" -lc "$shell_command"
+                ;;
+            alacritty)
+                launch_terminal "$selected_terminal" --title LTools -e "$selected_shell" -lc "$shell_command"
+                ;;
+            wezterm)
+                launch_terminal "$selected_terminal" start -- "$selected_shell" -lc "$shell_command"
+                ;;
+            foot)
+                launch_terminal "$selected_terminal" "$selected_shell" -lc "$shell_command"
+                ;;
+            *)
+                launch_terminal "$selected_terminal" -e "$selected_shell" -lc "$shell_command"
+                ;;
+        esac
+    }
+
+    find_lterminal() {
+        local candidate root
+        if [[ -n "${LTOOLS_LTERMINAL:-}" ]]; then
+            candidate="$LTOOLS_LTERMINAL"
+            if [[ "$candidate" == */* ]]; then
+                [[ -x "$candidate" ]] && printf '%s\n' "$candidate"
+            else
+                command -v "$candidate" 2>/dev/null || true
+            fi
+            return
+        fi
+        for candidate in lterminal LTerminal; do
+            if command -v "$candidate" >/dev/null 2>&1; then
+                command -v "$candidate"
+                return
+            fi
+        done
+        for candidate in \
+            "${LTERMINAL_APPIMAGE:-}" \
+            "${HOME:-}/.local/bin/LTerminal.AppImage" \
+            "${HOME:-}/Applications/LTerminal.AppImage" \
+            "/opt/LTerminal.AppImage" \
+            "/usr/local/bin/LTerminal.AppImage"; do
+            [[ -n "$candidate" && -x "$candidate" ]] || continue
+            printf '%s\n' "$candidate"
+            return
+        done
+        root="${HOME:-}/Documentos/LTerminal Projects"
+        if [[ -d "$root" ]]; then
+            find "$root" -maxdepth 5 -type f \
+                \( -iname 'lterminal*.appimage' -o -iname 'winslim-terminal*.appimage' \) \
+                -perm -u+x -print -quit 2>/dev/null || true
+        fi
+    }
+
+    lterminal_supports_startup_command() {
+        local candidate capabilities probe_log probe_status
+        candidate="$1"
+        if [[ "${LTOOLS_LTERMINAL_ASSUME_PROTOCOL:-0}" == 1 ]]; then
+            printf '[%s] LTerminal protocol forced by environment\n' \
+                "$(date --iso-8601=seconds 2>/dev/null || date)" >>"$launch_log"
+            return 0
+        fi
+        command -v timeout >/dev/null 2>&1 || {
+            printf '[%s] no se puede comprobar LTerminal: falta timeout\n' \
+                "$(date --iso-8601=seconds 2>/dev/null || date)" >>"$launch_log"
+            return 1
+        }
+        probe_log="$(mktemp "${TMPDIR:-/tmp}/ltools-lterminal-probe.XXXXXX" 2>/dev/null || printf '/tmp/ltools-lterminal-probe.%s' "$$")"
+        capabilities="$(timeout 5 "$candidate" --ltools-capabilities --format json 2>"$probe_log")"
+        probe_status=$?
+        if [[ "$capabilities" == *lterminal-startup-v1* ]]; then
+            printf '[%s] LTerminal protocol detected: %s\n' \
+                "$(date --iso-8601=seconds 2>/dev/null || date)" "$candidate" >>"$launch_log"
+            rm -f -- "$probe_log" 2>/dev/null || true
+            return 0
+        fi
+        {
+            printf '[%s] LTerminal encontrado pero sin protocolo de arranque: %s\n' \
+                "$(date --iso-8601=seconds 2>/dev/null || date)" "$candidate"
+            printf '[%s] resultado de la comprobación: status=%s\n' \
+                "$(date --iso-8601=seconds 2>/dev/null || date)" "$probe_status"
+            if [[ -s "$probe_log" ]]; then
+                printf '[%s] salida de diagnóstico de LTerminal:\n' \
+                    "$(date --iso-8601=seconds 2>/dev/null || date)"
+                sed -n '1,40p' "$probe_log"
+            fi
+        } >>"$launch_log"
+        rm -f -- "$probe_log" 2>/dev/null || true
+        return 1
+    }
+
+    terminal_mode="${LTOOLS_TERMINAL:-auto}"
+    target="${APPIMAGE:-$APPDIR/AppRun}"
+
+    # LTerminal es una integración explícita. El AppImage autónomo no debe
+    # depender de ella ni bloquear su propia ventana si está desactualizada.
+    if [[ "$terminal_mode" == lterminal ]]; then
+        lterminal="$(find_lterminal | head -n 1)"
+        if [[ -n "$lterminal" ]] && lterminal_supports_startup_command "$lterminal"; then
+            export LTOOLS_TERMINAL_LAUNCH=1
+            if launch_terminal "$lterminal" --open-path "$PWD" --command "$target" -- menu; then
+                printf 'Menú abierto en LTerminal.\n'
+                printf 'Registro del lanzador: %s\n' "$launch_log"
+                return 0
+            fi
+        fi
+        printf 'Se solicitó LTerminal, pero no se encontró una instalación compatible.\n' >&2
+        printf 'Revisa LTOOLS_LTERMINAL y el protocolo lterminal-startup-v1.\n' >&2
+        printf 'Registro del lanzador: %s\n' "$launch_log" >&2
+        return 3
+    fi
+
+    terminal_candidates=(x-terminal-emulator konsole gnome-terminal kgx xfce4-terminal kitty alacritty foot wezterm mate-terminal tilix xterm)
+    if [[ "$terminal_mode" != auto ]]; then
+        terminal_candidates=("$terminal_mode")
+    fi
+    shell="$(select_shell || true)"
+    if [[ -z "$shell" ]]; then
+        printf 'No se encontró Bash ni una shell compatible para abrir la ventana de LTools.\n' >&2
+        printf 'Registro del lanzador: %s\n' "$launch_log" >&2
+        return 1
+    fi
+    for terminal in "${terminal_candidates[@]}"; do
+        command -v "$terminal" >/dev/null 2>&1 || continue
+        export LTOOLS_TERMINAL_LAUNCH=1
+        launch_standard_terminal "$terminal" "$shell" "$target" || continue
+        printf 'Menú autónomo abierto en %s usando %s.\n' "$terminal" "${shell##*/}"
+        printf 'Registro del lanzador: %s\n' "$launch_log"
         return 0
     done
+
+    # Si no hay un emulador de terminal estándar, un LTerminal compatible
+    # sigue siendo una alternativa válida para que el AppImage no quede
+    # inutilizable en equipos donde sea la única terminal gráfica.
+    if [[ "$terminal_mode" == auto ]]; then
+        lterminal="$(find_lterminal | head -n 1)"
+        if [[ -n "$lterminal" ]] && lterminal_supports_startup_command "$lterminal"; then
+            export LTOOLS_TERMINAL_LAUNCH=1
+            if launch_terminal "$lterminal" --open-path "$PWD" --command "$target" -- menu; then
+                printf 'Menú abierto en LTerminal como fallback.\n'
+                printf 'Registro del lanzador: %s\n' "$launch_log"
+                return 0
+            fi
+        fi
+    fi
     printf 'No se encontró una terminal gráfica para mostrar el menú.\n' >&2
     printf 'Abre una terminal y ejecuta este AppImage con el argumento «menu».\n' >&2
+    printf 'Revisa el registro: %s\n' "${LTOOLS_LAUNCH_LOG:-/tmp/ltools-launcher.log}" >&2
     return 1
 }
 
 if [[ "${1:-}" == --doctor ]]; then
     shift
-    host_doctor "$@"
-    exit $?
+    set -- doctor "$@"
 fi
 
 if [[ "${1:-}" == --fuse-check ]]; then
-    host_fuse_report
-    exit $?
+    shift
+    set -- fuse-check "$@"
 fi
 
-# Al abrir un AppImage desde el gestor de archivos normalmente no existe un
-# TTY. El menú es interactivo, así que necesita una terminal visible. Se evita
-# la recursión con una variable de entorno y se permite desactivar este
-# comportamiento para pruebas o integraciones que ya proporcionen una terminal.
-if [[ "$#" -eq 0 && ! -t 0 && ! -t 1 && "${LTOOLS_TERMINAL_LAUNCH:-0}" != 1 &&
+ARGS=()
+for arg in "$@"; do
+    [[ "$arg" == "--rust" ]] || ARGS+=("$arg")
+done
+set -- "${ARGS[@]}"
+
+# El perfil AppImage es autónomo: sin argumentos siempre solicita una ventana
+# de terminal propia, incluso si se lanzó desde otra terminal. Se evita la
+# recursión con una variable de entorno; AppRun-cli y las integraciones pasan
+# explícitamente LTOOLS_NO_AUTO_TERMINAL o el comando `menu`.
+if [[ "$#" -eq 0 && "${LTOOLS_TERMINAL_LAUNCH:-0}" != 1 &&
     "${LTOOLS_NO_AUTO_TERMINAL:-0}" != 1 ]]; then
     launch_menu_in_terminal
     exit $?
 fi
 
-host_preflight "$@"
-
-# Rust es el backend normal del AppImage. --bash permite usar la fachada
-# Bash como recuperación compatible sin duplicar el contenido del AppImage.
-use_bash=0
-filtered=()
-for arg in "$@"; do
-    if [[ "$arg" == --bash ]]; then
-        use_bash=1
-    else
-        filtered+=("$arg")
-    fi
-done
-if [[ "$use_bash" -eq 1 ]]; then
-    exec "$APPDIR/ltools.sh" "${filtered[@]}"
-else
-    exec "$APPDIR/ltools.sh" --rust "${filtered[@]}"
+if [[ "$#" -eq 0 ]]; then
+    set -- menu
 fi
+
+exec "$BACKEND" "$@"
