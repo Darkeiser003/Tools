@@ -438,6 +438,25 @@ operaciones modificadoras aceptan `--plan FICHERO`; el plan describe acciones
 ejecutadas y permite lanzar `rollback --plan FICHERO`. `--dry-run` no crea
 destinos ni modifica datos.
 
+Los logs, informes, planes, targets, staging y artefactos de distribución son
+locales y están excluidos por `.gitignore`. Para inspeccionar qué residuos
+ignorados se eliminarían antes de limpiar el árbol de trabajo:
+
+```bash
+git clean -ndX -- dist reports tmp rust/target
+```
+
+Cuando la lista sea correcta, se pueden retirar únicamente esas salidas
+regenerables con:
+
+```bash
+git clean -fdX -- dist reports tmp rust/target
+```
+
+`./build.sh --clean` limpia solamente los targets Rust y conserva los demás
+resultados locales; el builder vuelve a crear todo lo necesario en la próxima
+ejecución.
+
 ## Pruebas
 
 Para ejecutar la batería completa:
@@ -483,4 +502,5 @@ Windows y no invoca Wine.
 - La build no instala paquetes ni modifica el sistema. `doctor --install-missing`
   solo ofrece instalaciones cuando el usuario las solicita.
 - Los artefactos generados, caches, informes, logs, targets y dependencias de
-  frontend están excluidos por `.gitignore`; `Cargo.lock` sí se versiona.
+  frontend están excluidos por `.gitignore`; `Cargo.lock` sí se versiona. Antes
+  de un commit se recomienda revisar `git status --short --ignored`.

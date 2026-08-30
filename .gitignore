@@ -1,12 +1,17 @@
 # LTools — fuentes que sí deben versionarse:
 # scripts, Rust/Cargo.lock, documentación, recursos AppImage y tests.
 
-# Artefactos distribuibles y staging local.
+# Artefactos distribuibles y staging local. Todo se puede regenerar con el
+# builder; no se guardan releases ni resultados de una máquina concreta.
 dist/
 build/
 out/
 artifacts/
 release/
+**/dist/
+**/build/
+**/out/
+**/artifacts/
 .ltools-build.*
 .appimage-builder/
 *.AppImage
@@ -27,10 +32,13 @@ release/
 target/
 rust/target/
 **/target/
-rust/target/windows/
 *.rs.bk
 *.pdb
 *.exe
+*.dll
+*.lib
+*.ilk
+*.dSYM/
 
 # Node, JavaScript y gestores de frontend/herramientas auxiliares.
 node_modules/
@@ -42,6 +50,7 @@ node_modules/
 .next/
 .svelte-kit/
 coverage/
+**/coverage/
 *.tsbuildinfo
 npm-debug.log*
 yarn-debug.log*
@@ -50,6 +59,7 @@ pnpm-debug.log*
 
 # Python y otras caches de tooling.
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *.so
 .venv/
@@ -62,20 +72,27 @@ env/
 
 # Informes, planes, resultados y temporales de pruebas.
 reports/
+**/reports/
 rust-audit-*/
 test-results/
 .test-results/
 .tmp/
 tmp/
+**/tmp/
 *.plan.tsv
 *-plan.tsv
 migrate-plan.tsv
 cleanup-plan.tsv
 *.profraw
+*.junit.xml
+*.tap
 
 # Estado incremental y salidas locales del builder Windows.
 windows/.build-state.json
 dist/windows/.build-state.json
+windows/target/
+windows/bin/
+windows/obj/
 
 # Logs generados por builds, smoke/E2E y herramientas locales.
 *.log
@@ -90,6 +107,8 @@ build-*.tsv
 *~
 *.swp
 *.swo
+*.orig
+*.rej
 
 # IDE, sistema operativo y metadatos locales.
 .idea/
@@ -106,3 +125,8 @@ Desktop.ini
 .env
 .env.*
 !.env.example
+
+# Estado local de LTools y herramientas auxiliares.
+.ltools/
+.ltools-state/
+.cargo-local/
