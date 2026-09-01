@@ -91,6 +91,23 @@ LIST_OUTPUT="$("$BIN" --dry-run --plan "$PLAN" prefix list --root "$TMP_DIR/root
 grep -Fq 'demo-prefix' <<<"$LIST_OUTPUT" || die 'el listado no detectó el prefijo sintético'
 ok 'listado aislado de un prefijo sintético'
 
+RELEASE_FIXTURE_DIR="$TMP_DIR/release-assets"
+mkdir -p "$RELEASE_FIXTURE_DIR"
+printf 'synthetic-appimage\n' > "$RELEASE_FIXTURE_DIR/ltools-0.3.0-linux-x86_64.AppImage"
+RELEASE_MANIFEST="$TMP_DIR/ltools-release.json"
+"$BIN" release-manifest \
+    --output "$RELEASE_MANIFEST" \
+    --repository Darkeiser003/Tools \
+    --tag v0.3.0 \
+    --artifacts-dir "$RELEASE_FIXTURE_DIR" >/dev/null
+grep -Fq '"schema": "ltools-release-v1"' "$RELEASE_MANIFEST" ||
+    die 'el manifiesto de release no declara su esquema'
+grep -Fq '"platform":"linux"' "$RELEASE_MANIFEST" ||
+    die 'el manifiesto de release no detectó Linux'
+grep -Eq '"sha256":"[a-f0-9]{64}"' "$RELEASE_MANIFEST" ||
+    die 'el manifiesto de release no contiene un SHA-256 válido'
+ok 'manifiesto GitHub de release con tamaño y SHA-256'
+
 if [[ -n "$APPIMAGE_PATH" ]]; then
     [[ -x "$APPIMAGE_PATH" ]] || die "AppImage no ejecutable: $APPIMAGE_PATH"
     DIRECT_LOG="${LOG_PATH:-$TMP_DIR/appimage-direct.log}"

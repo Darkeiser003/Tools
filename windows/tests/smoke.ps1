@@ -25,6 +25,18 @@ try {
     Run @('doctor')
     Run @('defaults')
     Run @('capabilities', '--format', 'json')
+    $releaseAssets = Join-Path $temp 'release-assets'
+    New-Item -ItemType Directory -Force -Path $releaseAssets | Out-Null
+    $releaseFixture = Join-Path $releaseAssets 'ltools-0.3.0-windows-x86_64.exe'
+    Set-Content -Encoding UTF8 $releaseFixture 'synthetic-windows-release'
+    $releaseManifest = Join-Path $temp 'ltools-release.json'
+    Run @('release-manifest', '--output', $releaseManifest, '--repository', 'Darkeiser003/Tools', '--tag', 'v0.3.0', '--artifacts-dir', $releaseAssets)
+    $releaseJson = Get-Content -Raw $releaseManifest | ConvertFrom-Json
+    if ($releaseJson.schema -ne 'ltools-release-v1' -or $releaseJson.artifacts.Count -ne 1 -or
+        $releaseJson.artifacts[0].platform -ne 'windows' -or
+        $releaseJson.artifacts[0].sha256 -notmatch '^[a-f0-9]{64}$') {
+        throw 'El manifiesto de release Windows no contiene los metadatos esperados.'
+    }
     Run @('audit', '--root', $temp, '--no-mounts', '--out', (Join-Path $temp 'report'))
     if (-not (Test-Path (Join-Path $temp 'report\summary.txt'))) { throw 'El resumen del informe Windows no se generó.' }
     if (-not (Test-Path (Join-Path $temp 'report\wine-prefixes.tsv'))) { throw 'El informe de prefijos Windows no se generó.' }

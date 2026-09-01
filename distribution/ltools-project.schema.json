@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ltools.dev/schema/ltools-project-v1.json",
+  "title": "LTools project catalog entry",
+  "description": "Entrada declarativa para descubrir y descargar LTools desde GitHub.",
+  "type": "object",
+  "required": [
+    "$schema", "schema", "id", "name", "repository", "homepage", "releases",
+    "latest_release_api", "release_manifest", "license", "integration", "platforms", "verification"
+  ],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schema": { "const": "ltools-project-v1" },
+    "id": { "const": "ltools" },
+    "name": { "const": "LTools" },
+    "description": { "type": "string" },
+    "repository": { "type": "string", "pattern": "^[^/]+/[^/]+$" },
+    "homepage": { "type": "string", "format": "uri" },
+    "releases": { "type": "string", "format": "uri" },
+    "latest_release_api": { "type": "string", "format": "uri" },
+    "release_manifest": { "type": "string", "format": "uri" },
+    "license": { "type": "string", "minLength": 1 },
+    "integration": {
+      "type": "object",
+      "required": ["optional", "descriptor", "standalone_releases_require_it"],
+      "properties": {
+        "optional": { "const": true },
+        "descriptor": { "const": "ltools-terminal.json" },
+        "standalone_releases_require_it": { "const": false }
+      },
+      "additionalProperties": false
+    },
+    "platforms": {
+      "type": "object",
+      "required": ["linux", "windows"],
+      "properties": {
+        "linux": { "$ref": "#/$defs/platform" },
+        "windows": { "$ref": "#/$defs/platform" }
+      },
+      "additionalProperties": false
+    },
+    "verification": {
+      "type": "object",
+      "required": ["hash_algorithm", "manifest_required", "signature_supported"],
+      "properties": {
+        "hash_algorithm": { "const": "sha256" },
+        "manifest_required": { "const": true },
+        "signature_supported": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "platform": {
+      "type": "object",
+      "required": ["artifact_kinds", "preferred_kind", "asset_patterns", "install"],
+      "properties": {
+        "artifact_kinds": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "preferred_kind": { "type": "string", "minLength": 1 },
+        "asset_patterns": { "type": "object", "minProperties": 1, "additionalProperties": { "type": "string" } },
+        "install": {
+          "type": "object",
+          "required": ["portable", "recommended_directory", "executable"],
+          "properties": {
+            "portable": { "const": true },
+            "recommended_directory": { "type": "string", "minLength": 1 },
+            "executable": { "const": true }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

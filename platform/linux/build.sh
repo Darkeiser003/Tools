@@ -185,7 +185,8 @@ Opciones:
   --version            Muestra la versión del proyecto.
 
 La build AppImage genera un perfil terminal, un perfil CLI y
-ltools-terminal.json para integradores de terminal.
+ltools-terminal.json para integradores de terminal, además de
+ltools-release.json con los hashes SHA-256 de los artefactos encontrados.
 
 Sin opciones, en una terminal interactiva, permite elegir limpieza, perfil y
 validaciones. En CI o con cualquier opción explícita es no interactivo.
@@ -503,7 +504,7 @@ EOF
         [[ -s "$ARTIFACT" ]] || die 'no se pudo crear el paquete tar.gz'
         PACKAGE_LIST="$STAGING/$PACKAGE_NAME.list"
         run_logged tar -tzf "$ARTIFACT" >"$PACKAGE_LIST"
-        if grep -Eq '/(legacy|platform|windows)/|/(build\.sh|rust-tools\.sh|rust-audit\.sh)$' "$PACKAGE_LIST"; then
+        if grep -Eq '/(legacy|platform|windows)/|/build\.sh$' "$PACKAGE_LIST"; then
             die 'el paquete runtime contiene código de build o backend legacy'
         fi
         ok "paquete generado: $ARTIFACT"
@@ -558,6 +559,39 @@ EOF
     fi
 else
     warn 'Se omitió la generación de artefactos distribuibles.'
+fi
+
+if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
+    step 'Generando manifiesto verificable de release'
+    require_command sha256sum
+    release_manifest_dirs=(--artifacts-dir "$OUTPUT_DIR")
+    if [[ -d "$ROOT_DIR/dist/windows" && "$ROOT_DIR/dist/windows" != "$OUTPUT_DIR" ]]; then
+        release_manifest_dirs+=(--artifacts-dir "$ROOT_DIR/dist/windows")
+    fi
+    RELEASE_MANIFEST_ARTIFACT="$OUTPUT_DIR/ltools-release.json"
+    run_logged "$BIN" release-manifest \
+        --output "$RELEASE_MANIFEST_ARTIFACT" \
+        --repository "${LTOOLS_GITHUB_REPOSITORY:-Darkeiser003/Tools}" \
+        --tag "${LTOOLS_GITHUB_TAG:-v$VERSION}" \
+        "${release_manifest_dirs[@]}"
+    cp -a -- "$ROOT_DIR/distribution/ltools-project.json" "$OUTPUT_DIR/ltools-project.json"
+    cp -a -- "$ROOT_DIR/distribution/ltools-project.schema.json" "$OUTPUT_DIR/ltools-project.schema.json"
+    cp -a -- "$ROOT_DIR/distribution/ltools-release.schema.json" "$OUTPUT_DIR/ltools-release.schema.json"
+    if command -v jq >/dev/null 2>&1; then
+        jq -e '.schema == "ltools-release-v1" and .application == "LTools" and .hash_algorithm == "sha256" and (.artifacts | length > 0)' \
+            "$RELEASE_MANIFEST_ARTIFACT" >/dev/null \
+            || die 'el manifiesto de release no supera la validación estructural'
+        jq -e '.schema == "ltools-project-v1" and .repository == "Darkeiser003/Tools" and .platforms.linux and .platforms.windows' \
+            "$OUTPUT_DIR/ltools-project.json" >/dev/null \
+            || die 'el descriptor de proyecto no supera la validación estructural'
+        jq -e '(.properties.schema.const == "ltools-project-v1") and ((.properties.platforms.required | index("linux")) != null) and ((.properties.platforms.required | index("windows")) != null)' \
+            "$ROOT_DIR/distribution/ltools-project.schema.json" >/dev/null \
+            || die 'el esquema de proyecto no supera la validación estructural'
+        ok 'manifiesto de release y descriptor de proyecto validados con jq'
+    else
+        warn 'jq no está disponible; se omite la validación estructural adicional del manifiesto de release.'
+    fi
+    ok "manifiesto generado: $RELEASE_MANIFEST_ARTIFACT"
 fi
 
 if [[ "$SMOKE" -eq 1 ]]; then

@@ -247,6 +247,28 @@ if ($needPackage -and -not $NoPackage) {
     Write-Log "Ejecutable Windows: $ExecutableArtifact"
 } elseif (-not $NoPackage) { Write-Log "    SKIP: paquete Windows ya actualizado." }
 
+if ($needPackage -and -not $NoPackage) {
+    $releaseManifestOutput = Join-Path $Root "dist\ltools-release.json"
+    $releaseManifestDirs = @('--artifacts-dir', $OutputDir)
+    $linuxOutput = Join-Path $Root 'dist'
+    if ((Test-Path $linuxOutput) -and ([IO.Path]::GetFullPath($linuxOutput) -ne [IO.Path]::GetFullPath($OutputDir))) {
+        $releaseManifestDirs += @('--artifacts-dir', $linuxOutput)
+    }
+    $releaseRepository = if ($env:LTOOLS_GITHUB_REPOSITORY) { $env:LTOOLS_GITHUB_REPOSITORY } else { 'Darkeiser003/Tools' }
+    $releaseTag = if ($env:LTOOLS_GITHUB_TAG) { $env:LTOOLS_GITHUB_TAG } else { "v$Version" }
+    Invoke-Step "Generando manifiesto verificable de release" {
+        & $Binary release-manifest --output $releaseManifestOutput --repository $releaseRepository --tag $releaseTag @releaseManifestDirs 2>&1 |
+            ForEach-Object { Write-Log ([string]$_) }
+        if ($LASTEXITCODE -ne 0) { throw "no se pudo generar ltools-release.json" }
+    }
+    $distribution = Join-Path $Root 'distribution'
+    New-Item -ItemType Directory -Force -Path (Join-Path $Root 'dist') | Out-Null
+    Copy-Item -LiteralPath (Join-Path $distribution 'ltools-project.json') -Destination (Join-Path $Root 'dist\ltools-project.json') -Force
+    Copy-Item -LiteralPath (Join-Path $distribution 'ltools-project.schema.json') -Destination (Join-Path $Root 'dist\ltools-project.schema.json') -Force
+    Copy-Item -LiteralPath (Join-Path $distribution 'ltools-release.schema.json') -Destination (Join-Path $Root 'dist\ltools-release.schema.json') -Force
+    Write-Log "Manifiesto de release: $releaseManifestOutput"
+}
+
 $state = [ordered]@{ version = $Version; target = $Target; builtAt = (Get-Date).ToUniversalTime().ToString('o'); files = $newSignatures }
 $state | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 $StatePath
 if ($TimingPath) {

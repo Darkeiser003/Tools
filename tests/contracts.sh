@@ -22,6 +22,9 @@ ok() { printf '  OK    %s\n' "$1"; }
 [[ -f "$ROOT_DIR/appimage/org.ltools.LTools.metainfo.xml.in" ]] || fail 'falta el manifiesto AppStream'
 [[ -f "$ROOT_DIR/appimage/ltools-capabilities.schema.json" ]] || fail 'falta el esquema JSON de capacidades'
 [[ -f "$ROOT_DIR/appimage/ltools-terminal.schema.json" ]] || fail 'falta el esquema JSON de integración de terminal'
+[[ -f "$ROOT_DIR/distribution/ltools-project.json" ]] || fail 'falta el descriptor declarativo del proyecto'
+[[ -f "$ROOT_DIR/distribution/ltools-project.schema.json" ]] || fail 'falta el esquema del descriptor de proyecto'
+[[ -f "$ROOT_DIR/distribution/ltools-release.schema.json" ]] || fail 'falta el esquema del manifiesto de release'
 [[ -x "$ROOT_DIR/appimage/AppRun-cli" ]] || fail 'falta el AppRun del perfil CLI'
 [[ -f "$ROOT_DIR/appimage/ltools-cli.desktop" ]] || fail 'falta el descriptor del perfil CLI'
 grep -Fq 'appstreamcli validate --no-net' "$ROOT_DIR/platform/linux/build.sh" || fail 'build Linux sin validación explícita AppStream'
@@ -74,6 +77,20 @@ grep -Fq 'capabilities --format json' "$ROOT_DIR/platform/linux/build.sh" || fai
 grep -Fq 'capabilities --format json' "$ROOT_DIR/windows/build.ps1" || fail 'build Windows sin descriptor JSON generado'
 grep -Fq 'capabilities --format terminal-json' "$ROOT_DIR/platform/linux/build.sh" || fail 'build Linux sin descriptor JSON de terminal'
 grep -Fq 'capabilities --format terminal-json' "$ROOT_DIR/windows/build.ps1" || fail 'build Windows sin descriptor JSON de terminal'
+grep -Fq 'release-manifest' "$ROOT_DIR/platform/linux/build.sh" || fail 'build Linux sin manifiesto verificable de release'
+grep -Fq 'release-manifest' "$ROOT_DIR/windows/build.ps1" || fail 'build Windows sin manifiesto verificable de release'
+grep -Fq 'sha256' "$ROOT_DIR/distribution/ltools-release.schema.json" || fail 'esquema de release sin SHA-256'
+if command -v jq >/dev/null 2>&1; then
+    jq -e '.schema == "ltools-project-v1" and .repository == "Darkeiser003/Tools" and .platforms.linux and .platforms.windows' \
+        "$ROOT_DIR/distribution/ltools-project.json" >/dev/null \
+        || fail 'descriptor declarativo del proyecto inválido'
+    jq -e '.properties.schema.const == "ltools-release-v1" and .properties.hash_algorithm.const == "sha256"' \
+        "$ROOT_DIR/distribution/ltools-release.schema.json" >/dev/null \
+        || fail 'esquema del manifiesto de release inválido'
+    jq -e '.properties.schema.const == "ltools-project-v1" and (.properties.platforms.required | index("linux")) != null and (.properties.platforms.required | index("windows")) != null' \
+        "$ROOT_DIR/distribution/ltools-project.schema.json" >/dev/null \
+        || fail 'esquema del descriptor de proyecto inválido'
+fi
 if rg -n 'source .*legacy/bash|source .*platform/linux/scripts|run_module' \
     "$ROOT_DIR/ltools.sh" "$ROOT_DIR/appimage/AppRun" >/tmp/ltools-shell-backend.txt 2>/dev/null; then
     sed -n '1,40p' /tmp/ltools-shell-backend.txt >&2

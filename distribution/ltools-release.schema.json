@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ltools.dev/schema/ltools-release-v1.json",
+  "title": "LTools GitHub release manifest",
+  "description": "Manifiesto generado junto a una release de LTools para seleccionar y verificar sus artefactos.",
+  "type": "object",
+  "required": [
+    "schema", "application", "version", "tag", "repository", "release_page",
+    "manifest_name", "generated_at", "hash_algorithm", "artifacts"
+  ],
+  "properties": {
+    "schema": { "const": "ltools-release-v1" },
+    "application": { "const": "LTools" },
+    "version": { "type": "string", "minLength": 1 },
+    "tag": { "type": "string", "pattern": "^v.+" },
+    "repository": { "type": "string", "pattern": "^[^/]+/[^/]+$" },
+    "release_page": { "type": "string", "format": "uri" },
+    "manifest_name": { "const": "ltools-release.json" },
+    "generated_at": { "type": "string", "minLength": 1 },
+    "hash_algorithm": { "const": "sha256" },
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "platform", "architecture", "kind", "filename", "download_url",
+          "size_bytes", "sha256", "executable"
+        ],
+        "properties": {
+          "platform": { "enum": ["linux", "windows"] },
+          "architecture": { "type": "string", "minLength": 1 },
+          "kind": { "enum": ["appimage", "appimage-cli", "tarball", "exe", "portable-zip"] },
+          "filename": { "type": "string", "minLength": 1 },
+          "download_url": { "type": "string", "format": "uri" },
+          "size_bytes": { "type": "integer", "minimum": 1 },
+          "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+          "executable": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

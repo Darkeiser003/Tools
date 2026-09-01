@@ -33,6 +33,7 @@ admiten `--dry-run` y generan planes reversibles cuando corresponde.
 - [Paquetes y limpieza](#paquetes-y-limpieza)
 - [Salud y gestión del sistema](#salud-y-gestión-del-sistema)
 - [Build y distribución](#build-y-distribución)
+- [Descarga desde GitHub y manifiesto de release](#descarga-desde-github-y-manifiesto-de-release)
 - [Integración JSON y terminal](#integración-json-y-terminal)
 - [Arquitectura](#arquitectura)
 - [Idiomas](#idiomas)
@@ -368,6 +369,46 @@ Opciones frecuentes:
 ```
 
 El builder Windows está en `windows/build.ps1` y usa MSVC por defecto:
+
+### Descarga desde GitHub y manifiesto de release
+
+El descriptor declarativo [`distribution/ltools-project.json`](distribution/ltools-project.json)
+es la entrada recomendada para una sección de Proyectos de una terminal. Apunta
+a la página de releases de GitHub y describe los artefactos disponibles para
+Linux y Windows, sin instalar nada ni convertir LTools en un plugin obligatorio.
+
+Cada build que genere artefactos produce también `ltools-release.json`. Este
+manifiesto contiene únicamente archivos encontrados en las carpetas indicadas,
+con su plataforma, arquitectura, tipo, tamaño, URL directa de GitHub y hash
+SHA-256. El generador es Rust y no depende de scripts Bash para calcular ni
+verificar los datos.
+
+La URL estable para la terminal será:
+
+```text
+https://raw.githubusercontent.com/Darkeiser003/Tools/main/distribution/ltools-project.json
+```
+
+Después de construir Linux y Windows, el manifiesto unificado se puede regenerar
+desde cualquier binario release de LTools:
+
+```bash
+./ltools.sh release-manifest \
+  --output dist/ltools-release.json \
+  --repository Darkeiser003/Tools \
+  --tag v0.3.0 \
+  --artifacts-dir dist \
+  --artifacts-dir dist/windows
+```
+
+Sube a la release de GitHub los artefactos y `dist/ltools-release.json` con el
+nombre exacto `ltools-release.json`. La terminal puede leer primero el descriptor
+del proyecto, seleccionar el artefacto apropiado para el sistema y verificar el
+SHA-256 antes de ofrecer la instalación. El descriptor de integración de
+terminal sigue siendo opcional y separado.
+
+Para cambiar de repositorio o de etiqueta sin editar archivos, usa
+`LTOOLS_GITHUB_REPOSITORY` y `LTOOLS_GITHUB_TAG` al ejecutar los builders.
 
 ```powershell
 .\windows\build.ps1

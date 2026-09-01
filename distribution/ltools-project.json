@@ -1,0 +1,52 @@
+{
+  "$schema": "https://ltools.dev/schema/ltools-project-v1.json",
+  "schema": "ltools-project-v1",
+  "id": "ltools",
+  "name": "LTools",
+  "description": "Auditoría y mantenimiento multiplataforma para equipos Linux y Windows.",
+  "repository": "Darkeiser003/Tools",
+  "homepage": "https://github.com/Darkeiser003/Tools",
+  "releases": "https://github.com/Darkeiser003/Tools/releases",
+  "latest_release_api": "https://api.github.com/repos/Darkeiser003/Tools/releases/latest",
+  "release_manifest": "https://github.com/Darkeiser003/Tools/releases/latest/download/ltools-release.json",
+  "license": "MIT",
+  "integration": {
+    "optional": true,
+    "descriptor": "ltools-terminal.json",
+    "standalone_releases_require_it": false
+  },
+  "platforms": {
+    "linux": {
+      "artifact_kinds": ["appimage", "appimage-cli", "tarball"],
+      "preferred_kind": "appimage",
+      "asset_patterns": {
+        "appimage": "ltools-{version}-linux-{architecture}.AppImage",
+        "appimage-cli": "ltools-{version}-linux-{architecture}-cli.AppImage",
+        "tarball": "ltools-{version}-linux-{architecture}.tar.gz"
+      },
+      "install": {
+        "portable": true,
+        "recommended_directory": "~/.local/bin",
+        "executable": true
+      }
+    },
+    "windows": {
+      "artifact_kinds": ["exe", "portable-zip"],
+      "preferred_kind": "exe",
+      "asset_patterns": {
+        "exe": "ltools-{version}-windows-{architecture}.exe",
+        "portable-zip": "ltools-{version}-windows-{architecture}.zip"
+      },
+      "install": {
+        "portable": true,
+        "recommended_directory": "%LOCALAPPDATA%\\LTools",
+        "executable": true
+      }
+    }
+  },
+  "verification": {
+    "hash_algorithm": "sha256",
+    "manifest_required": true,
+    "signature_supported": false
+  }
+}

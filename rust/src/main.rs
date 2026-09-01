@@ -5,6 +5,7 @@ mod games;
 mod i18n;
 mod packages;
 mod platform;
+mod release;
 mod system;
 mod wine;
 
@@ -110,6 +111,7 @@ fn usage() {
     println!("  doctor      {}", i18n::text("help.doctor"));
     println!("  rollback    {}", i18n::text("help.rollback"));
     println!("  capabilities  {}", i18n::text("help.capabilities"));
+    println!("  release-manifest  Genera el manifiesto verificable de una release de GitHub");
     println!();
     println!("{}", i18n::text("help.common"));
     println!("{}", i18n::text("help.clean.options"));
@@ -135,6 +137,7 @@ fn execute_action(command: &str, ctx: &Context, args: &[String]) -> Result<(), S
         "doctor" | "diagnose" => host_doctor(),
         "defaults" | "paths" => show_defaults(ctx),
         "capabilities" | "compat" => compat::run(args),
+        "release-manifest" | "release" => release::run(args),
         _ => {
             usage();
             Err(format!("comando desconocido: {command}"))
@@ -315,6 +318,13 @@ fn main() {
     }
     if matches!(command.as_str(), "capabilities" | "compat") {
         if let Err(error) = compat::run(&filtered) {
+            eprintln!("Error: {error}");
+            std::process::exit(2);
+        }
+        return;
+    }
+    if matches!(command.as_str(), "release-manifest" | "release") {
+        if let Err(error) = release::run(&filtered) {
             eprintln!("Error: {error}");
             std::process::exit(2);
         }
