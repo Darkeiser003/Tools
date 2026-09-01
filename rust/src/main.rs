@@ -17,7 +17,8 @@ use std::path::PathBuf;
 #[cfg(unix)]
 use std::sync::atomic::{AtomicBool, Ordering};
 
-pub const VERSION: &str = "0.3.0";
+/// Version centralizada en `rust/Cargo.toml` y expuesta por Cargo al binario.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[cfg(unix)]
 static INTERRUPTED: AtomicBool = AtomicBool::new(false);

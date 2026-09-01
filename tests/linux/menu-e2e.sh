@@ -5,6 +5,7 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 BIN="$ROOT_DIR/rust/target/release/ltools"
+VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/rust/Cargo.toml" | head -n1)"
 APPIMAGE_PATH=""
 KEEP_TEMP=0
 
@@ -456,7 +457,7 @@ if [[ -n "$APPIMAGE_PATH" ]]; then
     printf '1\nn\nn\n%s\n%s\n' "$FIXTURE" "$AUDIT_OUT/rust-appimage-menu" | timeout 60 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
         LTOOLS_NO_MOUNTS=1 LTOOLS_NO_AUTO_TERMINAL=1 APPIMAGE_EXTRACT_AND_RUN=1 \
         "$APPIMAGE_PATH" --rust menu >"$RUST_APPIMAGE_OUTPUT" 2>&1
-    grep -Fq 'Rust 0.3.0' "$RUST_APPIMAGE_OUTPUT" || die 'la AppImage no arrancó el menú Rust'
+    grep -Fq "Rust $VERSION" "$RUST_APPIMAGE_OUTPUT" || die 'la AppImage no arrancó el menú Rust'
     grep -Fq 'Fase 6/6' "$RUST_APPIMAGE_OUTPUT" || die 'la AppImage no avanzó por la auditoría Rust'
     assert_file "$AUDIT_OUT/rust-appimage-menu/summary.txt"
     ok 'AppImage ejecuta menú Rust, opción auditoría e informe'

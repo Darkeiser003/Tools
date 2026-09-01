@@ -198,7 +198,7 @@ if ($needTests) {
     Invoke-Step "Ejecutando tests Rust" { Invoke-Cargo @('test', '--manifest-path', $CargoManifest, '--target', $Target) }
     if (-not $NoRun -and $Target -match 'windows') {
         $smoke = Join-Path $Root 'windows\tests\smoke.ps1'
-        if (Test-Path $smoke) { Invoke-Step "Ejecutando smoke Windows" { & powershell -NoProfile -ExecutionPolicy Bypass -File $smoke -Binary $Binary } }
+        if (Test-Path $smoke) { Invoke-Step "Ejecutando smoke Windows" { & powershell -NoProfile -ExecutionPolicy Bypass -File $smoke -Binary $Binary -Version $Version } }
         $e2e = Join-Path $Root 'windows\tests\e2e.ps1'
         if (Test-Path $e2e) { Invoke-Step "Ejecutando E2E Windows" { & powershell -NoProfile -ExecutionPolicy Bypass -File $e2e -Binary $Binary } }
     }
@@ -206,6 +206,14 @@ if ($needTests) {
 
 if ($needPackage -and -not $NoPackage) {
     if (-not (Test-Path $Binary)) { throw "No existe el ejecutable Windows: $Binary" }
+    # La carpeta de salida contiene únicamente resultados regenerables. Se
+    # eliminan solo artefactos LTools previos para no mezclar versiones en el
+    # manifiesto de release al cambiar Cargo.toml.
+    Get-ChildItem -LiteralPath $OutputDir -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like 'ltools-*.exe' -or $_.Name -like 'ltools-*.zip' } |
+        Remove-Item -Force
+    Get-ChildItem -LiteralPath $OutputDir -Directory -Filter 'ltools-*windows-*' -ErrorAction SilentlyContinue |
+        Remove-Item -Recurse -Force
     $ExecutableArtifact = Join-Path $OutputDir "ltools-$Version-windows-$PackageArch.exe"
     Copy-Item -LiteralPath $Binary -Destination $ExecutableArtifact -Force
     $portable = Join-Path $OutputDir "ltools-$Version-windows-$PackageArch"

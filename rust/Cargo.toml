@@ -1,6 +1,6 @@
 [package]
 name = "ltools"
-version = "0.3.0"
+version = "1.0.0"
 edition = "2021"
 description = "Núcleo nativo y seguro para LTools"
 license = "MIT"

@@ -1,4 +1,4 @@
-# LTools (0.3.0)
+# LTools
 
 Herramientas modulares para auditar, organizar y mantener un equipo Linux,
 con especial atención a CachyOS/Arch, juegos, Wine, Proton y prefijos
@@ -9,7 +9,7 @@ terminal, un AppImage o un paquete portable de Windows.
 
 | | |
 |---|---|
-| Versión | 0.3.0 |
+| Versión | La definida en `rust/Cargo.toml` |
 | Plataformas | Linux x86_64 · Windows x86_64 portable |
 | Runtime | Rust 2021 · Bash solo para lanzadores, build y tests |
 | Distribución | AppImage terminal, AppImage CLI, tarball Linux y ZIP Windows |
@@ -137,8 +137,9 @@ prefijo.
 ### AppImage Linux
 
 ```bash
-chmod +x ltools-0.3.0-linux-x86_64.AppImage
-./ltools-0.3.0-linux-x86_64.AppImage
+VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' rust/Cargo.toml | head -n1)"
+chmod +x "ltools-$VERSION-linux-x86_64.AppImage"
+"./ltools-$VERSION-linux-x86_64.AppImage"
 ```
 
 Si el AppImage se distribuye junto al lanzador auxiliar, este detecta FUSE y
@@ -436,10 +437,11 @@ Después de construir Linux y Windows, el manifiesto unificado se puede regenera
 desde cualquier binario release de LTools:
 
 ```bash
+VERSION="$(sed -n 's/^version = "\([^" ]*\)"/\1/p' rust/Cargo.toml | head -n1)"
 ./ltools.sh release-manifest \
   --output dist/ltools-release.json \
   --repository Darkeiser003/Tools \
-  --tag v0.3.0 \
+  --tag "v$VERSION" \
   --artifacts-dir dist \
   --artifacts-dir dist/windows
 ```

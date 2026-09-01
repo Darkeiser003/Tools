@@ -1,8 +1,16 @@
 # Smoke seguro del ejecutable Windows. No instala, borra ni modifica el sistema.
 [CmdletBinding()]
-param([Parameter(Mandatory = $true)][string]$Binary)
+param(
+    [Parameter(Mandatory = $true)][string]$Binary,
+    [string]$Version
+)
 $ErrorActionPreference = 'Stop'
 if (-not (Test-Path $Binary)) { throw "No existe el ejecutable: $Binary" }
+if (-not $Version) {
+    $cargoManifest = Join-Path $PSScriptRoot '..\..\rust\Cargo.toml'
+    $Version = ((Select-String -Path $cargoManifest -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value)
+}
+if (-not $Version) { throw 'No se pudo resolver la versión desde rust/Cargo.toml.' }
 $temp = Join-Path ([IO.Path]::GetTempPath()) ("ltools-windows-smoke-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $temp | Out-Null
 $oldUserProfile = $env:USERPROFILE
@@ -43,10 +51,10 @@ try {
     }
     $releaseAssets = Join-Path $temp 'release-assets'
     New-Item -ItemType Directory -Force -Path $releaseAssets | Out-Null
-    $releaseFixture = Join-Path $releaseAssets 'ltools-0.3.0-windows-x86_64.exe'
+    $releaseFixture = Join-Path $releaseAssets "ltools-$Version-windows-x86_64.exe"
     Set-Content -Encoding UTF8 $releaseFixture 'synthetic-windows-release'
     $releaseManifest = Join-Path $temp 'ltools-release.json'
-    Run @('release-manifest', '--output', $releaseManifest, '--repository', 'Darkeiser003/Tools', '--tag', 'v0.3.0', '--artifacts-dir', $releaseAssets)
+    Run @('release-manifest', '--output', $releaseManifest, '--repository', 'Darkeiser003/Tools', '--tag', "v$Version", '--artifacts-dir', $releaseAssets)
     $releaseJson = Get-Content -Raw $releaseManifest | ConvertFrom-Json
     if ($releaseJson.schema -ne 'ltools-release-v1' -or $releaseJson.artifacts.Count -ne 1 -or
         $releaseJson.artifacts[0].platform -ne 'windows' -or

@@ -416,6 +416,11 @@ ok "binario generado: $BIN"
 if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
     step 'Construyendo paquete distribuible'
     mkdir -p "$OUTPUT_DIR"
+    # La carpeta dist es salida regenerable. Retirar aquí solo artefactos
+    # reconocibles evita mezclar una versión anterior con la release actual.
+    find "$OUTPUT_DIR" -maxdepth 1 -type f \
+        \( -name 'ltools-*.AppImage' -o -name 'ltools-*.tar.gz' \
+        -o -name 'ltools-*.zip' -o -name 'ltools-*.exe' \) -delete
     STAGING="$(mktemp -d "$OUTPUT_DIR/.ltools-build.XXXXXX")"
     cleanup_staging() {
         [[ -n "${STAGING:-}" && -d "$STAGING" ]] && rm -rf -- "$STAGING"

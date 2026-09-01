@@ -286,19 +286,35 @@ mod tests {
     #[test]
     fn clasifica_assets_linux_y_windows() {
         assert_eq!(
-            classify("ltools-0.3.0-linux-x86_64.AppImage"),
+            classify(concat!(
+                "ltools-",
+                env!("CARGO_PKG_VERSION"),
+                "-linux-x86_64.AppImage"
+            )),
             Some(("linux", "x86_64".into(), "appimage", true))
         );
         assert_eq!(
-            classify("ltools-0.3.0-linux-x86_64-cli.AppImage"),
+            classify(concat!(
+                "ltools-",
+                env!("CARGO_PKG_VERSION"),
+                "-linux-x86_64-cli.AppImage"
+            )),
             Some(("linux", "x86_64".into(), "appimage-cli", true))
         );
         assert_eq!(
-            classify("ltools-0.3.0-windows-x86_64.exe"),
+            classify(concat!(
+                "ltools-",
+                env!("CARGO_PKG_VERSION"),
+                "-windows-x86_64.exe"
+            )),
             Some(("windows", "x86_64".into(), "exe", true))
         );
         assert_eq!(
-            classify("ltools-0.3.0-windows-x86_64.zip"),
+            classify(concat!(
+                "ltools-",
+                env!("CARGO_PKG_VERSION"),
+                "-windows-x86_64.zip"
+            )),
             Some(("windows", "x86_64".into(), "portable-zip", false))
         );
     }

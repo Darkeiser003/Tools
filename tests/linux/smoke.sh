@@ -5,6 +5,7 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 BIN="$ROOT_DIR/rust/target/release/ltools"
+VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/rust/Cargo.toml" | head -n1)"
 APPIMAGE_PATH=""
 RUNNER_PATH=""
 LOG_PATH=""
@@ -122,12 +123,12 @@ ok 'listado aislado de un prefijo sintético'
 
 RELEASE_FIXTURE_DIR="$TMP_DIR/release-assets"
 mkdir -p "$RELEASE_FIXTURE_DIR"
-printf 'synthetic-appimage\n' > "$RELEASE_FIXTURE_DIR/ltools-0.3.0-linux-x86_64.AppImage"
+printf 'synthetic-appimage\n' > "$RELEASE_FIXTURE_DIR/ltools-$VERSION-linux-x86_64.AppImage"
 RELEASE_MANIFEST="$TMP_DIR/ltools-release.json"
 "$BIN" release-manifest \
     --output "$RELEASE_MANIFEST" \
     --repository Darkeiser003/Tools \
-    --tag v0.3.0 \
+    --tag "v$VERSION" \
     --artifacts-dir "$RELEASE_FIXTURE_DIR" >/dev/null
 grep -Fq '"schema": "ltools-release-v1"' "$RELEASE_MANIFEST" ||
     die 'el manifiesto de release no declara su esquema'
