@@ -2,8 +2,8 @@ use crate::audit::{default_roots, discover_prefixes, prefix_kind};
 #[cfg(not(windows))]
 use crate::common::run_command;
 use crate::common::{
-    ask, backup, canonical, critical_path, device, directory_size, file_contains, human_bytes,
-    move_to_trash, Context,
+    ask, backup, canonical, critical_path, device, directory_size, ensure_tool, file_contains,
+    human_bytes, move_to_trash, Context,
 };
 use std::fs::{self, File};
 #[cfg(windows)]
@@ -88,6 +88,14 @@ fn inspect(ctx: &Context, args: &[String]) -> Result<(), String> {
 }
 
 fn create(ctx: &Context, args: &[String]) -> Result<(), String> {
+    if cfg!(windows) {
+        let _ = (ctx, args);
+        return Err(
+            "La creación automática de prefijos Wine requiere Wine en Linux; la release Windows no instala Wine."
+                .into(),
+        );
+    }
+
     let dest = value(args, "--dest")
         .map(PathBuf::from)
         .or_else(|| crate::common::prompt_path("Ruta del nuevo prefijo: "))
@@ -114,8 +122,8 @@ fn create(ctx: &Context, args: &[String]) -> Result<(), String> {
         println!("Simulación: no se ejecutaría wineboot.");
         return Ok(());
     }
-    if !crate::common::command_exists("wineboot") {
-        return Err("wineboot no está instalado".into());
+    if !ensure_tool(ctx, "wineboot")? {
+        return Err("wineboot no está disponible; se canceló la creación".into());
     }
     let ok = Command::new("wineboot")
         .env("WINEARCH", &arch)
@@ -271,8 +279,8 @@ fn migrate(ctx: &Context, args: &[String]) -> Result<(), String> {
     }
     #[cfg(not(windows))]
     {
-        if !crate::common::command_exists("rsync") {
-            return Err("rsync es necesario para verificar la copia".into());
+        if !ensure_tool(ctx, "rsync")? {
+            return Err("rsync no está disponible; se canceló la migración".into());
         }
         fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
         for item in &items {
@@ -925,6 +933,16 @@ fn update_heroic(ctx: &Context, dest: &Path) -> Result<(), String> {
             ctx.home.join(".config/heroic/store/config.json"),
         ]
     };
+    if files.iter().any(|file| file.is_file())
+        && !crate::common::command_exists("jq")
+        && !crate::common::command_exists("perl")
+        && !ensure_tool(ctx, "jq")?
+    {
+        eprintln!(
+            "Heroic detectado, pero no se pudo disponer de jq; no se modificará su configuración."
+        );
+        return Ok(());
+    }
     for file in files {
         if !file.is_file() {
             continue;

@@ -1,4 +1,4 @@
-use crate::common::{ask, Context};
+use crate::common::{ask, ensure_tool, Context};
 #[cfg(not(windows))]
 use crate::common::{command_exists, run_with_sudo};
 #[cfg(not(windows))]
@@ -20,6 +20,27 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
         .find(|arg| !arg.starts_with('-'))
         .map(String::as_str)
         .unwrap_or("status");
+    let required = match action {
+        "status" | "services" | "user-services" | "export" | "report" => {
+            &["powershell", "Get-CimInstance"][..]
+        }
+        "processes" => &["powershell"][..],
+        "journal" => &["wevtutil"][..],
+        "service" => &["sc.exe"][..],
+        "process" => {
+            if args.iter().any(|arg| arg == "status") {
+                &["tasklist"][..]
+            } else {
+                &["taskkill"][..]
+            }
+        }
+        _ => &[][..],
+    };
+    for tool in required {
+        if !ensure_tool(ctx, tool)? {
+            return Err(format!("no se puede ejecutar la acción sin {tool}"));
+        }
+    }
     match action {
         "status" => windows_status(),
         "services" | "user-services" => windows_services(args),
@@ -506,6 +527,25 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
         .find(|a| !a.starts_with('-'))
         .map(String::as_str)
         .unwrap_or("status");
+    let required = match action {
+        "status" | "failed" | "failed-services" | "services" | "user-services" | "export"
+        | "report" | "dependencies" | "tree" | "service" => &["systemctl"][..],
+        "processes" => &["ps"][..],
+        "process" => {
+            if args.iter().any(|arg| arg == "status") {
+                &["ps"][..]
+            } else {
+                &["kill"][..]
+            }
+        }
+        "journal" => &["journalctl"][..],
+        _ => &[][..],
+    };
+    for tool in required {
+        if !ensure_tool(ctx, tool)? {
+            return Err(format!("no se puede ejecutar la acción sin {tool}"));
+        }
+    }
     match action {
         "status" | "health" => status(),
         "failed" | "failed-services" => failed_services(args),

@@ -7,6 +7,20 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+/// Herramienta del anfitrión que LTools puede aprovechar si está instalada.
+/// `required` solo identifica dependencias básicas de un módulo; nunca hace
+/// que el builder o el AppImage instalen nada automáticamente.
+#[derive(Debug, Clone, Copy)]
+pub struct HostTool {
+    pub id: &'static str,
+    pub command: &'static str,
+    pub category: &'static str,
+    pub feature: &'static str,
+    pub required: bool,
+    pub installable: bool,
+    pub install_package: &'static str,
+}
+
 #[cfg(unix)]
 mod linux;
 #[cfg(windows)]
@@ -29,6 +43,10 @@ pub fn command_exists(name: &str) -> bool {
     current::command_exists(name)
 }
 
+pub fn host_tool_available(tool: &HostTool) -> bool {
+    current::host_tool_available(tool)
+}
+
 pub fn run_with_privilege(program: &str, args: &[String], dry_run: bool) -> io::Result<bool> {
     current::run_with_privilege(program, args, dry_run)
 }
@@ -41,8 +59,12 @@ pub fn move_to_trash(path: &Path, dry_run: bool) -> io::Result<bool> {
     current::move_to_trash(path, dry_run)
 }
 
-pub fn host_tools() -> &'static [&'static str] {
+pub fn host_tools() -> &'static [HostTool] {
     current::host_tools()
+}
+
+pub fn install_tool(id: &str, dry_run: bool) -> Result<bool, String> {
+    current::install_tool(id, dry_run)
 }
 
 pub fn fuse_available() -> bool {

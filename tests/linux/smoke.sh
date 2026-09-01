@@ -44,14 +44,37 @@ ok 'sintaxis de todos los scripts Bash'
 
 "$BIN" --version >/dev/null
 ok 'backend Rust responde a --version'
-"$BIN" --help >/dev/null
+HELP_OUTPUT="$($BIN --help)"
+grep -Fq 'doctor --install TOOL' <<<"$HELP_OUTPUT" || die 'la ayuda no documenta la instalación explícita'
 ok 'backend Rust responde a --help'
 CAPABILITIES_JSON="$($BIN capabilities --format json)"
 grep -Fq '"schema": "ltools-capabilities-v1"' <<<"$CAPABILITIES_JSON" ||
     die 'el contrato JSON de capacidades no se pudo generar'
 grep -Fq 'lterminal-startup-v1' <<<"$CAPABILITIES_JSON" ||
     die 'el contrato JSON no declara integración de terminal'
-ok 'contrato JSON de capacidades e integración'
+if command -v jq >/dev/null 2>&1; then
+    jq -e '(.host_tools | length >= 10) and any(.host_tools[]; .category == "audit") and any(.host_tools[]; .category == "system") and any(.host_tools[]; .installable == true) and ([.host_tools[] | select(.category == "games" or .category == "virtualization" or .category == "development" or .command == "steam" or .command == "docker" or .command == "git")] | length == 0)' \
+        <<<"$CAPABILITIES_JSON" >/dev/null \
+        || die 'el catálogo JSON de herramientas del anfitrión está incompleto'
+fi
+ok 'contrato JSON de capacidades e integración; catálogo sin juegos/Wine, virtualización ni desarrollo'
+
+INSTALL_STUB_DIR="$TMP_DIR/install-stub"
+INSTALL_OUTPUT="$TMP_DIR/install-output.log"
+mkdir -p "$INSTALL_STUB_DIR" "$TMP_DIR/home-install" "$TMP_DIR/state-install"
+cat > "$INSTALL_STUB_DIR/pacman" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$INSTALL_STUB_DIR/pacman"
+set +e
+printf 'n\n' | HOME="$TMP_DIR/home-install" XDG_STATE_HOME="$TMP_DIR/state-install" PATH="$INSTALL_STUB_DIR" "$BIN" doctor --install rsync >"$INSTALL_OUTPUT" 2>&1
+INSTALL_STATUS=$?
+set -e
+[[ "$INSTALL_STATUS" -ne 0 ]] || die 'doctor --install aceptó una instalación cancelada'
+grep -Fq 'pacman -S --needed rsync' "$INSTALL_OUTPUT" || die 'doctor --install no mostró el comando concreto'
+grep -Fq 'Instalación cancelada; no se modifica el sistema.' "$INSTALL_OUTPUT" || die 'doctor --install no confirmó la cancelación segura'
+ok 'instalación explícita muestra comando y respeta la cancelación'
 TERMINAL_JSON="$($BIN capabilities --format terminal-json)"
 grep -Fq '"schema": "ltools-terminal-integration-v1"' <<<"$TERMINAL_JSON" ||
     die 'el descriptor específico de terminal no se pudo generar'
@@ -80,6 +103,12 @@ done
 ok 'todos los idiomas en el backend Rust'
 DOCTOR_OUTPUT="$(HOME="$TMP_DIR/home" XDG_STATE_HOME="$TMP_DIR/state" "$BIN" doctor)"
 grep -Fq 'LTools host diagnostics' <<<"$DOCTOR_OUTPUT" || die 'doctor no funciona como operación de solo lectura'
+grep -Fq '[audit]' <<<"$DOCTOR_OUTPUT" || die 'doctor no agrupa herramientas de auditoría'
+grep -Fq '[system]' <<<"$DOCTOR_OUTPUT" || die 'doctor no agrupa herramientas de sistema'
+grep -Fq '[prefix]' <<<"$DOCTOR_OUTPUT" || die 'doctor no agrupa herramientas de prefijos'
+if grep -Fq '[packages]' <<<"$DOCTOR_OUTPUT"; then
+    die 'doctor volvió a mezclar gestores de paquetes como dependencias'
+fi
 ok 'doctor Rust sin crear planes ni modificar el estado'
 
 mkdir -p "$TMP_DIR/root/demo-prefix/drive_c"

@@ -62,6 +62,8 @@ pub fn descriptor_json() -> String {
       "shell": "cmd.exe or PowerShell host"
     }}
   }},
+  "host_tools": [
+{}  ],
   "external_integrations": {{
     "lterminal": "ltools-terminal.json",
     "optional": true,
@@ -69,7 +71,8 @@ pub fn descriptor_json() -> String {
   }}
 }}"#,
         json_escape(VERSION),
-        platform
+        platform,
+        host_tools_json()
     )
 }
 
@@ -128,6 +131,32 @@ fn option_value(args: &[String], name: &str) -> Option<String> {
         .map(|window| window[1].clone())
 }
 
+fn host_tools_json() -> String {
+    crate::platform::host_tools()
+        .iter()
+        .enumerate()
+        .map(|(index, tool)| {
+            let comma = if index + 1 == crate::platform::host_tools().len() {
+                ""
+            } else {
+                ","
+            };
+            format!(
+                "    {{\"id\":\"{}\",\"command\":\"{}\",\"category\":\"{}\",\"feature\":\"{}\",\"required\":{},\"installable\":{},\"install_package\":\"{}\",\"available\":{}}}{}\n",
+                json_escape(tool.id),
+                json_escape(tool.command),
+                json_escape(tool.category),
+                json_escape(tool.feature),
+                tool.required,
+                tool.installable,
+                json_escape(tool.install_package),
+                crate::platform::host_tool_available(tool),
+                comma
+            )
+        })
+        .collect()
+}
+
 fn json_escape(value: &str) -> String {
     value
         .replace('\\', "\\\\")
@@ -146,6 +175,16 @@ mod tests {
         assert!(json.contains("ltools-capabilities-v1"));
         assert!(json.contains("lterminal-startup-v1"));
         assert!(json.contains("--open-path"));
+        assert!(json.contains("\"host_tools\""));
+        assert!(json.contains("\"category\":\"audit\""));
+        assert!(json.contains("\"installable\":true"));
+        assert!(json.contains("\"install_package\":\"rsync\""));
+        assert!(!json.contains("\"category\":\"games\""));
+        assert!(!json.contains("\"category\":\"virtualization\""));
+        assert!(!json.contains("\"category\":\"development\""));
+        assert!(!json.contains("\"command\":\"wine\""));
+        assert!(!json.contains("\"command\":\"docker\""));
+        assert!(!json.contains("\"command\":\"git\""));
     }
 
     #[test]

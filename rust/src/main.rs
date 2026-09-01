@@ -10,6 +10,7 @@ mod system;
 mod wine;
 
 use common::{home_dir, Context, Plan};
+use std::collections::BTreeMap;
 use std::env;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -109,6 +110,7 @@ fn usage() {
     println!("  system      {}", i18n::text("help.system"));
     println!("              {}", i18n::text("help.system.options"));
     println!("  doctor      {}", i18n::text("help.doctor"));
+    println!("              doctor --install TOOL");
     println!("  rollback    {}", i18n::text("help.rollback"));
     println!("  capabilities  {}", i18n::text("help.capabilities"));
     println!("  release-manifest  Genera el manifiesto verificable de una release de GitHub");
@@ -338,7 +340,26 @@ fn main() {
         command.as_str(),
         "doctor" | "diagnose" | "fuse" | "fuse-check"
     ) {
-        if let Err(error) = host_doctor() {
+        if let Some(tool) = value(&filtered, "--install") {
+            let plan = match Plan::create(plan_path, "rust-doctor-install") {
+                Ok(plan) => plan,
+                Err(error) => {
+                    eprintln!("No se pudo crear el plan: {error}");
+                    std::process::exit(1);
+                }
+            };
+            let ctx = Context {
+                home: home_dir(),
+                dry_run,
+                plan_path: Some(plan.path.clone()),
+                plan: Some(plan),
+            };
+            if !common::ensure_tool(&ctx, &tool).unwrap_or(false) {
+                eprintln!("No se pudo disponer de la dependencia: {tool}");
+                std::process::exit(1);
+            }
+            println!("Plan: {}", ctx.plan_path.unwrap().display());
+        } else if let Err(error) = host_doctor() {
             eprintln!("Error: {error}");
             std::process::exit(1);
         }
@@ -563,12 +584,41 @@ fn command_path(name: &str) -> String {
 
 fn host_doctor() -> Result<(), String> {
     println!("=== LTools host diagnostics ===");
+    let mut available = 0;
+    let mut missing_optional = Vec::new();
+    let mut categories: BTreeMap<&str, Vec<&platform::HostTool>> = BTreeMap::new();
     for tool in common::platform_tools() {
-        if common::command_exists(tool) {
-            println!("  OK      {tool}");
-        } else {
-            println!("  MISSING {tool}");
+        categories.entry(tool.category).or_default().push(tool);
+    }
+    for (category, tools) in categories {
+        println!("\n[{category}]");
+        for tool in tools {
+            if platform::host_tool_available(tool) {
+                available += 1;
+                println!("  OK       {:<22} {}", tool.command, tool.feature);
+            } else if tool.required {
+                println!("  REQUIRED {:<22} {}", tool.command, tool.feature);
+            } else {
+                missing_optional.push(tool.command);
+                println!(
+                    "  MISSING  {:<22} {}{}",
+                    tool.command,
+                    tool.feature,
+                    if tool.installable {
+                        " (doctor --install puede ofrecerlo)"
+                    } else {
+                        " (integrada o dependiente de la plataforma)"
+                    }
+                );
+            }
         }
+    }
+    println!(
+        "\nHerramientas disponibles: {available}/{}",
+        common::platform_tools().len()
+    );
+    if !missing_optional.is_empty() {
+        println!("Opcionales ausentes: {}", missing_optional.join(", "));
     }
     println!(
         "  FUSE    {}",

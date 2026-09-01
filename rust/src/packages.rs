@@ -1,6 +1,6 @@
 use crate::common::{
-    ask, command_exists, command_output, human_bytes, move_to_trash, run_command, run_with_sudo,
-    Context,
+    ask, command_exists, command_output, ensure_tool, human_bytes, move_to_trash, run_command,
+    run_with_sudo, Context,
 };
 use crate::i18n;
 use std::fs::{self, File};
@@ -326,6 +326,20 @@ pub fn clean(ctx: &Context, args: &[String]) -> Result<(), String> {
             );
             continue;
         }
+        if !force && !ensure_tool(ctx, "rg")? {
+            eprintln!(
+                "No se elimina {} sin poder comprobar referencias. Usa --force solo tras revisarlo manualmente.",
+                path.display()
+            );
+            continue;
+        }
+        if !ensure_tool(ctx, "trash")? {
+            eprintln!(
+                "No se elimina {} sin una papelera compatible.",
+                path.display()
+            );
+            continue;
+        }
         if ask(&format!("¿Mover {} a la papelera?", path.display()))
             && move_to_trash(&path, ctx.dry_run).map_err(|e| e.to_string())?
         {
@@ -482,6 +496,9 @@ fn remove_package(
 }
 
 fn clean_caches(ctx: &Context) -> Result<(), String> {
+    if command_exists("pacman") && !command_exists("paccache") && !ensure_tool(ctx, "paccache")? {
+        eprintln!("No se podrá limpiar la caché de pacman sin paccache.");
+    }
     if command_exists("paccache")
         && ask("¿Limpiar la caché de pacman conservando las dos últimas versiones?")
     {
@@ -567,7 +584,14 @@ fn clean_caches(ctx: &Context) -> Result<(), String> {
 
 fn run_flatpak_unused(ctx: &Context) -> Result<(), String> {
     if !command_exists("flatpak") {
-        return Ok(());
+        if cfg!(windows) {
+            eprintln!("Flatpak no aplica a Windows; no se modifica nada.");
+            return Ok(());
+        }
+        if !ensure_tool(ctx, "flatpak")? {
+            eprintln!("Flatpak no está disponible; no se modifica nada.");
+            return Ok(());
+        }
     }
     if ask("¿Eliminar runtimes Flatpak sin uso?") {
         let args = vec!["uninstall".into(), "--unused".into()];

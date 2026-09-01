@@ -1,5 +1,5 @@
 use crate::audit;
-use crate::common::{clean, command_exists, human_bytes, Context};
+use crate::common::{clean, command_exists, ensure_tool, human_bytes, Context};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -13,6 +13,12 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
         audit_args.extend(["--out".into(), out.display().to_string()]);
     }
     audit::run(ctx, &audit_args, true)?;
+    if heroic_configs(ctx).iter().any(|file| file.is_file())
+        && !command_exists("jq")
+        && !command_exists("python3")
+    {
+        let _ = ensure_tool(ctx, "jq")?;
+    }
     let validation = out.join("configuration-validation.tsv");
     let mut file = File::create(&validation).map_err(|e| e.to_string())?;
     writeln!(file, "app\tconfig\tstatus\tfield\tvalue\tnote").map_err(|e| e.to_string())?;

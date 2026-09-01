@@ -20,6 +20,14 @@ pub fn command_exists(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+pub fn host_tool_available(tool: &super::HostTool) -> bool {
+    if tool.id == "trash" {
+        command_exists("gio") || command_exists("trash-put")
+    } else {
+        command_exists(tool.command)
+    }
+}
+
 pub fn run_with_privilege(program: &str, args: &[String], dry_run: bool) -> io::Result<bool> {
     if dry_run {
         return run_command(program, args, true);
@@ -91,22 +99,197 @@ pub fn move_to_trash(path: &Path, dry_run: bool) -> io::Result<bool> {
     Ok(false)
 }
 
-pub fn host_tools() -> &'static [&'static str] {
-    &[
+pub fn host_tools() -> &'static [super::HostTool] {
+    HOST_TOOLS
+}
+
+static HOST_TOOLS: &[super::HostTool] = &[
+    tool(
         "findmnt",
+        "audit",
+        "mount-safety-and-discovery",
+        false,
+        true,
+        "util-linux",
+    ),
+    tool(
         "sha256sum",
+        "audit",
+        "duplicate-file-hashes",
+        false,
+        true,
+        "coreutils",
+    ),
+    tool(
         "rsync",
-        "jq",
-        "perl",
-        "wine",
+        "prefix",
+        "verified-prefix-migration",
+        false,
+        true,
+        "rsync",
+    ),
+    tool(
         "wineboot",
-        "winetricks",
+        "prefix",
+        "create-wine-prefix",
+        false,
+        true,
+        "wine",
+    ),
+    tool(
+        "df",
+        "prefix",
+        "destination-space-check",
+        false,
+        true,
+        "coreutils",
+    ),
+    tool(
+        "jq",
+        "configuration",
+        "Heroic-json-rewrite-and-validation",
+        false,
+        true,
+        "jq",
+    ),
+    tool(
+        "perl",
+        "configuration",
+        "safe-json-rewrite-fallback",
+        false,
+        true,
+        "perl",
+    ),
+    tool(
+        "rg",
+        "safety",
+        "reference-detection-before-removal",
+        false,
+        true,
+        "ripgrep",
+    ),
+    tool("trash", "cleanup", "safe-trash-move", false, true, "glib2"),
+    tool(
         "paccache",
+        "cleanup",
+        "pacman-cache-cleanup",
+        false,
+        true,
+        "pacman-contrib",
+    ),
+    tool(
+        "flatpak",
+        "cleanup",
+        "unused-flatpak-cleanup",
+        false,
+        true,
+        "flatpak",
+    ),
+    tool(
         "systemctl",
+        "system",
+        "service-and-daemon-control",
+        false,
+        false,
+        "",
+    ),
+    tool(
         "journalctl",
+        "system",
+        "journal-filtering",
+        false,
+        false,
+        "",
+    ),
+    tool(
         "ps",
-        "gio",
+        "system",
+        "process-inspection",
+        false,
+        true,
+        "procps-ng",
+    ),
+    tool(
+        "kill",
+        "system",
+        "process-control",
+        false,
+        true,
+        "procps-ng",
+    ),
+];
+
+const fn tool(
+    command: &'static str,
+    category: &'static str,
+    feature: &'static str,
+    required: bool,
+    installable: bool,
+    install_package: &'static str,
+) -> super::HostTool {
+    super::HostTool {
+        id: command,
+        command,
+        category,
+        feature,
+        required,
+        installable,
+        install_package,
+    }
+}
+
+pub fn install_tool(id: &str, dry_run: bool) -> Result<bool, String> {
+    let tool = HOST_TOOLS
+        .iter()
+        .find(|tool| tool.id == id)
+        .ok_or_else(|| format!("dependencia no gestionada por LTools: {id}"))?;
+    if host_tool_available(tool) {
+        println!("Ya disponible: {}", tool.command);
+        return Ok(true);
+    }
+    if !tool.installable || tool.install_package.is_empty() {
+        println!(
+            "{} no está disponible. No se propone instalarlo automáticamente: depende de la distribución.",
+            tool.command
+        );
+        return Ok(false);
+    }
+    let manager = [
+        ("pacman", vec!["-S".into(), "--needed".into()]),
+        ("apt-get", vec!["install".into()]),
+        ("dnf", vec!["install".into()]),
+        ("zypper", vec!["install".into()]),
+        ("apk", vec!["add".into()]),
+        ("xbps-install", vec!["-S".into()]),
     ]
+    .into_iter()
+    .find(|(manager, _)| command_exists(manager));
+    let Some((manager, mut args)) = manager else {
+        println!(
+            "Falta {} (paquete {}). No se encontró un gestor oficial compatible; no se instalará nada.",
+            tool.command, tool.install_package
+        );
+        return Ok(false);
+    };
+    args.push(tool.install_package.into());
+    println!(
+        "Falta {} para {}. Se propone usar {}: {} {}",
+        tool.command,
+        tool.feature,
+        manager,
+        manager,
+        args.iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    if !crate::common::ask("¿Instalar esta dependencia ahora?") {
+        println!("Instalación cancelada; no se modifica el sistema.");
+        return Ok(false);
+    }
+    let ok = crate::platform::run_with_privilege(manager, &args, dry_run)
+        .map_err(|error| error.to_string())?;
+    Ok(ok && host_tool_available(tool))
 }
 
 pub fn fuse_available() -> bool {

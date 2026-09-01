@@ -3,8 +3,8 @@
 # Build reproducible de LTools.
 #
 # Produce un tar.gz y, opcionalmente, un AppImage autocontenido con el
-# lanzador, backend Rust release y documentación. La compatibilidad Bash queda
-# fuera del paquete y no participa en la ejecución normal.
+# lanzador, backend Rust release y documentación. Los scripts de soporte quedan
+# fuera del paquete y no participan en la ejecución normal.
 
 if [[ -z "${BASH_VERSION:-}" ]]; then
     echo "ERROR: este script necesita bash. Ejecútalo como ./build.sh o bash build.sh." >&2
@@ -223,7 +223,7 @@ configure_interactive() {
     printf '\n\033[36mConfiguración de build (Enter conserva el valor actual):\033[0m\n'
     if ask_yes_no 'Limpiar rust/target antes de compilar' "$CLEAN"; then CLEAN=1; else CLEAN=0; fi
     if ask_yes_no 'Usar perfil release rápido' "$FAST"; then FAST=1; else FAST=0; fi
-    if ask_yes_no 'Ejecutar validaciones fmt, Clippy y scripts legacy' "$CHECKS"; then CHECKS=1; else CHECKS=0; fi
+    if ask_yes_no 'Ejecutar validaciones fmt, Clippy, lanzadores y tests' "$CHECKS"; then CHECKS=1; else CHECKS=0; fi
     if ask_yes_no 'Ejecutar cargo test' "$TESTS"; then TESTS=1; else TESTS=0; fi
     if ask_yes_no 'Ejecutar smoke tests' "$SMOKE"; then SMOKE=1; else SMOKE=0; fi
     if ask_yes_no 'Ejecutar prueba E2E de migración y rollback' "$E2E"; then E2E=1; else E2E=0; fi
@@ -364,7 +364,7 @@ if [[ "$CHECKS" -eq 1 ]]; then
     run_logged cargo clippy --manifest-path "$MANIFEST" "${cargo_args[@]}" -- -D warnings
     ok 'Clippy sin avisos'
 
-    step 'Validando lanzadores y scripts legacy'
+    step 'Validando lanzadores, build y tests Bash'
     while IFS= read -r -d '' file; do
         run_logged bash -n "$file"
     done < <(find "$ROOT_DIR" -maxdepth 5 -type f -name '*.sh' -print0)
@@ -504,8 +504,8 @@ EOF
         [[ -s "$ARTIFACT" ]] || die 'no se pudo crear el paquete tar.gz'
         PACKAGE_LIST="$STAGING/$PACKAGE_NAME.list"
         run_logged tar -tzf "$ARTIFACT" >"$PACKAGE_LIST"
-        if grep -Eq '/(legacy|platform|windows)/|/build\.sh$' "$PACKAGE_LIST"; then
-            die 'el paquete runtime contiene código de build o backend legacy'
+        if grep -Eq '/(platform|windows)/|/build\.sh$' "$PACKAGE_LIST"; then
+            die 'el paquete runtime contiene código de build o código de otra plataforma'
         fi
         ok "paquete generado: $ARTIFACT"
     fi

@@ -85,8 +85,42 @@ pub fn command_exists(name: &str) -> bool {
     crate::platform::command_exists(name)
 }
 
-pub fn platform_tools() -> &'static [&'static str] {
+pub fn platform_tools() -> &'static [crate::platform::HostTool] {
     crate::platform::host_tools()
+}
+
+pub fn ensure_tool(ctx: &Context, id: &str) -> Result<bool, String> {
+    let tool = platform_tools()
+        .iter()
+        .find(|tool| tool.id == id)
+        .ok_or_else(|| format!("dependencia no gestionada por LTools: {id}"))?;
+    if crate::platform::host_tool_available(tool) {
+        return Ok(true);
+    }
+    if ctx.dry_run {
+        println!(
+            "Simulación: se comprobaría o instalaría {} para {}.",
+            tool.command, tool.feature
+        );
+        return Ok(true);
+    }
+    let installed = crate::platform::install_tool(id, false)?;
+    if installed {
+        if let Some(plan) = &ctx.plan {
+            plan.record(
+                "dependency-install",
+                Path::new(id),
+                "executed",
+                false,
+                tool.install_package,
+                tool.feature,
+            )
+            .map_err(|error| error.to_string())?;
+        }
+        Ok(true)
+    } else {
+        Ok(false)
+    }
 }
 
 pub fn command_output(program: &str, args: &[&str]) -> Option<String> {

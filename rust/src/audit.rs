@@ -511,6 +511,20 @@ pub fn run(ctx: &Context, args: &[String], games: bool) -> Result<(), String> {
         }
         i += 1;
     }
+    if full
+        && auto_mounts
+        && roots.is_empty()
+        && !cfg!(windows)
+        && !command_exists("findmnt")
+        && !crate::common::ensure_tool(ctx, "findmnt")?
+    {
+        println!("findmnt no está disponible; se omitirá la detección automática de montajes.");
+        auto_mounts = false;
+    }
+    if duplicates && !command_exists("sha256sum") && !crate::common::ensure_tool(ctx, "sha256sum")?
+    {
+        return Err("sha256sum es necesario para buscar duplicados".into());
+    }
     let roots = default_roots(&ctx.home, full, &roots, include_home, auto_mounts);
     let out = out.unwrap_or_else(|| {
         PathBuf::from(format!(

@@ -38,6 +38,35 @@ pub fn command_exists(name: &str) -> bool {
     })
 }
 
+pub fn host_tool_available(tool: &super::HostTool) -> bool {
+    if tool.id == "trash" {
+        return command_exists("powershell") || command_exists("pwsh");
+    }
+    if tool.id == "powershell" {
+        return command_exists("powershell") || command_exists("pwsh");
+    }
+    if !tool.command.starts_with("Get-") {
+        return command_exists(tool.command);
+    }
+    let shell = if command_exists("powershell") {
+        "powershell"
+    } else if command_exists("pwsh") {
+        "pwsh"
+    } else {
+        return false;
+    };
+    command_output(
+        shell,
+        &[
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &format!("Get-Command {} -ErrorAction Stop | Out-Null", tool.command),
+        ],
+    )
+    .is_some()
+}
+
 pub fn run_with_privilege(program: &str, args: &[String], dry_run: bool) -> io::Result<bool> {
     println!("  > {} {}", program, args.join(" "));
     if dry_run {
@@ -130,15 +159,108 @@ pub fn move_to_trash(path: &Path, dry_run: bool) -> io::Result<bool> {
     Ok(status.success() && !path.exists())
 }
 
-pub fn host_tools() -> &'static [&'static str] {
-    &[
+pub fn host_tools() -> &'static [super::HostTool] {
+    HOST_TOOLS
+}
+
+static HOST_TOOLS: &[super::HostTool] = &[
+    tool(
         "powershell",
-        "where",
-        "tasklist",
-        "sc",
-        "wevtutil",
-        "winget",
-    ]
+        "system",
+        "PowerShell para automatización Windows",
+        false,
+        false,
+        "",
+    ),
+    tool("sc.exe", "system", "service-control", false, false, ""),
+    tool("tasklist", "system", "process-inspection", false, false, ""),
+    tool("taskkill", "system", "process-control", false, false, ""),
+    tool("wevtutil", "system", "Windows-event-log", false, false, ""),
+    tool(
+        "Get-CimInstance",
+        "system",
+        "service-and-process-inventory",
+        false,
+        false,
+        "",
+    ),
+    tool("trash", "cleanup", "Windows-recycle-bin", false, false, ""),
+    tool(
+        "jq",
+        "configuration",
+        "Heroic-json-rewrite-and-validation",
+        false,
+        true,
+        "jqlang.jq",
+    ),
+];
+
+const fn tool(
+    command: &'static str,
+    category: &'static str,
+    feature: &'static str,
+    required: bool,
+    installable: bool,
+    install_package: &'static str,
+) -> super::HostTool {
+    super::HostTool {
+        id: command,
+        command,
+        category,
+        feature,
+        required,
+        installable,
+        install_package,
+    }
+}
+
+pub fn install_tool(id: &str, dry_run: bool) -> Result<bool, String> {
+    let tool = HOST_TOOLS
+        .iter()
+        .find(|tool| tool.id == id)
+        .ok_or_else(|| format!("dependencia no gestionada por LTools: {id}"))?;
+    if host_tool_available(tool) {
+        println!("Ya disponible: {}", tool.command);
+        return Ok(true);
+    }
+    if !tool.installable || tool.install_package.is_empty() {
+        println!(
+            "{} no está disponible. Es una herramienta integrada de Windows y LTools no instala componentes del sistema.",
+            tool.command
+        );
+        return Ok(false);
+    }
+    if !command_exists("winget") {
+        println!(
+            "Falta {}. No se encontró winget; LTools no instalará un gestor de paquetes para resolverlo.",
+            tool.command
+        );
+        return Ok(false);
+    }
+    let args = vec![
+        "install".into(),
+        "--id".into(),
+        tool.install_package.into(),
+        "-e".into(),
+        "--accept-source-agreements".into(),
+        "--accept-package-agreements".into(),
+    ];
+    println!(
+        "Falta {} para {}. Se propone usar winget: winget {}",
+        tool.command,
+        tool.feature,
+        args.iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    if !crate::common::ask("¿Instalar esta dependencia ahora?") {
+        println!("Instalación cancelada; no se modifica el sistema.");
+        return Ok(false);
+    }
+    let ok = crate::platform::run_with_privilege("winget", &args, dry_run)
+        .map_err(|error| error.to_string())?;
+    Ok(ok && host_tool_available(tool))
 }
 
 pub fn fuse_available() -> bool {

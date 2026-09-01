@@ -3,7 +3,7 @@
 Herramientas modulares para auditar, organizar y mantener un equipo Linux,
 con especial atención a CachyOS/Arch, juegos, Wine, Proton y prefijos
 distribuidos entre varios discos. LTools usa un backend Rust nativo; los
-scripts Bash se limitan a lanzadores, builders, pruebas y compatibilidad legacy.
+scripts Bash se limitan a lanzadores, builders y pruebas.
 El usuario puede utilizar el menú o el mismo conjunto de comandos desde una
 terminal, un AppImage o un paquete portable de Windows.
 
@@ -11,7 +11,7 @@ terminal, un AppImage o un paquete portable de Windows.
 |---|---|
 | Versión | 0.3.0 |
 | Plataformas | Linux x86_64 · Windows x86_64 portable |
-| Runtime | Rust 2021 · Bash solo para lanzadores/build/tests legacy |
+| Runtime | Rust 2021 · Bash solo para lanzadores, build y tests |
 | Distribución | AppImage terminal, AppImage CLI, tarball Linux y ZIP Windows |
 | Licencia | MIT |
 | Idiomas | Español, inglés, alemán, francés, portugués, italiano, catalán, neerlandés y polaco |
@@ -52,14 +52,20 @@ admiten `--dry-run` y generan planes reversibles cuando corresponde.
   bloqueos, ejecutables, MSI, programas instalados y contenido relevante.
 - Muestra las rutas efectivas de Wine, `wineboot`, winetricks, Proton, Steam,
   Heroic, Lutris y UMU, además de las variables activas.
-- Inventaría gestores y formatos de paquetes del sistema y del usuario:
-  pacman/AUR, dpkg/apt, rpm/dnf/yum/zypper, apk, XBPS, pkg, Homebrew,
-  Flatpak, Snap y Pamac cuando están instalados.
+- Inventaría gestores y formatos de paquetes del sistema y del usuario para
+  detectar el backend nativo disponible: pacman/AUR, dpkg/apt, rpm/dnf/yum/
+  zypper, apk, XBPS, pkg, Homebrew, Flatpak, Snap y Pamac. No es una tienda ni
+  mantiene un catálogo de software de terceros.
 - Limpia huérfanos, caches y rutas seleccionadas sin ejecutarlas si el usuario
   no confirma la operación.
 - Gestiona servicios, daemons, procesos y journal mediante `systemctl` en
   Linux, y usa PowerShell, `sc.exe`, `tasklist`, `taskkill` y `wevtutil` en
   Windows, con diagnósticos que distinguen capacidades no disponibles.
+- Detecta un catálogo amplio de herramientas nativas del anfitrión, agrupadas
+  por almacenamiento, hardware, red, paquetes, servicios, procesos, archivos
+  y escritorio. Wine, juegos, virtualización y desarrollo pertenecen a sus
+  módulos propios o a la terminal, no a este catálogo. El catálogo se publica
+  también en `capabilities --format json` para frontends.
 - Genera AppImage con fallback de extracción si FUSE no está disponible y un
   ZIP portable nativo para Windows.
 
@@ -68,15 +74,51 @@ admiten `--dry-run` y generan planes reversibles cuando corresponde.
 ### Para utilizarlo
 
 En Linux, el AppImage lleva el backend de LTools. Las funciones dependen de
-las herramientas que existan en el equipo; `doctor` las enumera y propone el
-paquete adecuado para el gestor detectado.
+las herramientas que existan en el equipo; `doctor` las enumera y explica las
+limitaciones. LTools no instala paquetes durante una auditoría ni actúa como
+tienda. Si una operación concreta necesita una herramienta básica que falta,
+el módulo puede mostrar una propuesta explícita tras comprobar alternativas;
+la instalación siempre requiere confirmación del usuario.
 
-Para auditorías y limpieza suelen ser útiles `findmnt`, `sha256sum`, `gio`,
-`ps` y el gestor de paquetes local. Para Wine se necesitan `wine`, `wineboot`
-y, opcionalmente, `winetricks`. Para migraciones se recomienda `rsync`.
-`systemctl` y `journalctl` solo aplican a sistemas con systemd.
-En Windows el módulo equivalente usa las herramientas nativas del sistema y
-eleva mediante UAC únicamente las acciones que lo necesitan.
+El diagnóstico enumera solo dependencias que LTools puede utilizar en una
+acción automatizada: `findmnt`, `sha256sum`, `rsync`, `df`, `wineboot`, `jq`,
+`perl`, `rg`, la papelera nativa, `paccache`, `flatpak`, `systemctl`,
+`journalctl`, `ps` y `kill`. No es un inventario general de herramientas del
+sistema. Los gestores de paquetes se consultan dentro del módulo de paquetes
+como backends nativos y no se ofrecen como una tienda de LTools.
+En Windows se limita a PowerShell, `sc.exe`, `tasklist`, `taskkill`,
+`wevtutil`, `Get-CimInstance`, la papelera nativa y `jq`, que son las
+dependencias que las acciones automatizadas realmente pueden ejecutar. Usa
+UAC únicamente para las acciones que lo necesitan.
+
+### Política de herramientas del anfitrión
+
+LTools prioriza siempre esta secuencia:
+
+1. Usar una herramienta nativa que ya esté instalada.
+2. Usar una alternativa equivalente que ya exista, aunque tenga menos
+   funciones.
+3. Explicar qué función queda limitada y por qué.
+4. Proponer una única herramienta básica y oficial solo si es imprescindible,
+   mostrando el gestor y el comando antes de instalarla.
+5. Pedir confirmación explícita; nunca instalar en segundo plano.
+
+La instalación es contextual. Por ejemplo, una migración que necesite
+`rsync`, una reescritura de configuración que necesite `jq`, o una limpieza
+que necesite `rg` muestran primero la dependencia, el paquete y el comando
+del gestor nativo disponible. Solo después de una confirmación explícita se
+intenta instalar esa única dependencia. Si no hay un gestor oficial o la
+herramienta es propia de la plataforma, se informa y la acción se cancela de
+forma segura.
+
+Los gestores de paquetes se usan exclusivamente como mecanismo nativo para
+consultar inventarios y ejecutar una limpieza que el usuario haya pedido, o
+para una dependencia básica concreta previamente justificada. LTools no
+incluye una tienda, no recomienda listas de aplicaciones de terceros y no
+instala paquetes opcionales por iniciativa propia. Wine, juegos,
+virtualización y herramientas de desarrollo no forman parte del catálogo
+general; Wine solo se ofrece como dependencia contextual de la creación de un
+prefijo.
 
 ### Para compilar
 
@@ -114,7 +156,7 @@ El lanzador auxiliar es opcional y no forma parte del tarball runtime.
 
 Descomprime el tarball conservando su estructura y ejecuta `./ltools.sh`. El
 paquete runtime contiene únicamente la fachada, el backend Rust, documentación
-y tests; no incluye builders, módulos Bash legacy ni código de otra plataforma.
+y tests; no incluye builders ni código de otra plataforma.
 
 ### Windows portable
 
@@ -125,7 +167,7 @@ Descomprime el ZIP y ejecuta `ltools.exe`, `ltools.cmd` o:
 .\ltools.ps1 doctor
 ```
 
-La release Windows no incluye módulos Bash, FUSE, Wine, Proton ni comandos
+La release Windows no incluye scripts Bash, FUSE, Wine, Proton ni comandos
 Linux. Las capacidades no aplicables se muestran como tales.
 
 ## Comandos
@@ -145,6 +187,7 @@ del lanzador, pero ya no selecciona una implementación alternativa:
 ./ltools.sh packages
 ./ltools.sh defaults
 ./ltools.sh doctor
+./ltools.sh doctor --install rsync
 ./ltools.sh system status
 ./ltools.sh system services
 ./ltools.sh system processes
@@ -434,19 +477,16 @@ El proyecto mantiene dos capas compatibles:
 ├── platform/
 │   └── linux/
 │       └── build.sh          Builder Linux/AppImage
-├── legacy/
-│   └── bash/                 Compatibilidad opcional, no backend
 ├── appimage/                 AppRun, desktop, icono y metadata AppStream
 ├── windows/                  Builder, lanzadores y tests nativos Windows
-├── tests/                    Contratos y lanzadores compatibles
+├── tests/                    Contratos y pruebas
 │   └── linux/                Smoke y E2E Linux/AppImage
 └── build.sh                  Lanzador compatible del builder Linux
 ```
 
 Rust es el único backend de LTools para Linux, AppImage y Windows. Los scripts
-`.sh` restantes son lanzadores, builders, harnesses de prueba o compatibilidad
-legacy; no se invocan como implementación funcional normal ni se empaquetan en
-el tarball/AppImage.
+`.sh` restantes son lanzadores, builders o harnesses de prueba; no se invocan
+como implementación funcional ni se empaquetan en el tarball/AppImage.
 
 ## Idiomas
 
@@ -540,8 +580,10 @@ Windows y no invoca Wine.
 - Heroic, Lutris, UMU y Steam se actualizan solo en formatos conocidos y con
   copia de seguridad. Las referencias restantes se reportan para revisión
   manual.
-- La build no instala paquetes ni modifica el sistema. `doctor --install-missing`
-  solo ofrece instalaciones cuando el usuario las solicita.
+- La build no instala paquetes ni modifica el sistema. `doctor` es de solo
+  lectura; `doctor --install TOOL` y las acciones que necesitan una dependencia
+  solo muestran una instalación concreta, piden confirmación y la registran en
+  el plan. Nunca existe una instalación masiva.
 - Los artefactos generados, caches, informes, logs, targets y dependencias de
   frontend están excluidos por `.gitignore`; `Cargo.lock` sí se versiona. Antes
   de un commit se recomienda revisar `git status --short --ignored`.

@@ -9,8 +9,8 @@ fail() { printf 'CONTRACT ERROR: %s\n' "$1" >&2; failures=$((failures + 1)); }
 ok() { printf '  OK    %s\n' "$1"; }
 
 [[ -f "$ROOT_DIR/ltools.sh" ]] || fail 'falta ltools.sh'
-[[ -x "$ROOT_DIR/legacy/bash/host-tools.sh" ]] || fail 'host-tools legacy no es ejecutable'
-[[ -f "$ROOT_DIR/legacy/bash/lib/ltools-i18n.sh" ]] || fail 'falta el catálogo Bash legacy'
+[[ -x "$ROOT_DIR/build.sh" ]] || fail 'falta el punto de entrada build.sh'
+[[ -f "$ROOT_DIR/platform/linux/build.sh" ]] || fail 'falta el builder Linux'
 [[ -f "$ROOT_DIR/appimage/ltools.desktop" ]] || fail 'falta el descriptor LTools'
 [[ -f "$ROOT_DIR/appimage/ltools.svg" ]] || fail 'falta el icono LTools'
 [[ -f "$ROOT_DIR/windows/build.ps1" ]] || fail 'falta el builder Windows'
@@ -30,19 +30,15 @@ ok() { printf '  OK    %s\n' "$1"; }
 grep -Fq 'appstreamcli validate --no-net' "$ROOT_DIR/platform/linux/build.sh" || fail 'build Linux sin validación explícita AppStream'
 grep -Fq 'appimagetool --no-appstream' "$ROOT_DIR/platform/linux/build.sh" || fail 'build Linux sin modo AppStream explícito'
 [[ -f "$ROOT_DIR/README.md" ]] || fail 'falta el README del proyecto'
-for module in disk-audit disk-clean game-wine-audit rollback system-control wine-prefix-manager; do
-    grep -Fq 'lib/ltools-plan.sh' "$ROOT_DIR/legacy/bash/$module.sh" || fail "$module no usa ltools-plan.sh"
-done
-
-legacy_product='cachy'
-legacy_product+='os-tools'
-legacy_alias='chary'
-legacy_alias+='os-tools'
-legacy_brand='cachy'
-legacy_brand+='os tools'
-legacy_env='CACHYOS'
-legacy_env+='_TOOLS'
-if rg -n -i "$legacy_product|$legacy_alias|$legacy_brand|$legacy_env" \
+old_product='cachy'
+old_product+='os-tools'
+old_alias='chary'
+old_alias+='os-tools'
+old_brand='cachy'
+old_brand+='os tools'
+old_env='CACHYOS'
+old_env+='_TOOLS'
+if rg -n -i "$old_product|$old_alias|$old_brand|$old_env" \
     --glob '!dist/**' --glob '!reports/**' --glob '!rust/target/**' \
     --glob '!tests/contracts.sh' "$ROOT_DIR" >/tmp/ltools-identity-failures.txt 2>/dev/null; then
     sed -n '1,80p' /tmp/ltools-identity-failures.txt >&2
@@ -56,7 +52,6 @@ grep -Fq 'Name=LTools' "$ROOT_DIR/appimage/ltools.desktop" || fail 'desktop no u
 grep -Fq 'Exec=ltools %U' "$ROOT_DIR/appimage/ltools.desktop" || fail 'desktop autónomo no inicia LTools'
 grep -Fq 'Terminal=false' "$ROOT_DIR/appimage/ltools.desktop" || fail 'desktop autónomo delega indebidamente la terminal'
 grep -Fq 'Terminal=true' "$ROOT_DIR/appimage/ltools-cli.desktop" || fail 'desktop CLI no conserva la terminal del sistema'
-grep -Fq 'es|en|de|fr|pt|it|ca|nl|pl' "$ROOT_DIR/legacy/bash/lib/ltools-i18n.sh" || fail 'catálogo Bash incompleto'
 grep -Fq 'SUPPORTED: &[&str] = &["es", "en", "de", "fr", "pt", "it", "ca", "nl", "pl"]' \
     "$ROOT_DIR/rust/src/i18n.rs" || fail 'catálogo Rust incompleto'
 grep -Fq 'exec "$BIN"' "$ROOT_DIR/ltools.sh" || fail 'la fachada no ejecuta directamente el backend Rust'
@@ -69,6 +64,26 @@ grep -Fq 'launch_standard_terminal' "$ROOT_DIR/appimage/AppRun" || fail 'AppRun 
 grep -Fq 'select_shell' "$ROOT_DIR/appimage/AppRun" || fail 'AppRun sin selección de shell autónoma'
 grep -Fq 'INTERACTIVE_TTY=0' "$ROOT_DIR/platform/linux/build.sh" || fail 'builder sin detección TTY previa al log'
 grep -Fq 'ltools-capabilities-v1' "$ROOT_DIR/rust/src/compat.rs" || fail 'backend sin contrato JSON de capacidades'
+grep -Fq 'host_tools' "$ROOT_DIR/rust/src/compat.rs" || fail 'contrato sin catálogo de herramientas del anfitrión'
+grep -Fq 'rsync' "$ROOT_DIR/rust/src/platform/linux.rs" || fail 'catálogo Linux sin migración verificada'
+grep -Fq 'sc.exe' "$ROOT_DIR/rust/src/platform/windows.rs" || fail 'catálogo Windows sin control de servicios'
+grep -Fq 'install_package' "$ROOT_DIR/rust/src/platform/linux.rs" || fail 'catálogo Linux sin metadatos de instalación'
+grep -Fq 'install_package' "$ROOT_DIR/rust/src/platform/windows.rs" || fail 'catálogo Windows sin metadatos de instalación'
+grep -Fq 'doctor --install TOOL' "$ROOT_DIR/rust/src/main.rs" || fail 'doctor sin instalación explícita de una herramienta'
+if rg -n -- '--install-missing|install_all' "$ROOT_DIR/rust/src" "$ROOT_DIR/README.md" >/tmp/ltools-broad-install.txt 2>/dev/null; then
+    sed -n '1,40p' /tmp/ltools-broad-install.txt >&2
+    fail 'existe una ruta de instalación masiva'
+else
+    ok 'instalación únicamente explícita y contextual'
+fi
+if rg -n '"games"|"virtualization"|"development"|tool\("(steam|lutris|heroic|bottles|umu-run|wine|winetricks|docker|podman|virsh|qemu-system-x86_64|VBoxManage|vmware|git|cargo|node|python)"' \
+    "$ROOT_DIR/rust/src/platform/linux.rs" "$ROOT_DIR/rust/src/platform/windows.rs" \
+    >/tmp/ltools-host-catalog-forbidden.txt 2>/dev/null; then
+    sed -n '1,80p' /tmp/ltools-host-catalog-forbidden.txt >&2
+    fail 'el catálogo del anfitrión incluye juegos/Wine, virtualización o desarrollo'
+else
+    ok 'catálogo del anfitrión sin módulos ajenos al alcance'
+fi
 grep -Fq 'ltools-terminal-integration-v1' "$ROOT_DIR/rust/src/compat.rs" || fail 'backend sin descriptor JSON específico de terminal'
 grep -Fq 'standalone_releases_require_it' "$ROOT_DIR/rust/src/compat.rs" || fail 'descriptor sin independencia del host de terminal'
 grep -Fq 'WinSlim Terminal' "$ROOT_DIR/rust/src/compat.rs" || fail 'descriptor sin host Windows WinSlim Terminal'
@@ -91,7 +106,7 @@ if command -v jq >/dev/null 2>&1; then
         "$ROOT_DIR/distribution/ltools-project.schema.json" >/dev/null \
         || fail 'esquema del descriptor de proyecto inválido'
 fi
-if rg -n 'source .*legacy/bash|source .*platform/linux/scripts|run_module' \
+if rg -n 'source .*platform/linux/scripts|run_module' \
     "$ROOT_DIR/ltools.sh" "$ROOT_DIR/appimage/AppRun" >/tmp/ltools-shell-backend.txt 2>/dev/null; then
     sed -n '1,40p' /tmp/ltools-shell-backend.txt >&2
     fail 'la entrada normal todavía depende de un backend Bash'

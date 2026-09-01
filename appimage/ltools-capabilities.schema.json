@@ -3,7 +3,7 @@
   "$id": "https://ltools.dev/schema/ltools-capabilities-v1.json",
   "title": "LTools capabilities",
   "type": "object",
-  "required": ["schema", "application", "version", "platform", "entrypoints", "features", "terminal_integration", "distribution", "external_integrations"],
+  "required": ["schema", "application", "version", "platform", "entrypoints", "features", "terminal_integration", "distribution", "host_tools", "external_integrations"],
   "properties": {
     "schema": { "const": "ltools-capabilities-v1" },
     "application": { "const": "LTools" },
@@ -22,6 +22,24 @@
       }
     },
     "distribution": { "type": "object" },
+    "host_tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "command", "category", "feature", "required", "installable", "install_package", "available"],
+        "properties": {
+          "id": { "type": "string" },
+          "command": { "type": "string" },
+          "category": { "type": "string" },
+          "feature": { "type": "string" },
+          "required": { "type": "boolean" },
+          "installable": { "type": "boolean" },
+          "install_package": { "type": "string" },
+          "available": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      }
+    },
     "external_integrations": {
       "type": "object",
       "required": ["lterminal", "optional", "standalone_releases_require_it"],

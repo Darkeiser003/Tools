@@ -24,7 +24,23 @@ try {
     Run @('--help')
     Run @('doctor')
     Run @('defaults')
-    Run @('capabilities', '--format', 'json')
+    $capabilityOutput = Run @('capabilities', '--format', 'json')
+    $capabilityJson = $capabilityOutput | ConvertFrom-Json
+    if ($capabilityJson.host_tools.Count -lt 5 -or
+        -not ($capabilityJson.host_tools | Where-Object { $_.category -eq 'system' }) -or
+        -not ($capabilityJson.host_tools | Where-Object { $_.command -eq 'sc.exe' }) -or
+        -not ($capabilityJson.host_tools | Where-Object { $_.installable -eq $true })) {
+        throw 'El catálogo Windows de herramientas del anfitrión está incompleto.'
+    }
+    if ($capabilityJson.host_tools | Where-Object { $_.category -in @('games', 'virtualization', 'development') }) {
+        throw 'El catálogo Windows incluye una categoría fuera de alcance.'
+    }
+    if ($capabilityJson.host_tools | Where-Object {
+            $_.category -in @('games', 'virtualization', 'development') -or
+            $_.command -in @('steam', 'wine', 'docker', 'git')
+        }) {
+        throw 'El catálogo Windows incluye una herramienta fuera de alcance.'
+    }
     $releaseAssets = Join-Path $temp 'release-assets'
     New-Item -ItemType Directory -Force -Path $releaseAssets | Out-Null
     $releaseFixture = Join-Path $releaseAssets 'ltools-0.3.0-windows-x86_64.exe'
