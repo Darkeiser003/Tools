@@ -68,7 +68,7 @@ New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 $LogPath = if ($NoLog) { $null } elseif ($Log) { [IO.Path]::GetFullPath($Log) } else { Join-Path $OutputDir "build-windows-$Stamp-$PID.log" }
 if ($LogPath) {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $LogPath) | Out-Null
-    "LTools Windows build $Version - $(Get-Date -Format o)" | Set-Content -Encoding UTF8 $LogPath
+    "WinSlim-Tools Windows build $Version - $(Get-Date -Format o)" | Set-Content -Encoding UTF8 $LogPath
 }
 $TimingPath = if ($LogPath) { [IO.Path]::ChangeExtension($LogPath, $null) + "-timings.tsv" } else { $null }
 if ($TimingPath) { ("step" + [char]9 + "seconds" + [char]9 + "status") | Set-Content -Encoding UTF8 $TimingPath }
@@ -184,7 +184,7 @@ function Ensure-Target {
     }
 }
 
-Write-Log "LTools Windows build $Version"
+Write-Log "WinSlim-Tools Windows build $Version"
 Write-Log "Target: $Target"
 Write-Log "Salida: $OutputDir"
 Write-Log "Publicación: $PublishDir"
@@ -289,7 +289,7 @@ if ($needPackage -and -not $NoPackage) {
         $terminalJson.host.product -ne 'WinSlim Terminal') {
         throw 'El descriptor JSON de integración Windows no declara WinSlim Terminal correctamente.'
     }
-    @("LTools $Version", "Platform: Windows", "Target: $Target", "Backend: ltools.exe", "CLI backend: ltools-cli.exe (no arguments prints help)", "Linux-only Bash modules and AppImage assets are not included.") |
+    @("WinSlim-Tools $Version", "Platform: Windows", "Target: $Target", "Backend: ltools.exe", "CLI backend: ltools-cli.exe (no arguments prints help)", "Linux-only Bash modules and AppImage assets are not included.") |
         Set-Content -Encoding UTF8 (Join-Path $portable 'BUILD-INFO.txt')
     $zip = Join-Path $OutputDir "ltools-$Version-windows-$PackageArch.zip"
     Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
@@ -341,7 +341,7 @@ if ($needPackage -and -not $NoPackage) {
     Copy-Item -LiteralPath (Join-Path $distribution 'ltools-project.schema.json') -Destination (Join-Path $Root 'dist\ltools-project.schema.json') -Force
     Copy-Item -LiteralPath (Join-Path $distribution 'ltools-release.schema.json') -Destination (Join-Path $Root 'dist\ltools-release.schema.json') -Force
     $manifest = Get-Content -Raw -LiteralPath $releaseManifestOutput | ConvertFrom-Json
-    if ($manifest.schema -ne 'ltools-release-v1' -or $manifest.application -ne 'LTools' -or
+    if ($manifest.schema -ne 'ltools-release-v1' -or $manifest.application -ne 'WinSlim-Tools' -or
         $manifest.hash_algorithm -ne 'sha256' -or @($manifest.artifacts).Count -lt 1) {
         throw 'El manifiesto de release Windows no supera la validación estructural.'
     }

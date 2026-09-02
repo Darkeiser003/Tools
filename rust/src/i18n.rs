@@ -2,6 +2,22 @@ use std::env;
 
 pub const SUPPORTED: &[&str] = &["es", "en", "de", "fr", "pt", "it", "ca", "nl", "pl"];
 
+/// Nombre visible de producto. El binario y sus identificadores técnicos
+/// siguen llamándose `ltools` en ambas plataformas para conservar compatibilidad.
+#[cfg(windows)]
+pub const PRODUCT_NAME: &str = "WinSlim-Tools";
+#[cfg(not(windows))]
+pub const PRODUCT_NAME: &str = "LTools";
+
+#[cfg(windows)]
+const MENU_TITLE: &str = "=== WinSlim-Tools ===";
+#[cfg(not(windows))]
+const MENU_TITLE: &str = "=== LTools ===";
+
+pub fn product_name() -> &'static str {
+    PRODUCT_NAME
+}
+
 pub fn normalize(value: &str) -> &'static str {
     let code = value
         .trim()
@@ -333,6 +349,12 @@ pub fn prefix_flags() -> &'static str {
 }
 
 pub fn text(key: &str) -> &'static str {
+    if key == "app.title" {
+        return PRODUCT_NAME;
+    }
+    if key == "menu.title" {
+        return MENU_TITLE;
+    }
     match (current(), key) {
         ("en", "app.title") => "LTools",
         ("en", "usage") => "Usage: ltools [command] [options]",

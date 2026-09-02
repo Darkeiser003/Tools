@@ -11,7 +11,7 @@
   ],
   "properties": {
     "schema": { "const": "ltools-terminal-integration-v1" },
-    "application": { "const": "LTools" },
+    "application": { "enum": ["LTools", "WinSlim-Tools"] },
     "version": { "type": "string" },
     "platform": { "enum": ["linux", "windows"] },
     "integration": {

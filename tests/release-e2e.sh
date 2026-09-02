@@ -45,7 +45,7 @@ command -v stat >/dev/null 2>&1 || die 'stat es necesario para validar la releas
 manifest="$RELEASE_DIR/ltools-release.json"
 [[ -s "$manifest" ]] || die 'falta ltools-release.json'
 jq -e --arg version "$VERSION" \
-    '.schema == "ltools-release-v1" and .application == "LTools" and
+    '.schema == "ltools-release-v1" and (.application == "LTools" or .application == "WinSlim-Tools") and
      .version == $version and .hash_algorithm == "sha256" and
      (.artifacts | type == "array" and length > 0)' "$manifest" >/dev/null \
     || die 'el manifiesto no supera el contrato de release'

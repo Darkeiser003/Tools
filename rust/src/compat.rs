@@ -32,7 +32,7 @@ pub fn descriptor_json() -> String {
     format!(
         r#"{{
   "schema": "ltools-capabilities-v1",
-  "application": "LTools",
+  "application": "{}",
   "version": "{}",
   "platform": "{}",
   "entrypoints": {{
@@ -83,6 +83,7 @@ pub fn descriptor_json() -> String {
     "standalone_releases_require_it": false
   }}
 }}"#,
+        json_escape(crate::i18n::product_name()),
         json_escape(VERSION),
         platform,
         command,
@@ -114,7 +115,7 @@ fn terminal_descriptor_json_for(platform: &str) -> String {
     format!(
         r#"{{
   "schema": "ltools-terminal-integration-v1",
-  "application": "LTools",
+  "application": "{}",
   "version": "{}",
   "platform": "{}",
   "integration": {{
@@ -143,6 +144,7 @@ fn terminal_descriptor_json_for(platform: &str) -> String {
 {}
   ]
 }}"#,
+        json_escape(crate::i18n::product_name()),
         json_escape(VERSION),
         platform,
         host_id,
@@ -157,6 +159,7 @@ fn terminal_descriptor_json_for(platform: &str) -> String {
 /// reinterpretar una cadena de shell. `command` se conserva como texto
 /// legible para hosts antiguos que solo conocían ese campo.
 fn terminal_actions_json(platform: &str) -> String {
+    let product_name = crate::i18n::product_name();
     let command = if platform == "windows" {
         "ltools.exe"
     } else {
@@ -318,9 +321,9 @@ fn terminal_actions_json(platform: &str) -> String {
         ),
         action_json(
             "help",
-            "Mostrar ayuda de LTools",
+            &format!("Mostrar ayuda de {product_name}"),
             "Ayuda",
-            "LTools",
+            product_name,
             "Muestra todos los comandos y opciones disponibles.",
             command,
             &["--help"],
@@ -550,6 +553,12 @@ mod tests {
         assert!(json.contains("lterminal-startup-v1"));
         assert!(json.contains("--open-path"));
         assert!(json.contains("\"host_tools\""));
+        let expected_application = if cfg!(windows) {
+            "\"application\": \"WinSlim-Tools\""
+        } else {
+            "\"application\": \"LTools\""
+        };
+        assert!(json.contains(expected_application));
         assert!(json.contains("\"installable\":true"));
         assert!(json.contains("\"storage\""));
         assert!(json.contains("\"registry\""));
@@ -558,10 +567,8 @@ mod tests {
         assert!(json.contains("\"workingDirectory\":\"current\""));
         assert!(json.contains("\"cli\": {"));
 
-        // The host-tool catalog is deliberately platform-specific.  Linux
-        // exposes audit/prefix tools, while Windows exposes native system,
-        // storage and registry tools.  Do not make a Windows build validate
-        // Linux-only catalog entries (or vice versa).
+        // El catálogo de herramientas es específico de cada plataforma:
+        // Linux expone auditoría/prefijos y Windows herramientas nativas.
         if cfg!(windows) {
             assert!(json.contains("\"category\":\"system\""));
             assert!(json.contains("\"category\":\"storage\""));
@@ -593,6 +600,12 @@ mod tests {
         assert!(json.contains("\"optional\": true"));
         assert!(json.contains("\"standalone_releases_require_it\": false"));
         assert!(json.contains("\"exclusive_host_family\": \"lterminal\""));
+        let expected_application = if cfg!(windows) {
+            "\"application\": \"WinSlim-Tools\""
+        } else {
+            "\"application\": \"LTools\""
+        };
+        assert!(json.contains(expected_application));
         assert!(json.contains("\"id\":\"audit\""));
         assert!(json.contains("\"args\":[\"audit\"]"));
         assert!(json.contains("\"confirmation\":\"none\""));

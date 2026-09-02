@@ -575,7 +575,13 @@ pub fn run(ctx: &Context, args: &[String], games: bool) -> Result<(), String> {
         write_duplicates(&out, &roots, min_size).map_err(|e| e.to_string())?;
     }
     let mut summary = File::create(out.join("summary.txt")).map_err(|e| e.to_string())?;
-    writeln!(summary, "ltools-rs {}", crate::VERSION).map_err(|e| e.to_string())?;
+    writeln!(
+        summary,
+        "{} {}",
+        crate::i18n::product_name(),
+        crate::VERSION
+    )
+    .map_err(|e| e.to_string())?;
     writeln!(summary, "Modo: {}", if full { "full" } else { "quick" })
         .map_err(|e| e.to_string())?;
     writeln!(summary, "Rutas escaneadas:").map_err(|e| e.to_string())?;

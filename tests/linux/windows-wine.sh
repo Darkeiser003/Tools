@@ -282,7 +282,7 @@ package_windows_artifact() {
     cp -a -- "$WINEXE" "$artifact"
     cat > "$metadata" <<EOF
 {
-  "application": "LTools",
+  "application": "WinSlim-Tools",
   "version": "$VERSION",
   "platform": "windows",
   "architecture": "$package_arch",

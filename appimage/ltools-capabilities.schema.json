@@ -6,7 +6,7 @@
   "required": ["schema", "application", "version", "platform", "entrypoints", "features", "terminal_integration", "actions", "distribution", "host_tools", "external_integrations"],
   "properties": {
     "schema": { "const": "ltools-capabilities-v1" },
-    "application": { "const": "LTools" },
+    "application": { "enum": ["LTools", "WinSlim-Tools"] },
     "version": { "type": "string" },
     "platform": { "enum": ["linux", "windows"] },
     "entrypoints": { "type": "object" },

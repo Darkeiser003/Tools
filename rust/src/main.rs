@@ -59,7 +59,10 @@ fn interrupt_requested() -> bool {
 
 fn finish_after_interrupt() -> bool {
     if interrupt_requested() {
-        println!("\nInterrupción recibida. Saliendo de LTools.");
+        println!(
+            "\nInterrupción recibida. Saliendo de {}.",
+            i18n::product_name()
+        );
         true
     } else {
         false

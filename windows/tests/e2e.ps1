@@ -61,6 +61,9 @@ try {
         throw 'El contrato JSON Windows anuncia o mezcla funciones Linux/Wine.'
     }
     $capabilityJson = $capabilities | ConvertFrom-Json
+    if ($capabilityJson.application -ne 'WinSlim-Tools' -or $capabilityJson.platform -ne 'windows') {
+        throw 'La identidad Windows del contrato no es WinSlim-Tools.'
+    }
     if ($capabilityJson.features -contains 'wine-prefixes' -or
         $capabilities -match 'Heroic|Lutris|UMU') {
         throw 'El contrato JSON Windows anuncia o mezcla funciones Linux/Wine.'

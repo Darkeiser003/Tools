@@ -32,7 +32,10 @@ try {
     Run @('--version')
     Run @('--help')
     $germanHelp = Run @('--lang', 'de', '--help')
-    if ($germanHelp -notmatch 'Verwendung:' -or $germanHelp -notmatch 'Datenträger') {
+    # Windows PowerShell 5.1 puede decodificar mal caracteres no ASCII de la
+    # salida nativa según la página de códigos. Usar marcadores ASCII evita
+    # confundir una traducción correcta con un problema de consola.
+    if ($germanHelp -notmatch 'Verwendung:' -or $germanHelp -notmatch 'Befehle:') {
         throw 'Las traducciones alemanas del help Windows no se aplicaron completamente.'
     }
     Run @('doctor')
@@ -58,6 +61,9 @@ try {
     }
     $capabilityOutput = Run @('capabilities', '--format', 'json')
     $capabilityJson = $capabilityOutput | ConvertFrom-Json
+    if ($capabilityJson.application -ne 'WinSlim-Tools' -or $capabilityJson.platform -ne 'windows') {
+        throw 'La identidad Windows del contrato no es WinSlim-Tools.'
+    }
     $legacyCapabilityOutput = Run @('--ltools-capabilities', '--format', 'json')
     $legacyCapabilityJson = $legacyCapabilityOutput | ConvertFrom-Json
     if ($legacyCapabilityJson.schema -ne 'ltools-capabilities-v1' -or

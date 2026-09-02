@@ -6,6 +6,11 @@ un perfil CLI para automatización y paquetes portables para Linux y Windows.
 Los scripts Bash y PowerShell se limitan a lanzadores, builders y pruebas; no
 son el backend funcional.
 
+La variante Linux se presenta como `LTools`; la variante Windows se presenta
+como `WinSlim-Tools`. Los nombres técnicos `ltools`, `ltools.exe`, los IDs de
+los contratos y las rutas de compatibilidad se conservan para no romper los
+lanzadores ni las terminales anfitrionas.
+
 | | |
 |---|---|
 | Versión | La definida en `rust/Cargo.toml` |

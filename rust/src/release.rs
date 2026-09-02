@@ -9,7 +9,7 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use crate::{common, VERSION};
+use crate::{common, i18n, VERSION};
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 struct Artifact {
@@ -181,7 +181,10 @@ fn render_manifest(repository: &str, tag: &str, artifacts: &[Artifact]) -> Strin
     let mut json = String::new();
     json.push_str("{\n");
     json.push_str("  \"schema\": \"ltools-release-v1\",\n");
-    json.push_str("  \"application\": \"LTools\",\n");
+    json.push_str(&format!(
+        "  \"application\": \"{}\",\n",
+        json_escape(i18n::product_name())
+    ));
     json.push_str(&format!("  \"version\": \"{}\",\n", json_escape(VERSION)));
     json.push_str(&format!("  \"tag\": \"{}\",\n", json_escape(tag)));
     json.push_str(&format!(

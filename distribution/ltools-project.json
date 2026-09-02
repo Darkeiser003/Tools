@@ -40,7 +40,7 @@
       },
       "install": {
         "portable": true,
-        "recommended_directory": "%LOCALAPPDATA%\\LTools",
+        "recommended_directory": "%LOCALAPPDATA%\\WinSlim-Tools",
         "executable": true
       }
     }

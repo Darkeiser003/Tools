@@ -193,7 +193,13 @@ fn run_windows(ctx: &Context, args: &[String]) -> Result<(), String> {
         }
     }
     let mut summary = File::create(out.join("summary.txt")).map_err(|e| e.to_string())?;
-    writeln!(summary, "LTools {}", crate::VERSION).map_err(|e| e.to_string())?;
+    writeln!(
+        summary,
+        "{} {}",
+        crate::i18n::product_name(),
+        crate::VERSION
+    )
+    .map_err(|e| e.to_string())?;
     writeln!(summary, "Modo: games-windows-native").map_err(|e| e.to_string())?;
     writeln!(summary, "Lanzadores Windows detectados: {detected}").map_err(|e| e.to_string())?;
     writeln!(
