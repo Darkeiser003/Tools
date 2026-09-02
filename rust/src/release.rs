@@ -236,7 +236,11 @@ fn sha256_file(path: &Path) -> Result<String, String> {
     let mut file =
         File::open(path).map_err(|e| format!("no se pudo abrir {}: {e}", path.display()))?;
     let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 1024 * 1024];
+    // Windows nativo/MSVC puede iniciar el hilo principal con una pila mucho
+    // menor que Linux. El buffer debe vivir en el heap: un array de 1 MiB en
+    // la pila provoca `thread 'main' has overflowed its stack` al generar la
+    // release-manifest, justo cuando se calcula el primer SHA-256.
+    let mut buffer = vec![0_u8; 1024 * 1024];
     loop {
         let read = file
             .read(&mut buffer)
