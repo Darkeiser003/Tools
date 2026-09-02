@@ -60,6 +60,10 @@ grep -Fq '"schema": "ltools-capabilities-v1"' <<<"$CAPABILITIES_JSON" ||
     die 'el contrato JSON de capacidades no se pudo generar'
 grep -Fq 'lterminal-startup-v1' <<<"$CAPABILITIES_JSON" ||
     die 'el contrato JSON no declara integración de terminal'
+LEGACY_CAPABILITIES_JSON="$($BIN --ltools-capabilities --format json)"
+grep -Fq '"schema": "ltools-capabilities-v1"' <<<"$LEGACY_CAPABILITIES_JSON" ||
+    die 'el alias de capacidades usado por la integración no funciona'
+ok 'alias de capacidades para AppRun y terminales anfitrionas'
 if command -v jq >/dev/null 2>&1; then
     jq -e '(.host_tools | length >= 10) and any(.host_tools[]; .category == "audit") and any(.host_tools[]; .category == "system") and any(.host_tools[]; .installable == true) and any(.host_tools[]; .id == "docker-compose" and .installable == true) and any(.host_tools[]; .id == "kubectl" and .installable == true) and any(.host_tools[]; .id == "lsblk" and .installable == true) and ([.host_tools[] | select(.category == "games" or .category == "virtualization" or .category == "development" or .command == "steam" or .command == "git")] | length == 0)' \
         <<<"$CAPABILITIES_JSON" >/dev/null \

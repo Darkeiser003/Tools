@@ -550,25 +550,36 @@ mod tests {
         assert!(json.contains("lterminal-startup-v1"));
         assert!(json.contains("--open-path"));
         assert!(json.contains("\"host_tools\""));
-        assert!(json.contains("\"category\":\"audit\""));
         assert!(json.contains("\"installable\":true"));
-        assert!(json.contains("\"install_package\":\"rsync\""));
         assert!(json.contains("\"storage\""));
         assert!(json.contains("\"registry\""));
         assert!(json.contains("\"actions\": ["));
         assert!(json.contains("\"requiresCommands\""));
         assert!(json.contains("\"workingDirectory\":\"current\""));
         assert!(json.contains("\"cli\": {"));
-        assert!(!json.contains("\"category\":\"games\""));
-        assert!(!json.contains("\"category\":\"virtualization\""));
-        assert!(!json.contains("\"category\":\"development\""));
-        assert!(!json.contains("\"command\":\"wine\""));
-        assert!(json.contains("\"command\":\"docker\""));
-        assert!(!json.contains("\"command\":\"git\""));
+
+        // The host-tool catalog is deliberately platform-specific.  Linux
+        // exposes audit/prefix tools, while Windows exposes native system,
+        // storage and registry tools.  Do not make a Windows build validate
+        // Linux-only catalog entries (or vice versa).
         if cfg!(windows) {
+            assert!(json.contains("\"category\":\"system\""));
+            assert!(json.contains("\"category\":\"storage\""));
+            assert!(json.contains("\"category\":\"registry\""));
+            assert!(json.contains("\"install_package\":\"Docker.DockerCompose\""));
+            assert!(json.contains("\"install_package\":\"Kubernetes.kubectl\""));
+            assert!(!json.contains("\"category\":\"audit\""));
             assert!(!json.contains("wine-prefixes"));
             assert!(json.contains("\"command\": \"ltools.exe\""));
         } else {
+            assert!(json.contains("\"category\":\"audit\""));
+            assert!(json.contains("\"install_package\":\"rsync\""));
+            assert!(!json.contains("\"category\":\"games\""));
+            assert!(!json.contains("\"category\":\"virtualization\""));
+            assert!(!json.contains("\"category\":\"development\""));
+            assert!(!json.contains("\"command\":\"wine\""));
+            assert!(json.contains("\"command\":\"docker\""));
+            assert!(!json.contains("\"command\":\"git\""));
             assert!(json.contains("wine-prefixes"));
             assert!(json.contains("\"command\": \"ltools\""));
         }
@@ -583,12 +594,18 @@ mod tests {
         assert!(json.contains("\"standalone_releases_require_it\": false"));
         assert!(json.contains("\"exclusive_host_family\": \"lterminal\""));
         assert!(json.contains("\"id\":\"audit\""));
-        assert!(json.contains("\"executable\":\"ltools\""));
         assert!(json.contains("\"args\":[\"audit\"]"));
         assert!(json.contains("\"confirmation\":\"none\""));
         assert!(json.contains("LTerminal"));
         assert!(json.contains("WinSlim Terminal"));
         assert!(json.contains(crate::VERSION));
+        if cfg!(windows) {
+            assert!(json.contains("\"executable\":\"ltools.exe\""));
+            assert!(json.contains("\"platform\": \"windows\""));
+        } else {
+            assert!(json.contains("\"executable\":\"ltools\""));
+            assert!(json.contains("\"platform\": \"linux\""));
+        }
     }
 
     #[test]

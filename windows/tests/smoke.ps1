@@ -58,6 +58,12 @@ try {
     }
     $capabilityOutput = Run @('capabilities', '--format', 'json')
     $capabilityJson = $capabilityOutput | ConvertFrom-Json
+    $legacyCapabilityOutput = Run @('--ltools-capabilities', '--format', 'json')
+    $legacyCapabilityJson = $legacyCapabilityOutput | ConvertFrom-Json
+    if ($legacyCapabilityJson.schema -ne 'ltools-capabilities-v1' -or
+        $legacyCapabilityJson.platform -ne 'windows') {
+        throw 'El alias de capacidades usado por AppRun/terminales no funciona en Windows.'
+    }
     if ($capabilityJson.host_tools.Count -lt 6 -or
         -not ($capabilityJson.host_tools | Where-Object { $_.category -eq 'system' }) -or
         -not ($capabilityJson.host_tools | Where-Object { $_.command -eq 'sc.exe' })) {

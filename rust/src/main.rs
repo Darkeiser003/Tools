@@ -244,7 +244,12 @@ fn main() {
         println!("ltools-rs {VERSION}");
         return;
     }
-    if raw.iter().any(|a| a == "--capabilities") {
+    // `--ltools-capabilities` is the stable probe used by terminal hosts and
+    // AppRun. Keep `--capabilities` as the shorter public alias as well.
+    if raw
+        .iter()
+        .any(|a| a == "--capabilities" || a == "--ltools-capabilities")
+    {
         if let Err(error) = compat::run(&raw) {
             eprintln!("Error: {error}");
             std::process::exit(2);
