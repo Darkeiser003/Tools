@@ -227,14 +227,14 @@ if ($needTests) {
         $smoke = Join-Path $Root 'windows\tests\smoke.ps1'
         if (Test-Path $smoke) {
         Invoke-Step "Ejecutando smoke Windows" {
-                $exitCode = Invoke-NativeCommand 'powershell.exe' @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $smoke, '-Binary', $Binary, '-Version', $Version)
+                $exitCode = Invoke-NativeCommand 'powershell.exe' @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $smoke, '-Binary', $Binary, '-Version', $Version)
                 if ($exitCode -ne 0) { throw "smoke Windows terminó con código $exitCode" }
             }
         }
         $e2e = Join-Path $Root 'windows\tests\e2e.ps1'
         if (Test-Path $e2e) {
             Invoke-Step "Ejecutando E2E Windows" {
-                $exitCode = Invoke-NativeCommand 'powershell.exe' @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $e2e, '-Binary', $Binary)
+                $exitCode = Invoke-NativeCommand 'powershell.exe' @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $e2e, '-Binary', $Binary)
                 if ($exitCode -ne 0) { throw "E2E Windows terminó con código $exitCode" }
             }
         }

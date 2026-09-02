@@ -765,7 +765,10 @@ nativas de esos lanzadores.
 
 El smoke y la E2E Windows están en `windows/tests/` y prueban el ejecutable,
 el contrato de capacidades, el inventario nativo, informes, planes y acciones
-del sistema. Deben ejecutarse en Windows. Desde Linux, la compilación y prueba
+del sistema. Usan `native-process.ps1`, un capturador .NET común con UTF-8,
+timeouts, cierre de stdin y diagnóstico de stdout/stderr; no dependen del
+pipeline frágil de PowerShell para procesos nativos. Deben ejecutarse en
+Windows. Desde Linux, la compilación y prueba
 aislada opcional bajo Wine/Proton se solicita con `./build.sh --windows-wine`;
 usa un prefijo temporal y no activa la lógica Linux de prefijos.
 

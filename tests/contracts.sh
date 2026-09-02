@@ -22,6 +22,7 @@ ok() { printf '  OK    %s\n' "$1"; }
 [[ -f "$ROOT_DIR/windows/ltools-cli.cmd" ]] || fail 'falta el lanzador CLI CMD Windows'
 [[ -f "$ROOT_DIR/windows/tests/smoke.ps1" ]] || fail 'falta el smoke Windows'
 [[ -f "$ROOT_DIR/windows/tests/e2e.ps1" ]] || fail 'falta la E2E Windows'
+[[ -f "$ROOT_DIR/windows/tests/native-process.ps1" ]] || fail 'falta el capturador nativo común de Windows'
 [[ -x "$ROOT_DIR/tests/encoding.sh" ]] || fail 'falta la auditoría de codificaciones'
 [[ -x "$ROOT_DIR/tests/release-e2e.sh" ]] || fail 'falta la E2E de publicación release'
 [[ -f "$ROOT_DIR/rust/src/storage/linux.rs" ]] || fail 'falta almacenamiento Linux separado'
@@ -173,6 +174,17 @@ grep -Fq 'x86_64-pc-windows-msvc' "$ROOT_DIR/windows/build.ps1" || fail 'builder
 grep -Fq 'build-state.json' "$ROOT_DIR/windows/build.ps1" || fail 'builder Windows sin estado incremental'
 grep -Fq 'CARGO_TARGET_DIR' "$ROOT_DIR/windows/build.ps1" || fail 'builder Windows no fija el directorio de target'
 grep -Fq 'windows\tests\e2e.ps1' "$ROOT_DIR/windows/build.ps1" || fail 'builder Windows no ejecuta la E2E nativa'
+grep -Fq 'native-process.ps1' "$ROOT_DIR/windows/tests/smoke.ps1" || fail 'smoke Windows sin capturador nativo estable'
+grep -Fq 'native-process.ps1' "$ROOT_DIR/windows/tests/e2e.ps1" || fail 'E2E Windows sin capturador nativo estable'
+grep -Fq 'ReadToEndAsync' "$ROOT_DIR/windows/tests/native-process.ps1" || fail 'capturador Windows sin lectura asíncrona de pipes'
+grep -Fq 'StandardOutputEncoding' "$ROOT_DIR/windows/tests/native-process.ps1" || fail 'capturador Windows sin UTF-8 explícito'
+grep -Fq 'ValidateRange(1, 3600)' "$ROOT_DIR/windows/tests/native-process.ps1" || fail 'capturador Windows sin límite de timeout'
+if rg -n '& \$Binary|LASTEXITCODE' "$ROOT_DIR/windows/tests" >/tmp/ltools-windows-fragile-runner.txt 2>/dev/null; then
+    sed -n '1,40p' /tmp/ltools-windows-fragile-runner.txt >&2
+    fail 'los tests Windows conservan captura directa o LASTEXITCODE stale'
+else
+    ok 'tests Windows sin runner de procesos frágil'
+fi
 grep -Fq 'ltools-cli.exe' "$ROOT_DIR/windows/build.ps1" || fail 'builder Windows no empaqueta el perfil CLI'
 grep -Fq 'exe-cli' "$ROOT_DIR/rust/src/release.rs" || fail 'manifiesto sin tipo de ejecutable CLI Windows'
 grep -Fq 'PackageArch' "$ROOT_DIR/windows/build.ps1" || fail 'builder Windows no adapta el nombre a la arquitectura'

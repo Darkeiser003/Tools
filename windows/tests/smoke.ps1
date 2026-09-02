@@ -6,7 +6,7 @@ param(
     [string]$Version
 )
 $ErrorActionPreference = 'Stop'
-if (-not (Test-Path $Binary)) { throw "No existe el ejecutable: $Binary" }
+if (-not (Test-Path -LiteralPath $Binary -PathType Leaf)) { throw "No existe el ejecutable: $Binary" }
 if (-not $Version) {
     $cargoManifest = Join-Path $PSScriptRoot '..\..\rust\Cargo.toml'
     $Version = ((Select-String -Path $cargoManifest -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value)
@@ -18,16 +18,34 @@ $oldUserProfile = $env:USERPROFILE
 $oldHome = $env:HOME
 $oldAppData = $env:APPDATA
 $oldLocalAppData = $env:LOCALAPPDATA
+$oldLanguage = $env:LTOOLS_LANG
+$oldCliMode = $env:LTOOLS_CLI
+$oldNoClear = $env:LTOOLS_NO_CLEAR
 $env:USERPROFILE = $temp
 $env:HOME = $temp
 $env:APPDATA = Join-Path $temp 'AppData\Roaming'
 $env:LOCALAPPDATA = Join-Path $temp 'AppData\Local'
+$env:LTOOLS_LANG = 'es'
+Remove-Item Env:LTOOLS_CLI -ErrorAction SilentlyContinue
+$env:LTOOLS_NO_CLEAR = '1'
+$processHelper = Join-Path $PSScriptRoot 'native-process.ps1'
+if (-not (Test-Path -LiteralPath $processHelper)) { throw "Falta el helper de procesos: $processHelper" }
+. $processHelper
 try {
-    function Run([string[]]$Args) {
-        $output = & $Binary @Args 2>&1 | Out-String
-        if ($LASTEXITCODE -ne 0) { throw "Falló ltools.exe $($Args -join ' '): $output" }
-        if ([string]::IsNullOrWhiteSpace($output)) { throw "Salida vacía para ltools.exe $($Args -join ' ')" }
-        return $output.Trim()
+    function Run([string[]]$Arguments) {
+        Write-Host ("  [RUN] ltools.exe {0}" -f ($Arguments -join ' '))
+        $result = Invoke-NativeProcess -FileName $Binary -Arguments $Arguments
+        if ($result.ExitCode -ne 0) {
+            throw (Format-NativeProcessFailure $result "ltools.exe $($Arguments -join ' ')")
+        }
+        $output = [string]$result.Stdout
+        # La salida de error no se mezcla en éxitos: algunos comandos como
+        # capabilities generan JSON que debe poder pasar directamente a
+        # ConvertFrom-Json. stderr se conserva en el diagnóstico de fallo.
+        if ([string]::IsNullOrWhiteSpace($output) -and
+            -not [string]::IsNullOrWhiteSpace($result.Stderr)) { $output = [string]$result.Stderr }
+        if ([string]::IsNullOrWhiteSpace($output)) { throw "Salida vacía para ltools.exe $($Arguments -join ' ')" }
+        return [string](([string]$output).Trim())
     }
     Run @('--version')
     Run @('--help')
@@ -35,29 +53,26 @@ try {
     # Windows PowerShell 5.1 puede decodificar mal caracteres no ASCII de la
     # salida nativa según la página de códigos. Usar marcadores ASCII evita
     # confundir una traducción correcta con un problema de consola.
-    if ($germanHelp -notmatch 'Verwendung:' -or $germanHelp -notmatch 'Befehle:') {
-        throw 'Las traducciones alemanas del help Windows no se aplicaron completamente.'
+    if (-not [regex]::IsMatch([string]$germanHelp, 'Verwendung:') -or
+        -not [regex]::IsMatch([string]$germanHelp, 'Befehle:')) {
+        $preview = (($germanHelp -split "`r?`n") | Select-Object -First 60) -join [Environment]::NewLine
+        throw "Las traducciones alemanas del help Windows no se aplicaron completamente.`nSalida capturada:`n$preview"
     }
     Run @('doctor')
     Run @('defaults')
     Run @('storage', 'tools')
     Run @('registry', 'status')
     if ($CliBinary -and (Test-Path -LiteralPath $CliBinary)) {
-        $cliOutput = & $CliBinary 2>&1 | Out-String
-        if ($LASTEXITCODE -ne 0 -or $cliOutput -notmatch 'Uso: ltools') {
-            throw 'El ejecutable CLI Windows sin argumentos no muestra la ayuda.'
+        $cliResult = Invoke-NativeProcess -FileName $CliBinary -TimeoutSeconds 15
+        $cliOutput = [string]$cliResult.Stdout + [string]$cliResult.Stderr
+        if ($cliResult.ExitCode -ne 0 -or -not [regex]::IsMatch($cliOutput, 'Uso: ltools|Usage: ltools')) {
+            throw (Format-NativeProcessFailure $cliResult 'El ejecutable CLI Windows sin argumentos no muestra la ayuda')
         }
     }
-    $oldCliProfile = $env:LTOOLS_CLI
-    $env:LTOOLS_CLI = '1'
-    try {
-        $cliOutput = & $Binary 2>&1 | Out-String
-        if ($LASTEXITCODE -ne 0 -or $cliOutput -notmatch 'Uso: ltools') {
-            throw 'El perfil CLI Windows no muestra la ayuda sin argumentos.'
-        }
-    } finally {
-        if ($null -eq $oldCliProfile) { Remove-Item Env:LTOOLS_CLI -ErrorAction SilentlyContinue }
-        else { $env:LTOOLS_CLI = $oldCliProfile }
+    $cliResult = Invoke-NativeProcess -FileName $Binary -EnvironmentOverrides @{ LTOOLS_CLI = '1' } -TimeoutSeconds 15
+    $cliOutput = [string]$cliResult.Stdout + [string]$cliResult.Stderr
+    if ($cliResult.ExitCode -ne 0 -or -not [regex]::IsMatch($cliOutput, 'Uso: ltools|Usage: ltools')) {
+        throw (Format-NativeProcessFailure $cliResult 'El perfil CLI Windows no muestra la ayuda sin argumentos')
     }
     $capabilityOutput = Run @('capabilities', '--format', 'json')
     $capabilityJson = $capabilityOutput | ConvertFrom-Json
@@ -156,5 +171,11 @@ try {
     $env:HOME = $oldHome
     $env:APPDATA = $oldAppData
     $env:LOCALAPPDATA = $oldLocalAppData
+    if ($null -eq $oldLanguage) { Remove-Item Env:LTOOLS_LANG -ErrorAction SilentlyContinue }
+    else { $env:LTOOLS_LANG = $oldLanguage }
+    if ($null -eq $oldCliMode) { Remove-Item Env:LTOOLS_CLI -ErrorAction SilentlyContinue }
+    else { $env:LTOOLS_CLI = $oldCliMode }
+    if ($null -eq $oldNoClear) { Remove-Item Env:LTOOLS_NO_CLEAR -ErrorAction SilentlyContinue }
+    else { $env:LTOOLS_NO_CLEAR = $oldNoClear }
     Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }
