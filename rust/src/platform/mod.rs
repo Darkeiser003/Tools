@@ -47,10 +47,18 @@ pub fn host_tool_available(tool: &HostTool) -> bool {
     current::host_tool_available(tool)
 }
 
+/// Obtiene una versión corta solo cuando la herramienta está disponible. Los
+/// adaptadores por plataforma conocen las excepciones (por ejemplo,
+/// `docker-compose version` o los cmdlets de PowerShell).
+pub fn host_tool_version(tool: &HostTool) -> Option<String> {
+    current::host_tool_version(tool)
+}
+
 pub fn run_with_privilege(program: &str, args: &[String], dry_run: bool) -> io::Result<bool> {
     current::run_with_privilege(program, args, dry_run)
 }
 
+#[cfg(not(windows))]
 pub fn critical_path(path: &Path) -> bool {
     current::critical_path(path)
 }

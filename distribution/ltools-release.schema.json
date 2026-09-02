@@ -30,7 +30,7 @@
         "properties": {
           "platform": { "enum": ["linux", "windows"] },
           "architecture": { "type": "string", "minLength": 1 },
-          "kind": { "enum": ["appimage", "appimage-cli", "tarball", "exe", "portable-zip"] },
+          "kind": { "enum": ["appimage", "appimage-cli", "tarball", "exe", "exe-cli", "portable-zip"] },
           "filename": { "type": "string", "minLength": 1 },
           "download_url": { "type": "string", "format": "uri" },
           "size_bytes": { "type": "integer", "minimum": 1 },

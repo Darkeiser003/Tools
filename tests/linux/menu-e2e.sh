@@ -195,6 +195,8 @@ assert_file "$PKG_OUT/package-artifacts.tsv"
 ok 'inventario de gestores y formatos de paquetes'
 run_menu main-packages-empty "8\n\n" 'Pulsa Enter para volver al menú'
 ok 'opción 8 conserva la ventana cuando la ruta queda vacía'
+run_menu main-storage "9\n3\nq\n" 'Herramientas de almacenamiento Linux'
+run_menu main-registry "10\n1\nq\n" 'Registros y configuración Linux'
 run_menu main-multi-session "5\n\n8\n\nq\n" 'Operación terminada correctamente.'
 [[ "$(grep -o '=== LTools' "$TMP_DIR/main-multi-session.out" | wc -l)" -ge 2 ]] || die 'el menú no volvió a mostrarse tras una acción'
 grep -Fq $'\033[2J\033[H=== LTools' "$TMP_DIR/main-multi-session.out" || die 'el menú no limpió la pantalla al volver'

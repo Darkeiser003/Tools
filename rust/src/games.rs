@@ -1,10 +1,25 @@
+#[cfg(not(windows))]
 use crate::audit;
-use crate::common::{clean, command_exists, ensure_tool, human_bytes, Context};
+use crate::common::{clean, Context};
+#[cfg(not(windows))]
+use crate::common::{command_exists, ensure_tool, human_bytes};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        run_windows(ctx, args)
+    }
+    #[cfg(not(windows))]
+    {
+        run_linux(ctx, args)
+    }
+}
+
+#[cfg(not(windows))]
+fn run_linux(ctx: &Context, args: &[String]) -> Result<(), String> {
     let out = value(args, "--out")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(format!("rust-games-{}", crate::common::timestamp())));
@@ -34,12 +49,253 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+struct WindowsLauncher {
+    name: &'static str,
+    paths: &'static [&'static str],
+    configs: &'static [&'static str],
+    manifest_dirs: &'static [&'static str],
+}
+
+#[cfg(windows)]
+const WINDOWS_LAUNCHERS: &[WindowsLauncher] = &[
+    WindowsLauncher {
+        name: "Steam",
+        paths: &["Steam", "SteamLibrary", "Games/Steam"],
+        configs: &[
+            "Steam/config/loginusers.vdf",
+            "Steam/steamapps/libraryfolders.vdf",
+        ],
+        manifest_dirs: &[
+            "Steam/steamapps",
+            "SteamLibrary/steamapps",
+            "Games/Steam/steamapps",
+        ],
+    },
+    WindowsLauncher {
+        name: "Epic Games",
+        paths: &["Epic Games", "EpicGamesLauncher", "Games/Epic Games"],
+        configs: &[
+            "EpicGamesLauncher/Data/Manifests",
+            "Epic/EpicGamesLauncher/Data/Manifests",
+        ],
+        manifest_dirs: &[
+            "EpicGamesLauncher/Data/Manifests",
+            "Epic/EpicGamesLauncher/Data/Manifests",
+            "Epic Games/Manifests",
+        ],
+    },
+    WindowsLauncher {
+        name: "Ubisoft Connect",
+        paths: &[
+            "Ubisoft/Ubisoft Game Launcher",
+            "Ubisoft Connect",
+            "Games/Ubisoft",
+        ],
+        configs: &["Ubisoft Game Launcher/settings.yaml"],
+        manifest_dirs: &[],
+    },
+    WindowsLauncher {
+        name: "EA app",
+        paths: &["EA Games", "Electronic Arts", "EA Desktop", "Games/EA"],
+        configs: &["EA Desktop/Logs", "Electronic Arts/EA Desktop"],
+        manifest_dirs: &[],
+    },
+    WindowsLauncher {
+        name: "itch.io",
+        paths: &["itch", "itch.io", "Games/itch"],
+        configs: &["itch/config.ini", "itch/settings.json"],
+        manifest_dirs: &[],
+    },
+    WindowsLauncher {
+        name: "Battle.net",
+        paths: &["Battle.net", "Blizzard Entertainment", "Games/Battle.net"],
+        configs: &["Battle.net/Agent/Agent.7164/Agent.db"],
+        manifest_dirs: &[],
+    },
+    WindowsLauncher {
+        name: "Rockstar Games",
+        paths: &["Rockstar Games", "Games/Rockstar Games"],
+        configs: &["Rockstar Games/Launcher/launcher.log"],
+        manifest_dirs: &[],
+    },
+    WindowsLauncher {
+        name: "GOG Galaxy",
+        paths: &["GOG Galaxy", "GOG Games", "Games/GOG"],
+        configs: &["GOG Galaxy/galaxyClientService.log"],
+        manifest_dirs: &[],
+    },
+    WindowsLauncher {
+        name: "Xbox / Microsoft Store",
+        paths: &["XboxGames", "ModifiableWindowsApps", "WindowsApps"],
+        configs: &[],
+        manifest_dirs: &[],
+    },
+];
+
+#[cfg(windows)]
+fn run_windows(ctx: &Context, args: &[String]) -> Result<(), String> {
+    let out = value(args, "--out").map(PathBuf::from).unwrap_or_else(|| {
+        PathBuf::from(format!(
+            "ltools-windows-games-{}",
+            crate::common::timestamp()
+        ))
+    });
+    fs::create_dir_all(&out).map_err(|e| format!("no se pudo crear el informe: {e}"))?;
+    let roots = windows_search_roots(ctx, args);
+    let mut locations =
+        File::create(out.join("windows-game-launchers.tsv")).map_err(|e| e.to_string())?;
+    writeln!(locations, "launcher\tstatus\tpath\tsource").map_err(|e| e.to_string())?;
+    let mut configs =
+        File::create(out.join("configuration-validation.tsv")).map_err(|e| e.to_string())?;
+    writeln!(configs, "app\tconfig\tstatus\tfield\tvalue\tnote").map_err(|e| e.to_string())?;
+    let mut detected = 0usize;
+    let mut seen = Vec::new();
+    for launcher in WINDOWS_LAUNCHERS {
+        for base in &roots {
+            for relative in launcher.paths {
+                let path = base.join(relative);
+                if !path.exists() || seen.contains(&path) {
+                    continue;
+                }
+                seen.push(path.clone());
+                detected += 1;
+                writeln!(
+                    locations,
+                    "{}\tinstalled\t{}\tcommon Windows path",
+                    launcher.name,
+                    clean(&path.display().to_string())
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            for relative in launcher.configs {
+                let path = base.join(relative);
+                if !path.exists() {
+                    continue;
+                }
+                writeln!(
+                    configs,
+                    "{}\t{}\texists\tpath\t{}\tconfiguración nativa Windows",
+                    launcher.name,
+                    clean(&path.display().to_string()),
+                    clean(&path.display().to_string())
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    for launcher in WINDOWS_LAUNCHERS {
+        for root in &roots {
+            for relative in launcher.manifest_dirs {
+                collect_windows_manifests(&root.join(relative), launcher.name, &mut locations)?;
+            }
+        }
+    }
+    let mut summary = File::create(out.join("summary.txt")).map_err(|e| e.to_string())?;
+    writeln!(summary, "LTools {}", crate::VERSION).map_err(|e| e.to_string())?;
+    writeln!(summary, "Modo: games-windows-native").map_err(|e| e.to_string())?;
+    writeln!(summary, "Lanzadores Windows detectados: {detected}").map_err(|e| e.to_string())?;
+    writeln!(
+        summary,
+        "No se buscan prefijos Wine, Lutris, Heroic ni UMU en Windows."
+    )
+    .map_err(|e| e.to_string())?;
+    writeln!(summary, "Rutas inspeccionadas:").map_err(|e| e.to_string())?;
+    for root in &roots {
+        writeln!(summary, "  {}", root.display()).map_err(|e| e.to_string())?;
+    }
+    writeln!(summary, "Informe: {}", out.display()).map_err(|e| e.to_string())?;
+    println!("Auditoría nativa de juegos Windows: {detected} ubicación(es).");
+    println!("No se buscan prefijos Wine, Lutris, Heroic ni UMU.");
+    println!("Informe: {}", out.display());
+    let _ = ctx;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn windows_search_roots(ctx: &Context, args: &[String]) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    for pair in args.windows(2) {
+        if pair[0] == "--root" {
+            roots.push(PathBuf::from(&pair[1]));
+        }
+    }
+    if roots.is_empty() {
+        roots.push(ctx.home.clone());
+        for variable in [
+            "PROGRAMFILES",
+            "PROGRAMFILES(X86)",
+            "PROGRAMDATA",
+            "LOCALAPPDATA",
+            "APPDATA",
+            "PUBLIC",
+        ] {
+            if let Some(path) = std::env::var_os(variable).map(PathBuf::from) {
+                roots.push(path);
+            }
+        }
+    }
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
+#[cfg(windows)]
+fn collect_windows_manifests(root: &Path, launcher: &str, out: &mut File) -> Result<(), String> {
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(()),
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file()
+            && path.extension().is_some_and(|ext| {
+                ext.eq_ignore_ascii_case("item")
+                    || ext.eq_ignore_ascii_case("acf")
+                    || ext.eq_ignore_ascii_case("vdf")
+            })
+        {
+            writeln!(
+                out,
+                "{}\tmanifest\t{}\tnative game manifest",
+                launcher,
+                clean(&path.display().to_string())
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+pub fn windows_defaults(ctx: &Context) -> Result<(), String> {
+    println!("=== Defaults nativos de juegos Windows ===");
+    let roots = windows_search_roots(ctx, &[]);
+    for launcher in WINDOWS_LAUNCHERS {
+        let found = roots
+            .iter()
+            .flat_map(|root| launcher.paths.iter().map(move |path| root.join(path)))
+            .find(|path| path.exists());
+        println!(
+            "{}: {}",
+            launcher.name,
+            found
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "no detectado".into())
+        );
+    }
+    println!("Prefijos Wine/Lutris/Heroic/UMU: no aplican al ejecutable Windows nativo.");
+    Ok(())
+}
+
 fn value(args: &[String], wanted: &str) -> Option<String> {
     args.windows(2)
         .find(|pair| pair[0] == wanted)
         .map(|pair| pair[1].clone())
 }
 
+#[cfg(not(windows))]
 fn heroic_configs(ctx: &Context) -> Vec<PathBuf> {
     if cfg!(windows) {
         vec![
@@ -54,6 +310,7 @@ fn heroic_configs(ctx: &Context) -> Vec<PathBuf> {
     }
 }
 
+#[cfg(not(windows))]
 fn lutris_configs(ctx: &Context) -> Vec<PathBuf> {
     if cfg!(windows) {
         vec![
@@ -68,6 +325,7 @@ fn lutris_configs(ctx: &Context) -> Vec<PathBuf> {
     }
 }
 
+#[cfg(not(windows))]
 fn lutris_games_dir(ctx: &Context) -> PathBuf {
     if cfg!(windows) {
         ctx.home.join("AppData/Roaming/lutris/games")
@@ -76,6 +334,7 @@ fn lutris_games_dir(ctx: &Context) -> PathBuf {
     }
 }
 
+#[cfg(not(windows))]
 fn umu_root(ctx: &Context) -> PathBuf {
     if cfg!(windows) {
         ctx.home.join("AppData/Local/umu")
@@ -84,6 +343,7 @@ fn umu_root(ctx: &Context) -> PathBuf {
     }
 }
 
+#[cfg(not(windows))]
 fn steam_configs(ctx: &Context) -> Vec<PathBuf> {
     let mut configs = if cfg!(windows) {
         vec![
@@ -106,6 +366,7 @@ fn steam_configs(ctx: &Context) -> Vec<PathBuf> {
     configs
 }
 
+#[cfg(not(windows))]
 fn config_roots(ctx: &Context) -> Vec<PathBuf> {
     if cfg!(windows) {
         vec![
@@ -129,6 +390,7 @@ fn config_roots(ctx: &Context) -> Vec<PathBuf> {
     }
 }
 
+#[cfg(not(windows))]
 fn configured_path_status(value: &str) -> &'static str {
     let path = Path::new(value);
     let windows_absolute = value.len() >= 3
@@ -148,6 +410,7 @@ fn configured_path_status(value: &str) -> &'static str {
     }
 }
 
+#[cfg(not(windows))]
 fn row(
     file: &mut File,
     app: &str,
@@ -169,6 +432,7 @@ fn row(
     );
 }
 
+#[cfg(not(windows))]
 fn validate_heroic(ctx: &Context, out: &mut File) {
     for config in heroic_configs(ctx) {
         if !config.is_file() {
@@ -228,6 +492,7 @@ fn validate_heroic(ctx: &Context, out: &mut File) {
     }
 }
 
+#[cfg(not(windows))]
 fn validate_lutris(ctx: &Context, out: &mut File) {
     for config in lutris_configs(ctx) {
         if !config.is_file() {
@@ -282,6 +547,7 @@ fn validate_lutris(ctx: &Context, out: &mut File) {
     }
 }
 
+#[cfg(not(windows))]
 fn validate_umu(ctx: &Context, out: &mut File) {
     let root = umu_root(ctx);
     if !root.is_dir() {
@@ -319,6 +585,7 @@ fn validate_umu(ctx: &Context, out: &mut File) {
     }
 }
 
+#[cfg(not(windows))]
 fn validate_steam(ctx: &Context, out: &mut File) {
     for config in steam_configs(ctx) {
         if !config.is_file() {
@@ -354,6 +621,7 @@ fn validate_steam(ctx: &Context, out: &mut File) {
     }
 }
 
+#[cfg(not(windows))]
 fn collect_config_files(ctx: &Context, out: &Path) -> Result<(), String> {
     let mut db =
         File::create(out.join("configuration-databases.tsv")).map_err(|e| e.to_string())?;
@@ -367,6 +635,7 @@ fn collect_config_files(ctx: &Context, out: &Path) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(windows))]
 fn collect_known(path: &Path, db: &mut File, bin: &mut File, depth: usize) {
     if depth > 5 {
         return;
@@ -425,6 +694,7 @@ fn collect_known(path: &Path, db: &mut File, bin: &mut File, depth: usize) {
     }
 }
 
+#[cfg(not(windows))]
 fn starts_sqlite(path: &Path) -> bool {
     let mut buffer = [0u8; 16];
     File::open(path)
@@ -433,15 +703,19 @@ fn starts_sqlite(path: &Path) -> bool {
         && &buffer[..15] == b"SQLite format 3"
 }
 
+#[cfg(not(windows))]
 fn read_text(path: &Path) -> String {
     fs::read_to_string(path).unwrap_or_default()
 }
 
+#[cfg(not(windows))]
 fn quoted_value(line: &str) -> Option<String> {
     line.split('"').nth(3).map(str::to_string)
 }
+#[cfg(not(windows))]
 fn quoted_value_after_path(line: &str) -> Option<String> {
     line.split('"').nth(3).map(str::to_string)
 }
 
+#[cfg(not(windows))]
 use std::process::Command;

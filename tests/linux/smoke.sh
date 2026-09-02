@@ -30,6 +30,7 @@ while (($#)); do
 done
 
 [[ -x "$BIN" ]] || die "no existe el binario ejecutable: $BIN"
+[[ -f "$ROOT_DIR/ltools-cli.sh" ]] || die 'no existe el lanzador CLI Linux'
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/cachyos-smoke.XXXXXX")"
 if [[ "$KEEP_TEMP" -eq 0 ]]; then
     trap 'rm -rf -- "$TMP_DIR"' EXIT
@@ -48,17 +49,26 @@ ok 'backend Rust responde a --version'
 HELP_OUTPUT="$($BIN --help)"
 grep -Fq 'doctor --install TOOL' <<<"$HELP_OUTPUT" || die 'la ayuda no documenta la instalación explícita'
 ok 'backend Rust responde a --help'
+CLI_HELP_OUTPUT="$(LTOOLS_CLI=1 "$BIN")"
+grep -Fq 'Uso: ltools' <<<"$CLI_HELP_OUTPUT" || die 'el perfil CLI sin argumentos no mostró la ayuda'
+ok 'perfil CLI sin argumentos muestra ayuda sin abrir menú'
+CLI_WRAPPER_OUTPUT="$("$ROOT_DIR/ltools-cli.sh")"
+grep -Fq 'Uso: ltools' <<<"$CLI_WRAPPER_OUTPUT" || die 'ltools-cli.sh sin argumentos no mostró la ayuda'
+ok 'lanzador CLI Linux conserva el modo sin argumentos'
 CAPABILITIES_JSON="$($BIN capabilities --format json)"
 grep -Fq '"schema": "ltools-capabilities-v1"' <<<"$CAPABILITIES_JSON" ||
     die 'el contrato JSON de capacidades no se pudo generar'
 grep -Fq 'lterminal-startup-v1' <<<"$CAPABILITIES_JSON" ||
     die 'el contrato JSON no declara integración de terminal'
 if command -v jq >/dev/null 2>&1; then
-    jq -e '(.host_tools | length >= 10) and any(.host_tools[]; .category == "audit") and any(.host_tools[]; .category == "system") and any(.host_tools[]; .installable == true) and ([.host_tools[] | select(.category == "games" or .category == "virtualization" or .category == "development" or .command == "steam" or .command == "docker" or .command == "git")] | length == 0)' \
+    jq -e '(.host_tools | length >= 10) and any(.host_tools[]; .category == "audit") and any(.host_tools[]; .category == "system") and any(.host_tools[]; .installable == true) and any(.host_tools[]; .id == "docker-compose" and .installable == true) and any(.host_tools[]; .id == "kubectl" and .installable == true) and any(.host_tools[]; .id == "lsblk" and .installable == true) and ([.host_tools[] | select(.category == "games" or .category == "virtualization" or .category == "development" or .command == "steam" or .command == "git")] | length == 0)' \
         <<<"$CAPABILITIES_JSON" >/dev/null \
         || die 'el catálogo JSON de herramientas del anfitrión está incompleto'
+    jq -e 'all(.host_tools[]; (.version | type == "string")) and ([.host_tools[] | select((.id == "parted" or .id == "gparted" or .id == "fdisk" or .id == "podman" or .id == "podman-compose" or .id == "helm" or .id == "kind" or .id == "minikube" or .id == "k3d" or .id == "k9s") and .installable == true)] | length == 0)' \
+        <<<"$CAPABILITIES_JSON" >/dev/null \
+        || die 'el catálogo JSON no respeta versiones e instalador único por capacidad'
 fi
-ok 'contrato JSON de capacidades e integración; catálogo sin juegos/Wine, virtualización ni desarrollo'
+ok 'contrato JSON de capacidades e integración; catálogo nativo con instaladores únicos'
 
 INSTALL_STUB_DIR="$TMP_DIR/install-stub"
 INSTALL_OUTPUT="$TMP_DIR/install-output.log"
@@ -87,6 +97,10 @@ grep -Fq '"exclusive_host_family": "lterminal"' <<<"$TERMINAL_JSON" ||
     die 'el descriptor de terminal no limita su integración a LTerminal'
 grep -Fq 'WinSlim Terminal' <<<"$TERMINAL_JSON" ||
     die 'el descriptor de terminal no declara WinSlim Terminal'
+if command -v jq >/dev/null 2>&1; then
+    jq -e '(.actions | length >= 15) and all(.actions[]; .id and .executable and (.args | type == "array") and .terminal == true and .shell == "none" and (.supports | index("dry-run") != null))' \
+        <<<"$TERMINAL_JSON" >/dev/null || die 'las acciones declarativas no tienen el contrato esperado'
+fi
 ok 'descriptor JSON específico para terminales'
 EN_HELP="$(LTOOLS_LANG=en "$BIN" --help)"
 grep -Fq 'Usage: ltools' <<<"$EN_HELP" || die 'el idioma inglés no se aplicó al backend Rust'
@@ -100,6 +114,9 @@ for language in "${!LANGUAGE_MARKERS[@]}"; do
     translated_help="$(LTOOLS_LANG="$language" "$BIN" --help)"
     grep -Fq "${LANGUAGE_MARKERS[$language]}" <<<"$translated_help" ||
         die "el idioma Rust $language no se aplicó a la ayuda"
+    if [[ "$language" != es ]] && grep -Fq 'Auditoría de discos, paquetes y aplicaciones' <<<"$translated_help"; then
+        die "el idioma Rust $language está usando el fallback español en la ayuda"
+    fi
 done
 ok 'todos los idiomas en el backend Rust'
 DOCTOR_OUTPUT="$(HOME="$TMP_DIR/home" XDG_STATE_HOME="$TMP_DIR/state" "$BIN" doctor)"
@@ -120,6 +137,11 @@ LIST_OUTPUT="$("$BIN" --dry-run --plan "$PLAN" prefix list --root "$TMP_DIR/root
 [[ -s "$PLAN" ]] || die 'no se creó el plan del listado'
 grep -Fq 'demo-prefix' <<<"$LIST_OUTPUT" || die 'el listado no detectó el prefijo sintético'
 ok 'listado aislado de un prefijo sintético'
+STORAGE_OUTPUT="$("$BIN" storage tools)"
+grep -Fq 'Herramientas de almacenamiento' <<<"$STORAGE_OUTPUT" || die 'storage no responde'
+REGISTRY_OUTPUT="$("$BIN" registry status)"
+grep -Fq 'Registros y configuración Linux' <<<"$REGISTRY_OUTPUT" || die 'registry Linux no responde'
+ok 'módulos Linux de almacenamiento y configuración'
 
 RELEASE_FIXTURE_DIR="$TMP_DIR/release-assets"
 mkdir -p "$RELEASE_FIXTURE_DIR"
@@ -160,6 +182,15 @@ if [[ -n "$APPIMAGE_PATH" ]]; then
         die "el AppImage no se pudo abrir directamente (código $DIRECT_STATUS); log: $DIRECT_LOG"
     fi
     ok "ejecución directa del AppImage; log: $DIRECT_LOG"
+
+    CLI_APPIMAGE_PATH="${APPIMAGE_PATH%.AppImage}-cli.AppImage"
+    if [[ -x "$CLI_APPIMAGE_PATH" ]]; then
+        CLI_APPIMAGE_OUTPUT="$(env APPIMAGE_EXTRACT_AND_RUN=1 timeout 30 "$CLI_APPIMAGE_PATH" 2>&1)" ||
+            die 'el AppImage CLI terminó con error sin argumentos'
+        grep -Fq 'Uso: ltools' <<<"$CLI_APPIMAGE_OUTPUT" ||
+            die 'el AppImage CLI sin argumentos no mostró la ayuda'
+        ok 'AppImage CLI sin argumentos muestra ayuda'
+    fi
 
     TERMINAL_STUB_DIR="$TMP_DIR/terminal-stub"
     TERMINAL_STUB_LOG="$TMP_DIR/terminal-stub.log"
@@ -341,9 +372,13 @@ EOF
     ok 'menú interactivo del AppImage'
     APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" --version >/dev/null
     ok 'AppImage responde usando extracción temporal'
-    APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" --lang ca --help | grep -Fq 'Ús:' ||
+    APPIMAGE_CA_HELP="$(APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" --lang ca --help)" ||
+        die 'la ayuda Rust del AppImage no pudo ejecutarse con --lang ca'
+    grep -Fq 'Ús:' <<<"$APPIMAGE_CA_HELP" ||
         die 'la ayuda Rust del AppImage no respeta --lang ca'
-    APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" --lang pl --help | grep -Fq 'Użycie:' ||
+    APPIMAGE_PL_HELP="$(APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" --lang pl --help)" ||
+        die 'la ayuda Rust del AppImage no pudo ejecutarse con --lang pl'
+    grep -Fq 'Użycie:' <<<"$APPIMAGE_PL_HELP" ||
         die 'la ayuda Rust del AppImage no respeta --lang pl'
     ok 'idiomas nuevos en la CLI del AppImage'
     APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" --doctor >/dev/null

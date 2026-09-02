@@ -1,5 +1,7 @@
 use std::fs::{self, File};
-use std::io::{self, BufRead, BufReader, Read, Write};
+#[cfg(not(windows))]
+use std::io::Read;
+use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -253,6 +255,7 @@ pub fn directory_size(path: &Path, dev: Option<u64>) -> u64 {
         .unwrap_or(0)
 }
 
+#[cfg(not(windows))]
 pub fn critical_path(path: &Path) -> bool {
     crate::platform::critical_path(path)
 }
@@ -287,12 +290,14 @@ pub fn move_to_trash(path: &Path, dry_run: bool) -> io::Result<bool> {
     crate::platform::move_to_trash(path, dry_run)
 }
 
+#[cfg(not(windows))]
 pub fn read_lines(path: &Path) -> Vec<String> {
     File::open(path)
         .map(|file| BufReader::new(file).lines().map_while(Result::ok).collect())
         .unwrap_or_default()
 }
 
+#[cfg(not(windows))]
 pub fn file_contains(path: &Path, needle: &str) -> bool {
     let mut data = String::new();
     File::open(path)
@@ -301,6 +306,7 @@ pub fn file_contains(path: &Path, needle: &str) -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(not(windows))]
 pub fn backup(path: &Path) -> io::Result<PathBuf> {
     let stamp = timestamp();
     let backup = PathBuf::from(format!("{}.bak-{}", path.display(), stamp));

@@ -6,7 +6,8 @@
   "required": [
     "schema", "application", "version", "platform", "integration", "host",
     "entrypoint", "working_directory_argument", "command_argument",
-    "open_arguments", "capability_request", "required_terminal_capability", "fallback"
+    "open_arguments", "capability_request", "required_terminal_capability", "fallback",
+    "actions"
   ],
   "properties": {
     "schema": { "const": "ltools-terminal-integration-v1" },
@@ -54,7 +55,52 @@
     "open_arguments": { "const": ["--open-path", "PATH", "--command", "COMMAND", "--", "menu"] },
     "capability_request": { "const": ["--ltools-capabilities", "--format", "json"] },
     "required_terminal_capability": { "const": "lterminal-startup-v1" },
-    "fallback": { "const": "explicit-only" }
+    "fallback": { "const": "explicit-only" },
+    "actions": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/action" }
+    }
+  },
+  "$defs": {
+    "action": {
+      "type": "object",
+      "required": [
+        "id", "label", "shortLabel", "group", "description", "command",
+        "executable", "args", "shell", "workingDirectory", "terminal",
+        "interactive", "requiresAdmin", "confirmation", "safe", "supports",
+        "requiresCommands"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+        "label": { "type": "string", "minLength": 1 },
+        "shortLabel": { "type": "string", "minLength": 1 },
+        "group": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 },
+        "command": { "type": "string", "minLength": 1 },
+        "executable": { "enum": ["ltools", "ltools.exe"] },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "shell": { "const": "none" },
+        "workingDirectory": { "enum": ["current", "none"] },
+        "terminal": { "const": true },
+        "interactive": { "type": "boolean" },
+        "requiresAdmin": { "type": "boolean" },
+        "confirmation": { "enum": ["none", "before-run", "always"] },
+        "safe": { "type": "boolean" },
+        "supports": {
+          "type": "array",
+          "items": { "enum": ["dry-run"] },
+          "uniqueItems": true
+        },
+        "requiresCommands": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }

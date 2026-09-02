@@ -2,7 +2,9 @@ use crate::common::{
     canonical, clean, command_exists, command_output, command_output_owned, device, directory_size,
     human_bytes, same_device, Context,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+#[cfg(not(windows))]
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -18,36 +20,45 @@ pub struct PrefixInfo {
 }
 
 pub fn discover_prefixes(roots: &[PathBuf]) -> Vec<PrefixInfo> {
-    let mut candidates = HashSet::new();
-    let mut result = Vec::new();
-    for root in roots {
-        let root = match canonical(root) {
-            Some(v) => v,
-            None => continue,
-        };
-        let dev = match device(&root) {
-            Some(v) => v,
-            None => continue,
-        };
-        find_prefix_markers(&root, dev, &mut candidates);
-        for path in candidates.iter().filter(|p| p.starts_with(&root)) {
-            let bytes = directory_size(path, Some(dev));
-            let drive_c_bytes = directory_size(&path.join("drive_c"), Some(dev));
-            result.push(PrefixInfo {
-                kind: prefix_kind(path),
-                appid: prefix_appid(path),
-                mount_root: *path == root,
-                path: path.clone(),
-                bytes,
-                drive_c_bytes,
-            });
-        }
+    #[cfg(windows)]
+    {
+        let _ = roots;
+        return Vec::new();
     }
-    result.sort_by_key(|p| p.bytes);
-    result.dedup_by(|a, b| a.path == b.path);
-    result
+    #[cfg(not(windows))]
+    {
+        let mut candidates = HashSet::new();
+        let mut result = Vec::new();
+        for root in roots {
+            let root = match canonical(root) {
+                Some(v) => v,
+                None => continue,
+            };
+            let dev = match device(&root) {
+                Some(v) => v,
+                None => continue,
+            };
+            find_prefix_markers(&root, dev, &mut candidates);
+            for path in candidates.iter().filter(|p| p.starts_with(&root)) {
+                let bytes = directory_size(path, Some(dev));
+                let drive_c_bytes = directory_size(&path.join("drive_c"), Some(dev));
+                result.push(PrefixInfo {
+                    kind: prefix_kind(path),
+                    appid: prefix_appid(path),
+                    mount_root: *path == root,
+                    path: path.clone(),
+                    bytes,
+                    drive_c_bytes,
+                });
+            }
+        }
+        result.sort_by_key(|p| p.bytes);
+        result.dedup_by(|a, b| a.path == b.path);
+        result
+    }
 }
 
+#[cfg(not(windows))]
 fn find_prefix_markers(path: &Path, dev: u64, found: &mut HashSet<PathBuf>) {
     let entries = match fs::read_dir(path) {
         Ok(v) => v,
@@ -77,6 +88,7 @@ fn find_prefix_markers(path: &Path, dev: u64, found: &mut HashSet<PathBuf>) {
     }
 }
 
+#[cfg(not(windows))]
 pub fn prefix_kind(path: &Path) -> String {
     let text = path.to_string_lossy().replace('\\', "/");
     if text.contains("/.Trash-") || text.contains("/Trash/") {
@@ -98,6 +110,7 @@ pub fn prefix_kind(path: &Path) -> String {
     }
 }
 
+#[cfg(not(windows))]
 pub fn prefix_appid(path: &Path) -> String {
     let parts: Vec<_> = path
         .components()

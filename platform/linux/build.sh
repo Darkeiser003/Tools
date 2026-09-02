@@ -16,6 +16,7 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 MANIFEST="$ROOT_DIR/rust/Cargo.toml"
 OUTPUT_DIR="$ROOT_DIR/dist"
+RELEASE_DIR="${LTOOLS_RELEASE_DIR:-$ROOT_DIR/release}"
 VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$MANIFEST" | head -n1)"
 ARCH="$(uname -m)"
 
@@ -48,6 +49,11 @@ FUSE_REQUIRED=0
 NO_RUN=1
 OFFLINE=0
 NON_INTERACTIVE=0
+WINDOWS_WINE=0
+WINDOWS_TARGET="${LTOOLS_WINDOWS_TARGET:-x86_64-pc-windows-gnu}"
+WINDOWS_WINE_RUNNER="${LTOOLS_WINE_RUNNER:-}"
+WINDOWS_WINE_PREFIX="${LTOOLS_WINE_PREFIX:-}"
+WINDOWS_WINE_INSTALL_MONO=0
 EXPLICIT_OPTIONS=0
 JOBS="${CARGO_BUILD_JOBS:-2}"
 CURRENT_STEP="inicio"
@@ -58,6 +64,9 @@ BUILD_ID="$(date +%Y%m%d-%H%M%S)-$$"
 LOG_FILE=""
 TIMINGS_FILE=""
 NO_LOG=0
+WINDOWS_WINE_ARTIFACT_DIR=""
+WINDOWS_WINE_ARTIFACT=""
+WINDOWS_WINE_LOG=""
 STEP_STARTED=$SECONDS
 STEP_ACTIVE=0
 # init_logging redirige stdout a tee; conserva antes el estado real de la
@@ -131,6 +140,7 @@ init_logging() {
         printf '# build_id=%s\n' "$BUILD_ID"
         printf '# root=%s\n' "$ROOT_DIR"
         printf '# output=%s\n' "$OUTPUT_DIR"
+        printf '# release=%s\n' "$RELEASE_DIR"
         printf '# version=%s arch=%s user=%s host=%s\n' "$VERSION" "$ARCH" "$(id -un 2>/dev/null || printf unknown)" "$(hostname -s 2>/dev/null || hostname 2>/dev/null || printf unknown)"
         printf '# command='
         printf '%q ' "$0" "$@"
@@ -171,11 +181,21 @@ Opciones:
   --no-e2e             No ejecuta la prueba E2E aislada de migración/rollback.
   --no-menu-e2e        No ejecuta la E2E de menús y funciones con fixtures aislados.
   --offline            Usa Cargo en modo offline.
+  --windows-wine       Compila el target Windows y ejecuta sus pruebas con Wine/Proton.
+  --no-windows-wine    Desactiva la etapa Windows bajo Wine/Proton.
+  --windows-target T   Target Rust Windows (por defecto: x86_64-pc-windows-gnu).
+  --windows-wine-runner RUTA
+                       Wine, UMU-Wine o Proton concreto para ejecutar Windows.
+  --windows-wine-prefix RUTA
+                       Prefijo explícito; por defecto usa uno temporal y aislado.
+  --windows-wine-install-mono
+                       Permite instalar wine-mono si el runner no lo incluye.
   --no-package         Compila, pero no genera el tar.gz.
   --appimage           Exige y genera el AppImage.
   --no-appimage        No genera el AppImage.
   --require-fuse       Falla si el equipo no puede montar AppImages con FUSE.
   --output DIR         Directorio de salida (por defecto: ./dist).
+  --release-dir DIR    Carpeta canónica de publicación (por defecto: ./release).
   --jobs N             Paralelismo de Cargo (por defecto: 2).
   --log FICHERO        Guarda la transcripción completa en esta ruta.
   --no-log             Desactiva el log persistente y la tabla de tiempos.
@@ -228,6 +248,7 @@ configure_interactive() {
     if ask_yes_no 'Ejecutar smoke tests' "$SMOKE"; then SMOKE=1; else SMOKE=0; fi
     if ask_yes_no 'Ejecutar prueba E2E de migración y rollback' "$E2E"; then E2E=1; else E2E=0; fi
     if ask_yes_no 'Ejecutar E2E de menús y funciones aisladas' "$MENU_E2E"; then MENU_E2E=1; else MENU_E2E=0; fi
+    if ask_yes_no 'Compilar y probar también Windows con Wine/Proton' "$WINDOWS_WINE"; then WINDOWS_WINE=1; else WINDOWS_WINE=0; fi
     if ask_yes_no 'Generar el paquete tar.gz' "$PACKAGE"; then PACKAGE=1; else PACKAGE=0; fi
     if ask_yes_no 'Generar también el AppImage' "$APPIMAGE"; then APPIMAGE=1; else APPIMAGE=0; fi
 }
@@ -244,6 +265,18 @@ parse_args() {
             --no-e2e) E2E=0; MENU_E2E=0 ;;
             --no-menu-e2e) MENU_E2E=0 ;;
             --offline) OFFLINE=1 ;;
+            --windows-wine|--wine-windows) WINDOWS_WINE=1 ;;
+            --no-windows-wine|--no-wine-windows) WINDOWS_WINE=0 ;;
+            --windows-target)
+                (($# >= 2)) || die '--windows-target necesita un target'
+                WINDOWS_TARGET="$2"; shift ;;
+            --windows-wine-runner|--wine-runner)
+                (($# >= 2)) || die '--windows-wine-runner necesita una ruta'
+                WINDOWS_WINE_RUNNER="$2"; shift ;;
+            --windows-wine-prefix|--wine-prefix)
+                (($# >= 2)) || die '--windows-wine-prefix necesita una ruta'
+                WINDOWS_WINE_PREFIX="$2"; shift ;;
+            --windows-wine-install-mono) WINDOWS_WINE_INSTALL_MONO=1 ;;
             --no-package) PACKAGE=0 ;;
             --appimage) APPIMAGE=1; APPIMAGE_REQUIRED=1 ;;
             --no-appimage) APPIMAGE=0 ;;
@@ -253,6 +286,9 @@ parse_args() {
             --output)
                 (($# >= 2)) || die '--output necesita un directorio'
                 OUTPUT_DIR="$2"; shift ;;
+            --release-dir)
+                (($# >= 2)) || die '--release-dir necesita un directorio'
+                RELEASE_DIR="$2"; shift ;;
             --jobs)
                 (($# >= 2)) || die '--jobs necesita un número'
                 [[ "$2" =~ ^[1-9][0-9]*$ ]] || die '--jobs necesita un número positivo'
@@ -299,8 +335,8 @@ parse_args "$@"
 init_logging "$@"
 configure_interactive
 if [[ "$NO_LOG" -eq 0 ]]; then
-    printf '[CONFIG] clean=%s fast=%s checks=%s tests=%s smoke=%s e2e=%s menu_e2e=%s package=%s appimage=%s offline=%s jobs=%s\n' \
-        "$CLEAN" "$FAST" "$CHECKS" "$TESTS" "$SMOKE" "$E2E" "$MENU_E2E" "$PACKAGE" "$APPIMAGE" "$OFFLINE" "$JOBS"
+    printf '[CONFIG] clean=%s fast=%s checks=%s tests=%s smoke=%s e2e=%s menu_e2e=%s package=%s appimage=%s offline=%s jobs=%s windows_wine=%s windows_target=%s release_dir=%s\n' \
+        "$CLEAN" "$FAST" "$CHECKS" "$TESTS" "$SMOKE" "$E2E" "$MENU_E2E" "$PACKAGE" "$APPIMAGE" "$OFFLINE" "$JOBS" "$WINDOWS_WINE" "$WINDOWS_TARGET" "$RELEASE_DIR"
 fi
 
 [[ -f "$MANIFEST" ]] || die "no existe $MANIFEST"
@@ -329,7 +365,7 @@ if [[ "$APPIMAGE" -eq 1 ]]; then
         die 'FUSE no está disponible: falta /dev/fuse o fusermount/fusermount3'
     else
         warn 'FUSE no está disponible; el AppImage se generará, pero se probará mediante extracción.'
-        warn 'Para habilitar ejecución directa en CachyOS/Arch: instala fuse2 y carga «sudo modprobe fuse».'
+        warn 'Para habilitar ejecución directa en Arch Linux y derivados: instala fuse2 y carga «sudo modprobe fuse».'
     fi
 fi
 if [[ "$APPIMAGE" -eq 1 && "$SMOKE" -eq 1 ]]; then
@@ -365,6 +401,8 @@ if [[ "$CHECKS" -eq 1 ]]; then
     ok 'Clippy sin avisos'
 
     step 'Validando lanzadores, build y tests Bash'
+    run_logged "$ROOT_DIR/tests/encoding.sh"
+    ok 'codificaciones UTF-8/UTF-8 BOM/ANSI correctas'
     while IFS= read -r -d '' file; do
         run_logged bash -n "$file"
     done < <(find "$ROOT_DIR" -maxdepth 5 -type f -name '*.sh' -print0)
@@ -394,12 +432,13 @@ if [[ "$TESTS" -eq 1 ]]; then
 fi
 
 if [[ "$CHECKS" -eq 1 ]] && command -v rustup >/dev/null 2>&1 &&
-    rustup target list --installed 2>/dev/null | grep -Fqx 'x86_64-pc-windows-gnu'; then
+    installed_targets="$(rustup target list --installed 2>/dev/null || true)" &&
+    grep -Fxq "$WINDOWS_TARGET" <<<"$installed_targets"; then
     step 'Comprobando compatibilidad cruzada Windows'
-    run_logged cargo check --manifest-path "$MANIFEST" --target x86_64-pc-windows-gnu
-    ok 'backend Rust compatible con Windows x86_64'
+    run_logged cargo check --manifest-path "$MANIFEST" "${cargo_args[@]}" --target "$WINDOWS_TARGET" --jobs "$JOBS"
+    ok "backend Rust compatible con $WINDOWS_TARGET"
 else
-    warn 'El target x86_64-pc-windows-gnu no está instalado; se omite la comprobación cruzada Windows.'
+    warn "El target $WINDOWS_TARGET no está instalado; se omite la comprobación cruzada Windows."
 fi
 
 step 'Validando contratos LTools'
@@ -412,6 +451,30 @@ BIN="$ROOT_DIR/rust/target/release/ltools"
 [[ -x "$BIN" ]] || die "Cargo terminó, pero no apareció $BIN"
 run_logged "$BIN" --version >/dev/null
 ok "binario generado: $BIN"
+
+if [[ "$WINDOWS_WINE" -eq 1 ]]; then
+    step 'Compilando y probando Windows con Wine/Proton'
+    WINDOWS_WINE_ARTIFACT_DIR="$OUTPUT_DIR/windows-wine"
+    WINDOWS_WINE_ARTIFACT="$WINDOWS_WINE_ARTIFACT_DIR/ltools-$VERSION-windows-${WINDOWS_TARGET%%-*}.exe"
+    WINDOWS_WINE_LOG="$WINDOWS_WINE_ARTIFACT_DIR/windows-wine-$BUILD_ID.log"
+    wine_args=(
+        --target "$WINDOWS_TARGET"
+        --output "$WINDOWS_WINE_ARTIFACT_DIR"
+        --jobs "$JOBS"
+    )
+    [[ "$CLEAN" -eq 1 ]] && wine_args+=(--clean)
+    [[ "$FAST" -eq 1 ]] && wine_args+=(--fast)
+    [[ "$OFFLINE" -eq 1 ]] && wine_args+=(--offline)
+    [[ "$TESTS" -eq 0 || "$SMOKE" -eq 0 || "$E2E" -eq 0 || "$MENU_E2E" -eq 0 ]] && wine_args+=(--no-tests)
+    [[ "$PACKAGE" -eq 0 ]] && wine_args+=(--no-package)
+    [[ "$NON_INTERACTIVE" -eq 1 || "$EXPLICIT_OPTIONS" -eq 1 ]] && wine_args+=(--non-interactive)
+    [[ -n "$WINDOWS_WINE_RUNNER" ]] && wine_args+=(--runner "$WINDOWS_WINE_RUNNER")
+    [[ -n "$WINDOWS_WINE_PREFIX" ]] && wine_args+=(--prefix "$WINDOWS_WINE_PREFIX")
+    [[ "$WINDOWS_WINE_INSTALL_MONO" -eq 1 ]] && wine_args+=(--install-mono)
+    [[ "$NO_LOG" -eq 0 ]] && wine_args+=(--log "$WINDOWS_WINE_LOG")
+    run_logged "$ROOT_DIR/tests/linux/windows-wine.sh" "${wine_args[@]}"
+    ok 'compilación y pruebas Windows bajo Wine/Proton correctas'
+fi
 
 if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
     step 'Construyendo paquete distribuible'
@@ -439,7 +502,7 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
 
     # El paquete runtime solo necesita la fachada compatible; los builders y
     # wrappers de desarrollo pertenecen al repositorio, no a la distribución.
-    for file in ltools.sh; do
+    for file in ltools.sh ltools-cli.sh; do
         copy_file "$file"
     done
     cp -a -- "$BIN" "$PACKAGE_DIR/rust/target/release/ltools"
@@ -479,7 +542,10 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
           (.host.known_products | index("LTerminal")) != null and
           (.host.known_products | index("WinSlim Terminal")) != null and
           .required_terminal_capability == "lterminal-startup-v1" and
-          (.open_arguments | index("--command")) != null
+          (.open_arguments | index("--command")) != null and
+          (.actions | length >= 15) and
+          all(.actions[]; (.id | length > 0) and (.executable | length > 0) and
+            (.args | type == "array") and .terminal == true and .shell == "none")
         ' "$PACKAGE_DIR/ltools-terminal.json" >/dev/null \
             || die 'el descriptor JSON de integración no supera la validación estructural'
         jq -e . "$PACKAGE_DIR/ltools-terminal.schema.json" >/dev/null \
@@ -490,6 +556,7 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
     fi
     mkdir -p "$PACKAGE_DIR/tests/linux"
     cp -a -- "$ROOT_DIR/tests/contracts.sh" "$PACKAGE_DIR/tests/"
+    cp -a -- "$ROOT_DIR/tests/encoding.sh" "$PACKAGE_DIR/tests/"
     cp -a -- "$ROOT_DIR/tests/linux"/*.sh "$PACKAGE_DIR/tests/linux/"
     chmod +x "$PACKAGE_DIR"/*.sh "$PACKAGE_DIR/tests"/*.sh "$PACKAGE_DIR/tests/linux"/*.sh \
         "$PACKAGE_DIR/rust/target/release/ltools"
@@ -553,10 +620,10 @@ EOF
         CLI_APPIMAGE_ARTIFACT="$OUTPUT_DIR/$PACKAGE_NAME-cli.AppImage"
         build_appimage_variant cli "$CLI_APPIMAGE_ARTIFACT" "$ROOT_DIR/appimage/ltools-cli.desktop"
         CLI_SMOKE_OUTPUT="$STAGING/cli-appimage-smoke.log"
-        printf 'q\n' | APPIMAGE_EXTRACT_AND_RUN=1 "$CLI_APPIMAGE_ARTIFACT" >"$CLI_SMOKE_OUTPUT" 2>&1 \
-            || die 'el AppImage CLI no pudo abrir el menú en la entrada estándar'
-        grep -Fq 'Elige una opción' "$CLI_SMOKE_OUTPUT" || die 'el AppImage CLI no mostró el menú'
-        ok 'AppImage CLI verificado en la terminal actual'
+        APPIMAGE_EXTRACT_AND_RUN=1 "$CLI_APPIMAGE_ARTIFACT" >"$CLI_SMOKE_OUTPUT" 2>&1 \
+            || die 'el AppImage CLI no pudo mostrar la ayuda sin argumentos'
+        grep -Fq 'Uso: ltools' "$CLI_SMOKE_OUTPUT" || die 'el AppImage CLI no mostró la ayuda sin argumentos'
+        ok 'AppImage CLI verificado: sin argumentos muestra la ayuda'
         RUNNER_ARTIFACT="$OUTPUT_DIR/run-ltools.sh"
         cp -a -- "$ROOT_DIR/appimage/run-ltools.sh" "$RUNNER_ARTIFACT"
         chmod +x "$RUNNER_ARTIFACT"
@@ -567,18 +634,63 @@ else
 fi
 
 if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
+    step 'Publicando artefactos en la carpeta release'
+    mkdir -p -- "$RELEASE_DIR"
+    # release/ es la carpeta que se puede subir directamente a GitHub. Se
+    # limpia solo de artefactos LTools para evitar mezclar versiones, pero no
+    # se toca ningún fichero ajeno que el usuario haya guardado allí.
+    release_output_real="$(readlink -f -- "$OUTPUT_DIR" 2>/dev/null || realpath -- "$OUTPUT_DIR")"
+    release_dir_real="$(readlink -f -- "$RELEASE_DIR" 2>/dev/null || realpath -- "$RELEASE_DIR")"
+    if [[ "$release_output_real" != "$release_dir_real" ]]; then
+        find "$RELEASE_DIR" -maxdepth 1 -type f \
+            \( -name "ltools-$VERSION-*" -o -name 'ltools-*.json' \
+            -o -name 'ltools-*.schema.json' -o -name 'run-ltools.sh' \) -delete
+    fi
+
+    copy_to_release() {
+        local file="$1" destination
+        [[ -f "$file" ]] || return 0
+        destination="$RELEASE_DIR/$(basename -- "$file")"
+        if [[ "$(readlink -f -- "$file" 2>/dev/null || realpath -- "$file")" != \
+            "$(readlink -f -- "$destination" 2>/dev/null || realpath -- "$destination")" ]]; then
+            cp -a -- "$file" "$destination"
+        fi
+    }
+
+    # Publica los artefactos Linux recién generados y los artefactos Windows
+    # que pueda haber dejado el builder nativo Windows en dist/windows.
+    while IFS= read -r -d '' file; do copy_to_release "$file"; done < <(
+        find "$OUTPUT_DIR" -maxdepth 1 -type f \
+            \( -name "ltools-$VERSION-*" -o -name 'ltools-capabilities.json' \
+            -o -name 'ltools-terminal.json' -o -name 'ltools-*.schema.json' \
+            -o -name 'run-ltools.sh' \) -print0
+    )
+    if [[ -d "$ROOT_DIR/dist/windows" ]]; then
+        while IFS= read -r -d '' file; do copy_to_release "$file"; done < <(
+            find "$ROOT_DIR/dist/windows" -maxdepth 1 -type f \
+                \( -name "ltools-$VERSION-windows-*" -o -name 'ltools-capabilities.json' \
+                -o -name 'ltools-terminal.json' -o -name 'ltools-*.schema.json' \) -print0
+        )
+    fi
+    for file in \
+        "$ROOT_DIR/distribution/ltools-project.json" \
+        "$ROOT_DIR/distribution/ltools-project.schema.json" \
+        "$ROOT_DIR/distribution/ltools-release.schema.json"; do
+        copy_to_release "$file"
+    done
+    ok "carpeta release preparada: $RELEASE_DIR"
+
     step 'Generando manifiesto verificable de release'
     require_command sha256sum
-    release_manifest_dirs=(--artifacts-dir "$OUTPUT_DIR")
-    if [[ -d "$ROOT_DIR/dist/windows" && "$ROOT_DIR/dist/windows" != "$OUTPUT_DIR" ]]; then
-        release_manifest_dirs+=(--artifacts-dir "$ROOT_DIR/dist/windows")
-    fi
-    RELEASE_MANIFEST_ARTIFACT="$OUTPUT_DIR/ltools-release.json"
+    RELEASE_MANIFEST_ARTIFACT="$RELEASE_DIR/ltools-release.json"
     run_logged "$BIN" release-manifest \
         --output "$RELEASE_MANIFEST_ARTIFACT" \
         --repository "${LTOOLS_GITHUB_REPOSITORY:-Darkeiser003/Tools}" \
         --tag "${LTOOLS_GITHUB_TAG:-v$VERSION}" \
-        "${release_manifest_dirs[@]}"
+        --artifacts-dir "$RELEASE_DIR"
+    if [[ "$RELEASE_DIR" != "$OUTPUT_DIR" ]]; then
+        cp -a -- "$RELEASE_MANIFEST_ARTIFACT" "$OUTPUT_DIR/ltools-release.json"
+    fi
     cp -a -- "$ROOT_DIR/distribution/ltools-project.json" "$OUTPUT_DIR/ltools-project.json"
     cp -a -- "$ROOT_DIR/distribution/ltools-project.schema.json" "$OUTPUT_DIR/ltools-project.schema.json"
     cp -a -- "$ROOT_DIR/distribution/ltools-release.schema.json" "$OUTPUT_DIR/ltools-release.schema.json"
@@ -597,6 +709,9 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
         warn 'jq no está disponible; se omite la validación estructural adicional del manifiesto de release.'
     fi
     ok "manifiesto generado: $RELEASE_MANIFEST_ARTIFACT"
+    step 'Ejecutando E2E de artefactos release'
+    run_logged "$ROOT_DIR/tests/release-e2e.sh" --release-dir "$RELEASE_DIR" --version "$VERSION"
+    ok 'artefactos release verificados'
 fi
 
 if [[ "$SMOKE" -eq 1 ]]; then
@@ -653,7 +768,14 @@ if [[ "$NO_RUN" -eq 1 ]]; then
     [[ "$APPIMAGE" -eq 1 ]] && printf 'AppImage: %s\n' "$APPIMAGE_ARTIFACT"
     [[ "$APPIMAGE" -eq 1 ]] && printf 'AppImage CLI: %s\n' "$CLI_APPIMAGE_ARTIFACT"
     [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]] && printf 'Contrato terminal: %s\n' "$TERMINAL_DESCRIPTOR_ARTIFACT"
+    [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]] && printf 'Release publicable: %s\n' "$RELEASE_DIR"
     [[ "$APPIMAGE" -eq 1 ]] && printf 'Lanzador recomendado: %s\n' "$RUNNER_ARTIFACT"
+    [[ "$WINDOWS_WINE" -eq 1 && -f "$WINDOWS_WINE_ARTIFACT" ]] && printf 'Windows validado con Wine/Proton: %s\n' "$WINDOWS_WINE_ARTIFACT"
+    [[ "$WINDOWS_WINE" -eq 1 && "$NO_LOG" -eq 0 && -s "$WINDOWS_WINE_LOG" ]] && printf 'Log Windows Wine/Proton: %s\n' "$WINDOWS_WINE_LOG"
     [[ "$NO_LOG" -eq 0 ]] && printf 'Log del build: %s\n' "$LOG_FILE"
     [[ "$NO_LOG" -eq 0 ]] && printf 'Tiempos: %s\n' "$TIMINGS_FILE"
 fi
+
+# El resumen usa condiciones `&&` opcionales; fijar explícitamente el estado
+# evita que `--no-log` o `--no-appimage` conviertan una build correcta en código 1.
+exit 0

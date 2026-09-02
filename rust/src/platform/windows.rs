@@ -14,11 +14,13 @@ pub fn timestamp() -> String {
         "powershell",
         &["-NoProfile", "-Command", "Get-Date -Format yyyyMMdd-HHmmss"],
     )
+    .filter(|value| !value.trim().is_empty())
     .or_else(|| {
         command_output(
             "pwsh",
             &["-NoProfile", "-Command", "Get-Date -Format yyyyMMdd-HHmmss"],
         )
+        .filter(|value| !value.trim().is_empty())
     })
     .unwrap_or_else(|| std::process::id().to_string())
 }
@@ -39,11 +41,28 @@ pub fn command_exists(name: &str) -> bool {
 }
 
 pub fn host_tool_available(tool: &super::HostTool) -> bool {
+    if tool.id == "docker-compose" {
+        return command_exists("docker-compose")
+            || (command_exists("docker")
+                && command_output("docker", &["compose", "version"]).is_some());
+    }
     if tool.id == "trash" {
         return command_exists("powershell") || command_exists("pwsh");
     }
     if tool.id == "powershell" {
-        return command_exists("powershell") || command_exists("pwsh");
+        return ["powershell", "pwsh"].iter().any(|shell| {
+            command_exists(shell)
+                && command_output(
+                    shell,
+                    &[
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-Command",
+                        "$PSVersionTable.PSVersion.ToString()",
+                    ],
+                )
+                .is_some_and(|version| !version.trim().is_empty())
+        });
     }
     if !tool.command.starts_with("Get-") {
         return command_exists(tool.command);
@@ -61,10 +80,36 @@ pub fn host_tool_available(tool: &super::HostTool) -> bool {
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            &format!("Get-Command {} -ErrorAction Stop | Out-Null", tool.command),
+            &format!(
+                "Get-Command {} -ErrorAction Stop | Select-Object -ExpandProperty Name",
+                tool.command
+            ),
         ],
     )
-    .is_some()
+    .is_some_and(|name| !name.trim().is_empty())
+}
+
+pub fn host_tool_version(tool: &super::HostTool) -> Option<String> {
+    if !host_tool_available(tool) || tool.command.starts_with("Get-") {
+        return None;
+    }
+    let default_args: &[&str] = match tool.id {
+        "docker-compose" | "podman-compose" => &["version"],
+        "kubectl" => &["version", "--client"],
+        "helm" => &["version", "--short"],
+        _ => &["--version"],
+    };
+    let (program, args) = if tool.id == "docker-compose" && !command_exists("docker-compose") {
+        ("docker", &["compose", "version"][..])
+    } else {
+        (tool.command, default_args)
+    };
+    command_output(program, args).and_then(|output| {
+        output
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .map(|line| line.trim().chars().take(240).collect())
+    })
 }
 
 pub fn run_with_privilege(program: &str, args: &[String], dry_run: bool) -> io::Result<bool> {
@@ -177,6 +222,47 @@ static HOST_TOOLS: &[super::HostTool] = &[
     tool("taskkill", "system", "process-control", false, false, ""),
     tool("wevtutil", "system", "Windows-event-log", false, false, ""),
     tool(
+        "reg.exe",
+        "registry",
+        "Windows-registry-query-and-export",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "diskpart",
+        "storage",
+        "disk-and-partition-control",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "mountvol",
+        "storage",
+        "volume-mount-inventory",
+        false,
+        false,
+        "",
+    ),
+    tool("Get-Disk", "storage", "disk-inventory", false, false, ""),
+    tool(
+        "Get-Partition",
+        "storage",
+        "partition-inventory",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "Get-Volume",
+        "storage",
+        "volume-inventory",
+        false,
+        false,
+        "",
+    ),
+    tool(
         "Get-CimInstance",
         "system",
         "service-and-process-inventory",
@@ -186,12 +272,140 @@ static HOST_TOOLS: &[super::HostTool] = &[
     ),
     tool("trash", "cleanup", "Windows-recycle-bin", false, false, ""),
     tool(
-        "jq",
-        "configuration",
-        "Heroic-json-rewrite-and-validation",
+        "winget",
+        "package-manager",
+        "Windows-package-manager",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "choco",
+        "package-manager",
+        "Chocolatey-package-manager",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "scoop",
+        "package-manager",
+        "Scoop-package-manager",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "docker",
+        "containers",
+        "docker-engine-detected",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "docker-compose",
+        "containers",
+        "docker-compose-primary-installer",
         false,
         true,
-        "jqlang.jq",
+        "Docker.DockerCompose",
+    ),
+    tool(
+        "podman",
+        "containers",
+        "alternative-container-engine",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "podman-compose",
+        "containers",
+        "alternative-compose",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "nerdctl",
+        "containers",
+        "alternative-container-client",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "containerd",
+        "containers",
+        "container-runtime",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "kubectl",
+        "kubernetes",
+        "kubernetes-primary-client-installer",
+        false,
+        true,
+        "Kubernetes.kubectl",
+    ),
+    tool(
+        "kubeadm",
+        "kubernetes",
+        "kubernetes-cluster-bootstrap",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "kubelet",
+        "kubernetes",
+        "kubernetes-node-agent",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "helm",
+        "kubernetes",
+        "kubernetes-package-manager",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "kind",
+        "kubernetes",
+        "kubernetes-local-clusters",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "minikube",
+        "kubernetes",
+        "kubernetes-local-clusters",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "k3d",
+        "kubernetes",
+        "kubernetes-local-clusters",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "k9s",
+        "kubernetes",
+        "kubernetes-terminal-client",
+        false,
+        false,
+        "",
     ),
 ];
 
@@ -230,25 +444,41 @@ pub fn install_tool(id: &str, dry_run: bool) -> Result<bool, String> {
         );
         return Ok(false);
     }
-    if !command_exists("winget") {
+    let manager = ["winget", "choco", "scoop"]
+        .into_iter()
+        .find(|manager| command_exists(manager));
+    let Some(manager) = manager else {
         println!(
-            "Falta {}. No se encontró winget; LTools no instalará un gestor de paquetes para resolverlo.",
+            "Falta {}. No se encontró winget, Chocolatey ni Scoop; LTools no instalará un gestor de paquetes para resolverlo.",
             tool.command
         );
         return Ok(false);
-    }
-    let args = vec![
-        "install".into(),
-        "--id".into(),
-        tool.install_package.into(),
-        "-e".into(),
-        "--accept-source-agreements".into(),
-        "--accept-package-agreements".into(),
-    ];
+    };
+    let package = package_for(tool, manager);
+    let args = match manager {
+        "winget" => vec![
+            "install".into(),
+            "--id".into(),
+            package.into(),
+            "-e".into(),
+            "--accept-source-agreements".into(),
+            "--accept-package-agreements".into(),
+        ],
+        "choco" => vec![
+            "install".into(),
+            package.into(),
+            "-y".into(),
+            "--no-progress".into(),
+        ],
+        "scoop" => vec!["install".into(), package.into()],
+        _ => unreachable!(),
+    };
     println!(
-        "Falta {} para {}. Se propone usar winget: winget {}",
+        "Falta {} para {}. Se propone usar {}: {} {}",
         tool.command,
         tool.feature,
+        manager,
+        manager,
         args.iter()
             .map(String::as_str)
             .collect::<Vec<_>>()
@@ -258,9 +488,21 @@ pub fn install_tool(id: &str, dry_run: bool) -> Result<bool, String> {
         println!("Instalación cancelada; no se modifica el sistema.");
         return Ok(false);
     }
-    let ok = crate::platform::run_with_privilege("winget", &args, dry_run)
+    let ok = crate::platform::run_with_privilege(manager, &args, dry_run)
         .map_err(|error| error.to_string())?;
-    Ok(ok && host_tool_available(tool))
+    Ok(ok && (dry_run || host_tool_available(tool)))
+}
+
+fn package_for(tool: &super::HostTool, manager: &str) -> &'static str {
+    match (tool.id, manager) {
+        ("docker-compose", "winget") => "Docker.DockerCompose",
+        ("docker-compose", "choco") => "docker-compose",
+        ("docker-compose", "scoop") => "docker-compose",
+        ("kubectl", "winget") => "Kubernetes.kubectl",
+        ("kubectl", "choco") => "kubernetes-cli",
+        ("kubectl", "scoop") => "kubectl",
+        _ => tool.install_package,
+    }
 }
 
 pub fn fuse_available() -> bool {

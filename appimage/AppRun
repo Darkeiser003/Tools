@@ -270,7 +270,7 @@ if [[ "$#" -eq 0 && "${LTOOLS_TERMINAL_LAUNCH:-0}" != 1 &&
     exit $?
 fi
 
-if [[ "$#" -eq 0 ]]; then
+if [[ "$#" -eq 0 && "${LTOOLS_CLI:-0}" != 1 ]]; then
     set -- menu
 fi
 

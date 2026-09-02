@@ -35,6 +35,303 @@ pub fn current() -> &'static str {
     normalize(&value)
 }
 
+/// Etiquetas cuyo significado cambia por plataforma. En Windows el
+/// ejecutable inspecciona lanzadores y rutas nativas; nunca anuncia ni
+/// ejecuta el catálogo Linux de Wine/Lutris/Heroic/UMU.
+pub fn games_label() -> &'static str {
+    #[cfg(windows)]
+    {
+        return match current() {
+            "en" => "Inventory native Windows games and launchers",
+            "de" => "Native Windows-Spiele und Launcher inventarisieren",
+            "fr" => "Inventorier les jeux et lanceurs Windows natifs",
+            "pt" => "Inventariar jogos e lançadores nativos do Windows",
+            "it" => "Inventaria giochi e launcher Windows nativi",
+            "ca" => "Inventariar jocs i llançadors natius de Windows",
+            "nl" => "Native Windows-games en launchers inventariseren",
+            "pl" => "Inwentaryzuj natywne gry i launchery Windows",
+            _ => "Inventario de juegos y lanzadores Windows nativos",
+        };
+    }
+    #[cfg(not(windows))]
+    {
+        text("menu.games")
+    }
+}
+
+pub fn games_help() -> &'static str {
+    #[cfg(windows)]
+    {
+        return match current() {
+            "en" => "Native Windows game and launcher inventory",
+            "de" => "Inventar nativer Windows-Spiele und Launcher",
+            "fr" => "Inventaire des jeux et lanceurs Windows natifs",
+            "pt" => "Inventário de jogos e lançadores nativos do Windows",
+            "it" => "Inventario di giochi e launcher Windows nativi",
+            "ca" => "Inventari de jocs i llançadors natius de Windows",
+            "nl" => "Inventaris van native Windows-games en launchers",
+            "pl" => "Inwentaryzacja natywnych gier i launcherów Windows",
+            _ => "Inventario nativo de juegos y lanzadores Windows",
+        };
+    }
+    #[cfg(not(windows))]
+    {
+        text("help.games")
+    }
+}
+
+#[allow(dead_code)]
+pub fn prefix_label() -> &'static str {
+    #[cfg(windows)]
+    {
+        return match current() {
+            "en" => "Wine/Proton prefixes (not applicable on Windows)",
+            "de" => "Wine-/Proton-Präfixe (unter Windows nicht anwendbar)",
+            "fr" => "Préfixes Wine/Proton (inapplicables sous Windows)",
+            "pt" => "Prefixos Wine/Proton (não aplicáveis no Windows)",
+            "it" => "Prefissi Wine/Proton (non applicabili su Windows)",
+            "ca" => "Prefixos Wine/Proton (no aplicables a Windows)",
+            "nl" => "Wine-/Proton-prefixes (niet van toepassing op Windows)",
+            "pl" => "Prefiksy Wine/Proton (nie dotyczą Windows)",
+            _ => "Prefijos Wine/Proton (no aplicable en Windows)",
+        };
+    }
+    #[cfg(not(windows))]
+    {
+        text("menu.prefix")
+    }
+}
+
+pub fn prefix_help() -> &'static str {
+    #[cfg(windows)]
+    {
+        return match current() {
+            "en" => "Not available in native Windows mode; no Wine/Proton paths are scanned",
+            "de" => "Im nativen Windows-Modus nicht verfügbar; keine Wine-/Proton-Pfade werden geprüft",
+            "fr" => "Indisponible en mode Windows natif ; aucun chemin Wine/Proton n’est analysé",
+            "pt" => "Indisponível no modo Windows nativo; não são analisados caminhos Wine/Proton",
+            "it" => "Non disponibile in modalità Windows nativa; nessun percorso Wine/Proton viene analizzato",
+            "ca" => "No disponible en mode Windows natiu; no s’analitzen rutes Wine/Proton",
+            "nl" => "Niet beschikbaar in native Windows-modus; er worden geen Wine-/Proton-paden gescand",
+            "pl" => "Niedostępne w natywnym trybie Windows; ścieżki Wine/Proton nie są skanowane",
+            _ => "No aplicable en Windows nativo; no se escanean rutas Wine/Proton",
+        };
+    }
+    #[cfg(not(windows))]
+    {
+        text("help.prefix")
+    }
+}
+
+pub fn defaults_help() -> &'static str {
+    #[cfg(windows)]
+    {
+        return match current() {
+            "en" => "Show native Windows launcher locations",
+            "de" => "Native Windows-Launcherpfade anzeigen",
+            "fr" => "Afficher les emplacements des lanceurs Windows natifs",
+            "pt" => "Mostrar localizações dos lançadores nativos do Windows",
+            "it" => "Mostra i percorsi dei launcher Windows nativi",
+            "ca" => "Mostrar ubicacions dels llançadors natius de Windows",
+            "nl" => "Native Windows-launcherlocaties tonen",
+            "pl" => "Pokaż lokalizacje natywnych launcherów Windows",
+            _ => "Mostrar rutas de lanzadores nativos de Windows",
+        };
+    }
+    #[cfg(not(windows))]
+    {
+        text("help.defaults")
+    }
+}
+
+pub fn system_help() -> &'static str {
+    #[cfg(windows)]
+    {
+        return match current() {
+            "en" => "Windows services, processes, event log and controlled actions",
+            "de" => "Windows-Dienste, Prozesse, Ereignisprotokoll und kontrollierte Aktionen",
+            "fr" => "Services Windows, processus, journal des événements et actions contrôlées",
+            "pt" => "Serviços, processos, eventos e ações controladas do Windows",
+            "it" => "Servizi Windows, processi, registro eventi e azioni controllate",
+            "ca" => "Serveis, processos, registre d’esdeveniments i accions controlades de Windows",
+            "nl" => "Windows-services, processen, gebeurtenislogboek en gecontroleerde acties",
+            "pl" => "Usługi Windows, procesy, dziennik zdarzeń i kontrolowane działania",
+            _ => "Servicios, procesos, eventos y acciones controladas de Windows",
+        };
+    }
+    #[cfg(not(windows))]
+    {
+        text("help.system")
+    }
+}
+
+pub fn system_options() -> &'static str {
+    #[cfg(windows)]
+    {
+        match current() {
+            "en" => "system: status | services --filter active|stopped|all | processes --sort cpu|memory --limit N | journal --channel NAME --limit N | service ACTION NAME | process ACTION PID | export --format json|tsv --out FILE",
+            "de" => "system: status | services --filter active|stopped|all | processes --sort cpu|memory --limit N | journal --channel NAME --limit N | service AKTION NAME | process AKTION PID | export --format json|tsv --out DATEI",
+            "fr" => "system : status | services --filter active|stopped|all | processes --sort cpu|memory --limit N | journal --channel NOM --limit N | service ACTION NOM | process ACTION PID | export --format json|tsv --out FICHIER",
+            "pt" => "system: status | services --filter active|stopped|all | processes --sort cpu|memory --limit N | journal --channel NOME --limit N | service AÇÃO NOME | process AÇÃO PID | export --format json|tsv --out FICHEIRO",
+            "it" => "system: status | services --filter active|stopped|all | processes --sort cpu|memory --limit N | journal --channel NOME --limit N | service AZIONE NOME | process AZIONE PID | export --format json|tsv --out FILE",
+            "ca" => "system: status | services --filter active|stopped|all | processes --sort cpu|memory --limit N | journal --channel NOM --limit N | service ACCIÓ NOM | process ACCIÓ PID | export --format json|tsv --out FITXER",
+            "nl" => "system: status | services --filter active|stopped|all | processes --sort cpu|memory --limit N | journal --channel NAAM --limit N | service ACTIE NAAM | process ACTIE PID | export --format json|tsv --out BESTAND",
+            "pl" => "system: status | services --filter active|stopped|all | processes --sort cpu|memory --limit N | journal --channel NAZWA --limit N | service AKCJA NAZWA | process AKCJA PID | export --format json|tsv --out PLIK",
+            _ => "system: status | services --filter active|stopped|all | processes --sort cpu|memory --limit N | journal --channel NOMBRE --limit N | service ACCIÓN NOMBRE | process ACCIÓN PID | export --format json|tsv --out FICHERO",
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        text("help.system.options")
+    }
+}
+
+pub fn storage_label() -> &'static str {
+    #[cfg(windows)]
+    {
+        return match current() {
+            "en" => "Manage Windows disks and partitions",
+            "de" => "Windows-Datenträger und Partitionen verwalten",
+            "fr" => "Gérer les disques et partitions Windows",
+            "pt" => "Gerir discos e partições do Windows",
+            "it" => "Gestisci dischi e partizioni Windows",
+            "ca" => "Gestionar discs i particions de Windows",
+            "nl" => "Windows-schijven en partities beheren",
+            "pl" => "Zarządzaj dyskami i partycjami Windows",
+            _ => "Gestionar discos y particiones Windows",
+        };
+    }
+    #[cfg(not(windows))]
+    {
+        match current() {
+            "en" => "Manage Linux disks and partitions",
+            "de" => "Linux-Datenträger und Partitionen verwalten",
+            "fr" => "Gérer les disques et partitions Linux",
+            "pt" => "Gerir discos e partições Linux",
+            "it" => "Gestisci dischi e partizioni Linux",
+            "ca" => "Gestionar discs i particions de Linux",
+            "nl" => "Linux-schijven en partities beheren",
+            "pl" => "Zarządzaj dyskami i partycjami Linux",
+            _ => "Gestionar discos y particiones Linux",
+        }
+    }
+}
+
+pub fn registry_label() -> &'static str {
+    #[cfg(windows)]
+    {
+        return match current() {
+            "en" => "Inspect Windows Registry",
+            "de" => "Windows-Registrierung prüfen",
+            "fr" => "Inspecter le registre Windows",
+            "pt" => "Inspecionar o Registo do Windows",
+            "it" => "Ispeziona il Registro di Windows",
+            "ca" => "Inspeccionar el Registre de Windows",
+            "nl" => "Windows-register inspecteren",
+            "pl" => "Inspekcja rejestru Windows",
+            _ => "Inspeccionar el Registro de Windows",
+        };
+    }
+    #[cfg(not(windows))]
+    {
+        match current() {
+            "en" => "Inspect Linux logs and configuration paths",
+            "de" => "Linux-Protokolle und Konfigurationspfade prüfen",
+            "fr" => "Inspecter les journaux et chemins de configuration Linux",
+            "pt" => "Inspecionar registos e caminhos de configuração Linux",
+            "it" => "Ispeziona log e percorsi di configurazione Linux",
+            "ca" => "Inspeccionar registres i rutes de configuració de Linux",
+            "nl" => "Linux-logs en configuratiepaden inspecteren",
+            "pl" => "Sprawdź dzienniki i ścieżki konfiguracji Linuksa",
+            _ => "Registros y configuración Linux",
+        }
+    }
+}
+
+pub fn storage_help() -> &'static str {
+    #[cfg(windows)]
+    {
+        match current() {
+            "en" => "Native disk, volume and partition inventory (PowerShell/diskpart detection)",
+            "de" => "Native Inventarisierung von Datenträgern, Volumes und Partitionen (PowerShell/DiskPart)",
+            "fr" => "Inventaire natif des disques, volumes et partitions (détection PowerShell/DiskPart)",
+            "pt" => "Inventário nativo de discos, volumes e partições (deteção PowerShell/DiskPart)",
+            "it" => "Inventario nativo di dischi, volumi e partizioni (rilevamento PowerShell/DiskPart)",
+            "ca" => "Inventari natiu de discs, volums i particions (detecció PowerShell/DiskPart)",
+            "nl" => "Native inventarisatie van schijven, volumes en partities (PowerShell/DiskPart)",
+            "pl" => "Natywny spis dysków, woluminów i partycji (wykrywanie PowerShell/DiskPart)",
+            _ => "Inventario nativo de discos, volúmenes y particiones (detección PowerShell/DiskPart)",
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        match current() {
+            "en" => "Linux disks, mounts and partitions (lsblk/parted/gparted)",
+            "de" => "Linux-Datenträger, Mounts und Partitionen (lsblk/parted/gparted)",
+            "fr" => "Disques, montages et partitions Linux (lsblk/parted/gparted)",
+            "pt" => "Discos, montagens e partições Linux (lsblk/parted/gparted)",
+            "it" => "Dischi, mount e partizioni Linux (lsblk/parted/gparted)",
+            "ca" => "Discs, muntatges i particions de Linux (lsblk/parted/gparted)",
+            "nl" => "Linux-schijven, mounts en partities (lsblk/parted/gparted)",
+            "pl" => "Dyski, montowania i partycje Linuksa (lsblk/parted/gparted)",
+            _ => "Inventario de discos, montajes y particiones (lsblk/parted/gparted)",
+        }
+    }
+}
+
+pub fn registry_help() -> &'static str {
+    #[cfg(windows)]
+    {
+        match current() {
+            "en" => "Read or export Windows Registry keys with reg.exe",
+            "de" => "Windows-Registrierungsschlüssel mit reg.exe lesen oder exportieren",
+            "fr" => "Lire ou exporter des clés du registre Windows avec reg.exe",
+            "pt" => "Ler ou exportar chaves do Registo do Windows com reg.exe",
+            "it" => "Leggi o esporta chiavi del Registro di Windows con reg.exe",
+            "ca" => "Llegir o exportar claus del Registre de Windows amb reg.exe",
+            "nl" => "Windows-registersleutels lezen of exporteren met reg.exe",
+            "pl" => "Odczytuj lub eksportuj klucze rejestru Windows za pomocą reg.exe",
+            _ => "Leer o exportar claves del Registro de Windows con reg.exe",
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        match current() {
+            "en" => "Configuration paths and alternatives to a central registry",
+            "de" => "Konfigurationspfade und Alternativen zu einer zentralen Registrierung",
+            "fr" => "Chemins de configuration et alternatives au registre central",
+            "pt" => "Caminhos de configuração e alternativas a um registo central",
+            "it" => "Percorsi di configurazione e alternative a un registro centrale",
+            "ca" => "Rutes de configuració i alternatives al registre central",
+            "nl" => "Configuratiepaden en alternatieven voor een centraal register",
+            "pl" => "Ścieżki konfiguracji i alternatywy dla centralnego rejestru",
+            _ => "Rutas de configuración y alternativas al registro central",
+        }
+    }
+}
+
+pub fn prefix_options() -> &'static str {
+    #[cfg(windows)]
+    {
+        "prefix: no aplicable en Windows; el EXE no busca ni migra prefijos Wine/Proton"
+    }
+    #[cfg(not(windows))]
+    {
+        text("help.prefix.options")
+    }
+}
+
+pub fn prefix_flags() -> &'static str {
+    #[cfg(windows)]
+    {
+        ""
+    }
+    #[cfg(not(windows))]
+    {
+        text("help.prefix.flags")
+    }
+}
+
 pub fn text(key: &str) -> &'static str {
     match (current(), key) {
         ("en", "app.title") => "LTools",
@@ -89,7 +386,22 @@ pub fn text(key: &str) -> &'static str {
         ("de", "app.title") => "LTools",
         ("de", "usage") => "Verwendung: ltools [Befehl] [Optionen]",
         ("de", "commands") => "Befehle:",
+        ("de", "help.audit") => "Datenträger-, Paket- und Anwendungsprüfung",
+        ("de", "help.games") => "Prüfung von Spielen, Wine und Proton",
+        ("de", "help.packages") => "Paketmanager, Pakete und Artefakte",
+        ("de", "help.clean") => "Geschützte Bereinigung von Paketen, Caches und Pfaden",
+        ("de", "help.prefix") => "Präfixe auflisten, prüfen, erstellen und migrieren",
+        ("de", "help.defaults") => "Effektive Standardpfade für Wine, Proton und Launcher anzeigen",
+        ("de", "help.system") => "systemd-Gesundheit, Dienste, Prozesse, Journal und kontrollierte Aktionen",
+        ("de", "help.system.options") => "system: status | failed [--journal] | services --filter noteworthy|active|enabled|all | processes --sort cpu|memory --limit N | journal --level error|warning|info --hours N | service AKTION EINHEIT | dependencies --unit EINHEIT | export --format tsv|json --out DATEI",
         ("de", "help.doctor") => "Abhängigkeiten, FUSE und Laufzeit diagnostizieren",
+        ("de", "help.rollback") => "Umkehrbare Vorgänge aus einem Plan wiederherstellen",
+        ("de", "help.capabilities") => "Maschinenlesbaren JSON-Integrationsvertrag ausgeben",
+        ("de", "help.common") => "Allgemeine Optionen: --dry-run, --plan DATEI, --lang SPRACHE, --help, --version",
+        ("de", "help.clean.options") => "clean: --package NAME [--manager ...] --orphans --package-caches --flatpak-unused --path PFAD [--force]",
+        ("de", "help.prefix.options") => "prefix list: --root PFAD [--include-mount-roots]\nprefix migrate: --source PFAD --dest PFAD [--include NAME] [--exclude NAME]",
+        ("de", "help.prefix.flags") => "             --set-defaults --activate-shell --update-launchers --rewrite-configs",
+        ("de", "help.compat") => "Das TSV-Berichtsformat ist mit der Bash-Implementierung kompatibel.",
         ("de", "menu.title") => "=== LTools ===",
         ("de", "menu.audit") => "Datenträger, Pakete und Anwendungen prüfen",
         ("de", "menu.games") => "Spiele, Wine und Proton prüfen",
@@ -123,7 +435,22 @@ pub fn text(key: &str) -> &'static str {
         ("fr", "app.title") => "LTools",
         ("fr", "usage") => "Utilisation : ltools [commande] [options]",
         ("fr", "commands") => "Commandes :",
+        ("fr", "help.audit") => "Audit des disques, paquets et applications",
+        ("fr", "help.games") => "Audit des jeux, de Wine et de Proton",
+        ("fr", "help.packages") => "Gestionnaires de paquets, paquets et artefacts",
+        ("fr", "help.clean") => "Nettoyage protégé des paquets, caches et chemins",
+        ("fr", "help.prefix") => "Lister, inspecter, créer et migrer des préfixes",
+        ("fr", "help.defaults") => "Afficher les chemins effectifs par défaut de Wine, Proton et des lanceurs",
+        ("fr", "help.system") => "État de systemd, services, processus, journal et actions contrôlées",
+        ("fr", "help.system.options") => "system : status | failed [--journal] | services --filter noteworthy|active|enabled|all | processes --sort cpu|memory --limit N | journal --level error|warning|info --hours N | service ACTION UNITÉ | dependencies --unit UNITÉ | export --format tsv|json --out FICHIER",
         ("fr", "help.doctor") => "Diagnostiquer les dépendances, FUSE et l’exécution",
+        ("fr", "help.rollback") => "Restaurer les opérations réversibles d’un plan",
+        ("fr", "help.capabilities") => "Afficher le contrat d’intégration JSON lisible par machine",
+        ("fr", "help.common") => "Options communes : --dry-run, --plan FICHIER, --lang LANGUE, --help, --version",
+        ("fr", "help.clean.options") => "clean : --package NOM [--manager ...] --orphans --package-caches --flatpak-unused --path CHEMIN [--force]",
+        ("fr", "help.prefix.options") => "prefix list : --root CHEMIN [--include-mount-roots]\nprefix migrate : --source CHEMIN --dest CHEMIN [--include NOM] [--exclude NOM]",
+        ("fr", "help.prefix.flags") => "             --set-defaults --activate-shell --update-launchers --rewrite-configs",
+        ("fr", "help.compat") => "Le format des rapports TSV est compatible avec l’implémentation Bash.",
         ("fr", "menu.title") => "=== LTools ===",
         ("fr", "menu.audit") => "Auditer les disques, paquets et applications",
         ("fr", "menu.games") => "Auditer les jeux, Wine et Proton",
@@ -157,7 +484,22 @@ pub fn text(key: &str) -> &'static str {
         ("pt", "app.title") => "LTools",
         ("pt", "usage") => "Uso: ltools [comando] [opções]",
         ("pt", "commands") => "Comandos:",
+        ("pt", "help.audit") => "Auditoria de discos, pacotes e aplicações",
+        ("pt", "help.games") => "Auditoria de jogos, Wine e Proton",
+        ("pt", "help.packages") => "Gestores de pacotes, pacotes e artefactos",
+        ("pt", "help.clean") => "Limpeza protegida de pacotes, caches e caminhos",
+        ("pt", "help.prefix") => "Listar, inspecionar, criar e migrar prefixos",
+        ("pt", "help.defaults") => "Mostrar os caminhos predefinidos efetivos do Wine, Proton e lançadores",
+        ("pt", "help.system") => "Estado do systemd, serviços, processos, journal e ações controladas",
+        ("pt", "help.system.options") => "system: status | failed [--journal] | services --filter noteworthy|active|enabled|all | processes --sort cpu|memory --limit N | journal --level error|warning|info --hours N | service AÇÃO UNIDADE | dependencies --unit UNIDADE | export --format tsv|json --out FICHEIRO",
         ("pt", "help.doctor") => "Diagnosticar dependências, FUSE e execução",
+        ("pt", "help.rollback") => "Restaurar operações reversíveis de um plano",
+        ("pt", "help.capabilities") => "Imprimir o contrato de integração JSON legível por máquina",
+        ("pt", "help.common") => "Opções comuns: --dry-run, --plan FICHEIRO, --lang IDIOMA, --help, --version",
+        ("pt", "help.clean.options") => "clean: --package NOME [--manager ...] --orphans --package-caches --flatpak-unused --path CAMINHO [--force]",
+        ("pt", "help.prefix.options") => "prefix list: --root CAMINHO [--include-mount-roots]\nprefix migrate: --source CAMINHO --dest CAMINHO [--include NOME] [--exclude NOME]",
+        ("pt", "help.prefix.flags") => "             --set-defaults --activate-shell --update-launchers --rewrite-configs",
+        ("pt", "help.compat") => "O formato dos relatórios TSV é compatível com a implementação Bash.",
         ("pt", "menu.title") => "=== LTools ===",
         ("pt", "menu.audit") => "Auditar discos, pacotes e aplicações",
         ("pt", "menu.games") => "Auditar jogos, Wine e Proton",
@@ -191,7 +533,22 @@ pub fn text(key: &str) -> &'static str {
         ("it", "app.title") => "LTools",
         ("it", "usage") => "Uso: ltools [comando] [opzioni]",
         ("it", "commands") => "Comandi:",
+        ("it", "help.audit") => "Verifica di dischi, pacchetti e applicazioni",
+        ("it", "help.games") => "Verifica di giochi, Wine e Proton",
+        ("it", "help.packages") => "Gestori di pacchetti, pacchetti e artefatti",
+        ("it", "help.clean") => "Pulizia protetta di pacchetti, cache e percorsi",
+        ("it", "help.prefix") => "Elenca, ispeziona, crea e migra prefissi",
+        ("it", "help.defaults") => "Mostra i percorsi predefiniti effettivi di Wine, Proton e dei launcher",
+        ("it", "help.system") => "Stato di systemd, servizi, processi, journal e azioni controllate",
+        ("it", "help.system.options") => "system: status | failed [--journal] | services --filter noteworthy|active|enabled|all | processes --sort cpu|memory --limit N | journal --level error|warning|info --hours N | service AZIONE UNITÀ | dependencies --unit UNITÀ | export --format tsv|json --out FILE",
         ("it", "help.doctor") => "Diagnostica dipendenze, FUSE ed esecuzione",
+        ("it", "help.rollback") => "Ripristina le operazioni reversibili da un piano",
+        ("it", "help.capabilities") => "Stampa il contratto di integrazione JSON leggibile dalle macchine",
+        ("it", "help.common") => "Opzioni comuni: --dry-run, --plan FILE, --lang LINGUA, --help, --version",
+        ("it", "help.clean.options") => "clean: --package NOME [--manager ...] --orphans --package-caches --flatpak-unused --path PERCORSO [--force]",
+        ("it", "help.prefix.options") => "prefix list: --root PERCORSO [--include-mount-roots]\nprefix migrate: --source PERCORSO --dest PERCORSO [--include NOME] [--exclude NOME]",
+        ("it", "help.prefix.flags") => "             --set-defaults --activate-shell --update-launchers --rewrite-configs",
+        ("it", "help.compat") => "Il formato dei rapporti TSV è compatibile con l’implementazione Bash.",
         ("it", "menu.title") => "=== LTools ===",
         ("it", "menu.audit") => "Verifica dischi, pacchetti e applicazioni",
         ("it", "menu.games") => "Verifica giochi, Wine e Proton",
@@ -234,6 +591,8 @@ pub fn text(key: &str) -> &'static str {
         ("ca", "help.system") => "systemd, serveis, processos i journal",
         ("ca", "help.doctor") => "Diagnòstic de dependències, FUSE i execució",
         ("ca", "help.rollback") => "Recuperar operacions reversibles d’un pla",
+        ("ca", "help.capabilities") => "Imprimir el contracte d’integració JSON llegible per màquines",
+        ("ca", "help.system.options") => "system: status | failed [--journal] | services --filter noteworthy|active|enabled|all | processes --sort cpu|memory --limit N | journal --level error|warning|info --hours N | service ACCIÓ UNITAT | dependencies --unit UNITAT | export --format tsv|json --out FITXER",
         ("ca", "help.common") => "Opcions comunes: --dry-run, --plan FITXER, --lang IDIOMA, --help, --version",
         ("ca", "help.clean.options") => "clean: --package NOM --orphans --package-caches --flatpak-unused --path RUTA",
         ("ca", "help.prefix.options") => "prefix list: --root RUTA; prefix migrate: --source RUTA --dest RUTA",
@@ -281,6 +640,8 @@ pub fn text(key: &str) -> &'static str {
         ("nl", "help.system") => "systemd, diensten, processen en journal",
         ("nl", "help.doctor") => "Diagnose van afhankelijkheden, FUSE en runtime",
         ("nl", "help.rollback") => "Herstel omkeerbare bewerkingen uit een plan",
+        ("nl", "help.capabilities") => "Het machineleesbare JSON-integratiecontract afdrukken",
+        ("nl", "help.system.options") => "system: status | failed [--journal] | services --filter noteworthy|active|enabled|all | processes --sort cpu|memory --limit N | journal --level error|warning|info --hours N | service ACTIE EENHEID | dependencies --unit EENHEID | export --format tsv|json --out BESTAND",
         ("nl", "help.common") => "Gemeenschappelijke opties: --dry-run, --plan BESTAND, --lang TAAL, --help, --version",
         ("nl", "help.clean.options") => "clean: --package NAAM --orphans --package-caches --flatpak-unused --path PAD",
         ("nl", "help.prefix.options") => "prefix list: --root PAD; prefix migrate: --source PAD --dest PAD",
@@ -328,6 +689,8 @@ pub fn text(key: &str) -> &'static str {
         ("pl", "help.system") => "systemd, usługi, procesy i dziennik",
         ("pl", "help.doctor") => "Diagnostyka zależności, FUSE i środowiska",
         ("pl", "help.rollback") => "Przywróć odwracalne operacje z planu",
+        ("pl", "help.capabilities") => "Wyświetl czytelny maszynowo kontrakt integracji JSON",
+        ("pl", "help.system.options") => "system: status | failed [--journal] | services --filter noteworthy|active|enabled|all | processes --sort cpu|memory --limit N | journal --level error|warning|info --hours N | service AKCJA JEDNOSTKA | dependencies --unit JEDNOSTKA | export --format tsv|json --out PLIK",
         ("pl", "help.common") => "Opcje wspólne: --dry-run, --plan PLIK, --lang JĘZYK, --help, --version",
         ("pl", "help.clean.options") => "clean: --package NAZWA --orphans --package-caches --flatpak-unused --path ŚCIEŻKA",
         ("pl", "help.prefix.options") => "prefix list: --root ŚCIEŻKA; prefix migrate: --source ŚCIEŻKA --dest ŚCIEŻKA",

@@ -1,6 +1,10 @@
+#[cfg(not(windows))]
 use crate::audit::{default_roots, discover_prefixes, prefix_kind};
 #[cfg(not(windows))]
 use crate::common::run_command;
+#[cfg(windows)]
+use crate::common::Context;
+#[cfg(not(windows))]
 use crate::common::{
     ask, backup, canonical, critical_path, device, directory_size, ensure_tool, file_contains,
     human_bytes, move_to_trash, Context,
@@ -8,20 +12,35 @@ use crate::common::{
 use std::fs::{self, File};
 #[cfg(windows)]
 use std::io::Read;
+#[cfg(not(windows))]
 use std::io::Write;
+#[cfg(windows)]
+use std::path::Path;
+#[cfg(not(windows))]
 use std::path::{Path, PathBuf};
+#[cfg(not(windows))]
 use std::process::Command;
 
 pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
-    match args.first().map(String::as_str).unwrap_or("list") {
-        "list" | "ls" => list(ctx, &args[1..]),
-        "inspect" | "info" => inspect(ctx, &args[1..]),
-        "create" => create(ctx, &args[1..]),
-        "migrate" | "clone" => migrate(ctx, &args[1..]),
-        action => Err(format!("acción de prefijo desconocida: {action}")),
+    #[cfg(windows)]
+    {
+        let _ = (ctx, args);
+        println!("Los prefijos Wine/Proton no aplican al ejecutable Windows nativo; no se ha escaneado ninguna ruta.");
+        return Ok(());
+    }
+    #[cfg(not(windows))]
+    {
+        match args.first().map(String::as_str).unwrap_or("list") {
+            "list" | "ls" => list(ctx, &args[1..]),
+            "inspect" | "info" => inspect(ctx, &args[1..]),
+            "create" => create(ctx, &args[1..]),
+            "migrate" | "clone" => migrate(ctx, &args[1..]),
+            action => Err(format!("acción de prefijo desconocida: {action}")),
+        }
     }
 }
 
+#[cfg(not(windows))]
 fn list(ctx: &Context, args: &[String]) -> Result<(), String> {
     let roots = parse_roots(ctx, args);
     let prefixes = discover_prefixes(&roots);
@@ -50,6 +69,7 @@ fn list(ctx: &Context, args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(windows))]
 fn inspect(ctx: &Context, args: &[String]) -> Result<(), String> {
     let path = args
         .iter()
@@ -87,6 +107,7 @@ fn inspect(ctx: &Context, args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(windows))]
 fn create(ctx: &Context, args: &[String]) -> Result<(), String> {
     if cfg!(windows) {
         let _ = (ctx, args);
@@ -139,6 +160,7 @@ fn create(ctx: &Context, args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(windows))]
 fn migrate(ctx: &Context, args: &[String]) -> Result<(), String> {
     let source = value_any(args, &["--source", "--from"])
         .map(PathBuf::from)

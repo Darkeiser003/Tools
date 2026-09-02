@@ -31,10 +31,11 @@
       }
     },
     "windows": {
-      "artifact_kinds": ["exe", "portable-zip"],
+      "artifact_kinds": ["exe", "exe-cli", "portable-zip"],
       "preferred_kind": "exe",
       "asset_patterns": {
         "exe": "ltools-{version}-windows-{architecture}.exe",
+        "exe-cli": "ltools-{version}-windows-{architecture}-cli.exe",
         "portable-zip": "ltools-{version}-windows-{architecture}.zip"
       },
       "install": {

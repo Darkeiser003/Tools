@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Lanzador compatible de LTools. El backend es siempre Rust.
+# Perfil CLI de LTools: no abre una terminal ni entra en el menú.
+# Sin argumentos muestra la ayuda; con argumentos ejecuta el comando indicado.
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-
 BIN="${LTOOLS_BINARY:-}"
 if [[ -z "$BIN" ]]; then
     for candidate in \
@@ -22,11 +22,6 @@ if [[ -z "$BIN" || ! -x "$BIN" ]]; then
     exit 2
 fi
 
-ARGS=()
-for arg in "$@"; do
-    [[ "$arg" == "--rust" ]] || ARGS+=("$arg")
-done
-if [[ "${#ARGS[@]}" -eq 0 && "${LTOOLS_CLI:-0}" != 1 ]]; then
-    ARGS=(menu)
-fi
-exec "$BIN" "${ARGS[@]}"
+export LTOOLS_CLI=1
+export LTOOLS_NO_AUTO_TERMINAL=1
+exec "$BIN" "$@"

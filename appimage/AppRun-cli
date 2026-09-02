@@ -5,4 +5,5 @@
 set -u
 APPDIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 export LTOOLS_NO_AUTO_TERMINAL=1
+export LTOOLS_CLI=1
 exec "$APPDIR/AppRun-main" "$@"

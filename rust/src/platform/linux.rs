@@ -21,11 +21,48 @@ pub fn command_exists(name: &str) -> bool {
 }
 
 pub fn host_tool_available(tool: &super::HostTool) -> bool {
-    if tool.id == "trash" {
+    if tool.id == "docker-compose" {
+        command_exists("docker-compose")
+            || (command_exists("docker")
+                && command_output("docker", &["compose", "version"]).is_some())
+    } else if tool.id == "trash" {
         command_exists("gio") || command_exists("trash-put")
     } else {
         command_exists(tool.command)
     }
+}
+
+pub fn host_tool_version(tool: &super::HostTool) -> Option<String> {
+    if !host_tool_available(tool) || tool.command.starts_with("Get-") {
+        return None;
+    }
+    // La consulta de capacidades no debe ejecutar Wine ni acciones de
+    // limpieza: algunos binarios pueden abrir ventanas, inicializar un
+    // prefijo o esperar interacción. Su disponibilidad ya se informa.
+    if matches!(
+        tool.id,
+        "wineboot" | "paccache" | "trash" | "kill" | "gparted"
+    ) {
+        return None;
+    }
+    let default_args: &[&str] = match tool.id {
+        "docker-compose" | "podman-compose" => &["version"],
+        "kubectl" => &["version", "--client"],
+        "helm" => &["version", "--short"],
+        "udisksctl" => &["--version"],
+        _ => &["--version"],
+    };
+    let (program, args) = if tool.id == "docker-compose" && !command_exists("docker-compose") {
+        ("docker", &["compose", "version"][..])
+    } else {
+        (tool.command, default_args)
+    };
+    command_output(program, args).and_then(|output| {
+        output
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .map(|line| line.trim().chars().take(240).collect())
+    })
 }
 
 pub fn run_with_privilege(program: &str, args: &[String], dry_run: bool) -> io::Result<bool> {
@@ -111,6 +148,30 @@ static HOST_TOOLS: &[super::HostTool] = &[
         false,
         true,
         "util-linux",
+    ),
+    tool(
+        "lsblk",
+        "storage",
+        "disk-and-partition-inventory",
+        false,
+        true,
+        "util-linux",
+    ),
+    tool(
+        "parted",
+        "storage",
+        "partition-table-inspection",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "gparted",
+        "storage",
+        "optional-graphical-disk-tool",
+        false,
+        false,
+        "",
     ),
     tool(
         "sha256sum",
@@ -217,6 +278,297 @@ static HOST_TOOLS: &[super::HostTool] = &[
         true,
         "procps-ng",
     ),
+    tool(
+        "fdisk",
+        "storage",
+        "alternative-partition-inspection",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "sfdisk",
+        "storage",
+        "scriptable-partition-management",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "blkid",
+        "storage",
+        "filesystem-identification",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "udisksctl",
+        "storage",
+        "desktop-disk-control",
+        false,
+        false,
+        "",
+    ),
+    tool("btrfs", "storage", "btrfs-management", false, false, ""),
+    tool(
+        "cryptsetup",
+        "storage",
+        "encrypted-volume-management",
+        false,
+        false,
+        "",
+    ),
+    tool("lvs", "storage", "lvm-volume-inventory", false, false, ""),
+    tool("zpool", "storage", "zfs-pool-inventory", false, false, ""),
+    tool(
+        "docker",
+        "containers",
+        "docker-engine-detected",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "docker-compose",
+        "containers",
+        "docker-compose-primary-installer",
+        false,
+        true,
+        "docker-compose",
+    ),
+    tool(
+        "podman",
+        "containers",
+        "alternative-container-engine",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "podman-compose",
+        "containers",
+        "alternative-compose",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "nerdctl",
+        "containers",
+        "alternative-container-client",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "containerd",
+        "containers",
+        "container-runtime",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "crictl",
+        "containers",
+        "kubernetes-container-runtime-client",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "kubectl",
+        "kubernetes",
+        "kubernetes-primary-client-installer",
+        false,
+        true,
+        "kubectl",
+    ),
+    tool(
+        "kubeadm",
+        "kubernetes",
+        "kubernetes-cluster-bootstrap",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "kubelet",
+        "kubernetes",
+        "kubernetes-node-agent",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "helm",
+        "kubernetes",
+        "kubernetes-package-manager",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "kind",
+        "kubernetes",
+        "kubernetes-local-clusters",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "minikube",
+        "kubernetes",
+        "kubernetes-local-clusters",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "k3d",
+        "kubernetes",
+        "kubernetes-local-clusters",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "k9s",
+        "kubernetes",
+        "kubernetes-terminal-client",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "pacman",
+        "package-manager",
+        "arch-package-manager",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "paru",
+        "package-manager",
+        "aur-package-manager",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "yay",
+        "package-manager",
+        "aur-package-manager",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "pamac",
+        "package-manager",
+        "graphical-package-manager",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "apt-get",
+        "package-manager",
+        "debian-package-manager",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "apt",
+        "package-manager",
+        "debian-package-manager",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "dpkg",
+        "package-manager",
+        "debian-package-database",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "dnf",
+        "package-manager",
+        "fedora-package-manager",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "yum",
+        "package-manager",
+        "legacy-rpm-package-manager",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "zypper",
+        "package-manager",
+        "suse-package-manager",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "apk",
+        "package-manager",
+        "alpine-package-manager",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "xbps-install",
+        "package-manager",
+        "void-package-manager",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "pkg",
+        "package-manager",
+        "bsd-package-manager",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "brew",
+        "package-manager",
+        "homebrew-package-manager",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "flatpak",
+        "package-manager",
+        "flatpak-package-manager",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "snap",
+        "package-manager",
+        "snap-package-manager",
+        false,
+        false,
+        "",
+    ),
 ];
 
 const fn tool(
@@ -256,8 +608,13 @@ pub fn install_tool(id: &str, dry_run: bool) -> Result<bool, String> {
     }
     let manager = [
         ("pacman", vec!["-S".into(), "--needed".into()]),
+        ("pamac", vec!["install".into(), "--no-confirm".into()]),
+        ("paru", vec!["-S".into(), "--needed".into()]),
+        ("yay", vec!["-S".into(), "--needed".into()]),
         ("apt-get", vec!["install".into()]),
+        ("apt", vec!["install".into()]),
         ("dnf", vec!["install".into()]),
+        ("yum", vec!["install".into()]),
         ("zypper", vec!["install".into()]),
         ("apk", vec!["add".into()]),
         ("xbps-install", vec!["-S".into()]),
@@ -289,7 +646,9 @@ pub fn install_tool(id: &str, dry_run: bool) -> Result<bool, String> {
     }
     let ok = crate::platform::run_with_privilege(manager, &args, dry_run)
         .map_err(|error| error.to_string())?;
-    Ok(ok && host_tool_available(tool))
+    // En una simulación no se instala nada, así que la herramienta seguirá
+    // ausente. El resultado correcto es que el plan se pudo ejecutar.
+    Ok(ok && (dry_run || host_tool_available(tool)))
 }
 
 pub fn fuse_available() -> bool {

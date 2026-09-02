@@ -153,16 +153,26 @@ fn classify(filename: &str) -> Option<(&'static str, String, &'static str, bool)
                 filename
                     .strip_prefix(&format!("ltools-{}-windows-", parts[1]))
                     .and_then(|value| value.strip_suffix(".zip"))
-            })?
+            })?;
+        let architecture = architecture
+            .strip_suffix("-cli")
+            .unwrap_or(architecture)
             .to_string();
-        let kind = if filename.ends_with(".exe") {
+        let kind = if filename.ends_with("-cli.exe") {
+            "exe-cli"
+        } else if filename.ends_with(".exe") {
             "exe"
         } else if filename.ends_with(".zip") {
             "portable-zip"
         } else {
             return None;
         };
-        return Some(("windows", architecture, kind, kind == "exe"));
+        return Some((
+            "windows",
+            architecture,
+            kind,
+            matches!(kind, "exe" | "exe-cli"),
+        ));
     }
     None
 }
@@ -308,6 +318,14 @@ mod tests {
                 "-windows-x86_64.exe"
             )),
             Some(("windows", "x86_64".into(), "exe", true))
+        );
+        assert_eq!(
+            classify(concat!(
+                "ltools-",
+                env!("CARGO_PKG_VERSION"),
+                "-windows-x86_64-cli.exe"
+            )),
+            Some(("windows", "x86_64".into(), "exe-cli", true))
         );
         assert_eq!(
             classify(concat!(

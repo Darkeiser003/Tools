@@ -1,17 +1,16 @@
 # LTools
 
-Herramientas modulares para auditar, organizar y mantener un equipo Linux,
-con especial atención a CachyOS/Arch, juegos, Wine, Proton y prefijos
-distribuidos entre varios discos. LTools usa un backend Rust nativo; los
-scripts Bash se limitan a lanzadores, builders y pruebas.
-El usuario puede utilizar el menú o el mismo conjunto de comandos desde una
-terminal, un AppImage o un paquete portable de Windows.
+Centro de acciones rápidas multiplataforma para LTerminal y WinSlim Terminal.
+LTools usa un backend Rust nativo y ofrece una aplicación autónoma con menú,
+un perfil CLI para automatización y paquetes portables para Linux y Windows.
+Los scripts Bash y PowerShell se limitan a lanzadores, builders y pruebas; no
+son el backend funcional.
 
 | | |
 |---|---|
 | Versión | La definida en `rust/Cargo.toml` |
 | Plataformas | Linux x86_64 · Windows x86_64 portable |
-| Runtime | Rust 2021 · Bash solo para lanzadores, build y tests |
+| Runtime | Rust 2021 · Bash/PowerShell solo para lanzadores, build y tests |
 | Distribución | AppImage terminal, AppImage CLI, tarball Linux y ZIP Windows |
 | Licencia | MIT |
 | Idiomas | Español, inglés, alemán, francés, portugués, italiano, catalán, neerlandés y polaco |
@@ -32,6 +31,7 @@ admiten `--dry-run` y generan planes reversibles cuando corresponde.
 - [Migración de prefijos](#migración-de-prefijos)
 - [Paquetes y limpieza](#paquetes-y-limpieza)
 - [Salud y gestión del sistema](#salud-y-gestión-del-sistema)
+- [Discos, particiones y configuración nativa](#discos-particiones-y-configuración-nativa)
 - [Build y distribución](#build-y-distribución)
 - [Descarga desde GitHub y manifiesto de release](#descarga-desde-github-y-manifiesto-de-release)
 - [Integración JSON y terminal](#integración-json-y-terminal)
@@ -61,6 +61,14 @@ admiten `--dry-run` y generan planes reversibles cuando corresponde.
 - Gestiona servicios, daemons, procesos y journal mediante `systemctl` en
   Linux, y usa PowerShell, `sc.exe`, `tasklist`, `taskkill` y `wevtutil` en
   Windows, con diagnósticos que distinguen capacidades no disponibles.
+- Inspecciona discos, volúmenes y particiones con herramientas nativas: en
+  Linux `lsblk`, `findmnt`, `df`, `parted` y, si existe, `gparted`; en Windows
+  PowerShell (`Get-Disk`, `Get-Partition`, `Get-Volume`), `diskpart` y
+  `mountvol`. El inventario es seguro y no ejecuta cambios destructivos de
+  particiones.
+- Inspecciona la configuración adecuada a cada sistema: rutas de configuración
+  y journal en Linux, y consultas/exportaciones `.reg` mediante `reg.exe` en
+  Windows. No mezcla Registro Windows con la configuración Linux.
 - Detecta un catálogo amplio de herramientas nativas del anfitrión, agrupadas
   por almacenamiento, hardware, red, paquetes, servicios, procesos, archivos
   y escritorio. Wine, juegos, virtualización y desarrollo pertenecen a sus
@@ -80,16 +88,14 @@ tienda. Si una operación concreta necesita una herramienta básica que falta,
 el módulo puede mostrar una propuesta explícita tras comprobar alternativas;
 la instalación siempre requiere confirmación del usuario.
 
-El diagnóstico enumera solo dependencias que LTools puede utilizar en una
-acción automatizada: `findmnt`, `sha256sum`, `rsync`, `df`, `wineboot`, `jq`,
-`perl`, `rg`, la papelera nativa, `paccache`, `flatpak`, `systemctl`,
-`journalctl`, `ps` y `kill`. No es un inventario general de herramientas del
-sistema. Los gestores de paquetes se consultan dentro del módulo de paquetes
-como backends nativos y no se ofrecen como una tienda de LTools.
-En Windows se limita a PowerShell, `sc.exe`, `tasklist`, `taskkill`,
-`wevtutil`, `Get-CimInstance`, la papelera nativa y `jq`, que son las
-dependencias que las acciones automatizadas realmente pueden ejecutar. Usa
-UAC únicamente para las acciones que lo necesitan.
+El diagnóstico enumera las dependencias que LTools puede utilizar en una
+acción automatizada y las alternativas nativas relevantes: auditoría,
+almacenamiento, servicios, procesos, configuración, contenedores, Kubernetes,
+limpieza y gestores de paquetes. Cada entrada indica si está disponible, su
+versión cuando se puede consultar y si LTools puede proponer instalarla. No es
+un inventario indiscriminado de aplicaciones ni una tienda. En Windows solo
+se muestran comandos, cmdlets y gestores propios de Windows; usa UAC
+únicamente para las acciones que lo necesitan.
 
 ### Política de herramientas del anfitrión
 
@@ -119,6 +125,44 @@ instala paquetes opcionales por iniciativa propia. Wine, juegos,
 virtualización y herramientas de desarrollo no forman parte del catálogo
 general; Wine solo se ofrece como dependencia contextual de la creación de un
 prefijo.
+
+El catálogo sí cubre herramientas básicas que las acciones de mantenimiento
+pueden aprovechar. En Linux detecta `lsblk`, `findmnt`, `parted`, GParted,
+`fdisk`, `sfdisk`, `blkid`, `udisksctl`, Btrfs, LVM, ZFS, cifrado, Docker,
+Compose, Podman, containerd, nerdctl y clientes Kubernetes como `kubectl`,
+Helm, Kind, Minikube, k3d y k9s. Solo `lsblk`, `docker-compose` y `kubectl`
+son instaladores automáticos principales; el resto son alternativas o
+componentes ya instalados que se reportan sin intentar reemplazarlos.
+
+En Windows detecta PowerShell, `diskpart`, `mountvol`, cmdlets de discos y
+red, `reg.exe`, `sc.exe`, `tasklist`, `taskkill`, `wevtutil`, Docker/Compose,
+Podman y el ecosistema Kubernetes. Para resolver una dependencia faltante solo
+se ofrecen Compose y `kubectl`, usando winget, Chocolatey o Scoop en ese orden;
+los demás comandos son nativos, opcionales o requieren una instalación manual.
+El JSON publica `available`, `installable`, `install_package` y `version` para
+que una terminal pueda mostrar el estado sin ejecutar acciones inesperadas.
+
+### Codificación de archivos
+
+El repositorio aplica una política por compatibilidad, no una conversión
+uniforme:
+
+- Rust, Bash, JSON, XML, SVG, Markdown, TOML y archivos `.desktop`: UTF-8 sin
+  BOM. El BOM rompería especialmente los shebangs de Bash y algunos lectores
+  JSON.
+- PowerShell (`.ps1`): UTF-8 con BOM (`UTF-8-BOM`), necesario para que
+  Windows PowerShell 5.1 reconozca correctamente textos como `á`, `ñ` y `¿`.
+- CMD (`.cmd`): ASCII/ANSI seguro, sin BOM. Al contener únicamente caracteres
+  ASCII, funciona con las páginas de código Windows habituales y no depende
+  de que `cmd.exe` interprete UTF-8.
+- UTF-16-LE no se usa para fuentes ni configuración de LTools: ningún
+  consumidor actual lo requiere y aplicarlo globalmente dañaría Bash, Rust y
+  JSON. Solo debe introducirse para un archivo externo que documente
+  explícitamente esa exigencia.
+
+La comprobación reproducible está en `tests/encoding.sh` y se ejecuta también
+durante `./build.sh`. Valida UTF-8, presencia o ausencia de BOM, y que los CMD
+no contengan bytes dependientes de una página de código.
 
 ### Para compilar
 
@@ -168,6 +212,18 @@ Descomprime el ZIP y ejecuta `ltools.exe`, `ltools.cmd` o:
 .\ltools.ps1 doctor
 ```
 
+Para automatización o integración desde otra terminal usa el perfil CLI:
+
+```powershell
+.\ltools-cli.exe --help
+.\ltools-cli.ps1 storage tools
+```
+
+Si ejecutas windows\ltools.ps1 desde un checkout del proyecto, el lanzador
+busca automáticamente el ejecutable en el paquete Windows de dist y en el
+target Rust. Si no existe todavía, ejecuta windows\build.cmd; al fallar,
+el lanzador conserva el mensaje visible para poder diagnosticarlo.
+
 La release Windows no incluye scripts Bash, FUSE, Wine, Proton ni comandos
 Linux. Las capacidades no aplicables se muestran como tales.
 
@@ -178,6 +234,11 @@ Sin argumentos se abre el menú interactivo:
 ```bash
 ./ltools.sh
 ```
+
+El ejecutable normal (`ltools`, el AppImage principal o `ltools.exe`) sin
+argumentos abre el menú de su plataforma. El perfil CLI (`ltools-cli`,
+`ltools-cli.sh`, el AppImage CLI o `ltools-cli.exe`) sin argumentos muestra
+la ayuda y espera un comando explícito; nunca abre otra ventana.
 
 Rust es el backend normal y único. `--rust` se conserva como opción compatible
 del lanzador, pero ya no selecciona una implementación alternativa:
@@ -192,6 +253,9 @@ del lanzador, pero ya no selecciona una implementación alternativa:
 ./ltools.sh system status
 ./ltools.sh system services
 ./ltools.sh system processes
+./ltools.sh storage status
+./ltools.sh storage partitions
+./ltools.sh registry status
 ./ltools.sh rollback --plan /tmp/ltools-plan.tsv
 ./ltools.sh capabilities --format json
 ```
@@ -205,6 +269,8 @@ del lanzador, pero ya no selecciona una implementación alternativa:
 | `prefix` | Listar, inspeccionar, crear y migrar prefijos |
 | `defaults` | Rutas efectivas y defaults de las herramientas |
 | `system` | Servicios, procesos, daemons y journal |
+| `storage` | Discos, volúmenes, montajes y particiones nativas |
+| `registry` | Registro Windows o rutas de configuración Linux |
 | `doctor` | Dependencias, FUSE y diagnóstico del anfitrión |
 | `rollback` | Recuperar operaciones registradas en un plan |
 
@@ -217,6 +283,8 @@ Cada módulo ofrece ayuda propia:
 ./ltools.sh clean --help
 ./ltools.sh prefix --help
 ./ltools.sh system --help
+./ltools.sh storage tools
+./ltools.sh registry status
 ./ltools.sh --lang en --rust --help
 ```
 
@@ -233,6 +301,34 @@ El descriptor se incluye también en el tarball Linux, el AppImage y el ZIP
 portable Windows junto con `ltools-capabilities.schema.json`. Un frontend puede
 usar `entrypoints.menu` para abrir el menú y `terminal_integration` para saber
 qué protocolo necesita la terminal anfitriona.
+
+El descriptor específico incluye además `actions`: un catálogo directamente
+convertible en botones de acciones rápidas. Cada acción ofrece `id`, `label`,
+`shortLabel`, `group`, `description`, `executable`, `args`, `command`,
+`workingDirectory`, `interactive`, `requiresAdmin`, `confirmation`, `safe`,
+`supports` y `requiresCommands`. La terminal debe preferir `executable` +
+`args` (argv separado, sin interpretar una cadena de shell); `command` queda
+como representación legible y compatibilidad con hosts antiguos. Por ejemplo,
+un botón de auditoría puede usar `executable: "ltools"`, `args: ["audit"]`,
+`workingDirectory: "current"` y `terminal: true`. Así LTerminal solo tiene que
+resolver el ejecutable de la release instalada, comprobar los requisitos y
+abrir una pestaña con esos argumentos.
+
+Las acciones marcadas como `safe: true` son consultas o previsualizaciones. Las
+acciones que puedan cambiar el sistema deben declarar confirmación y, cuando
+proceda, ofrecer `--dry-run`; la terminal no debe ocultar ni elevar comandos
+por su cuenta. `requiresCommands` permite ocultar o marcar un botón cuando la
+dependencia concreta no está disponible, sin convertir LTools en una tienda.
+
+El flujo recomendado para LTerminal es: leer
+`distribution/ltools-project.json` desde el catálogo de proyectos, descargar
+la release estable indicada para el sistema, localizar `ltools-terminal.json`
+junto al ejecutable y convertir `actions` en botones. El botón debe ejecutar
+`executable` con `args`, conservar `workingDirectory: "current"` y mostrar la
+salida en una pestaña. El descriptor se genera en cada build, por lo que en
+Windows ya contiene `ltools.exe` y solo acciones nativas Windows; en Linux
+contiene `ltools` y las acciones Linux disponibles. No hace falta mantener un
+segundo catálogo manual ni modificar el JSON cuando cambie una ruta local.
 
 Para una integración directa basta con distribuir también
 `ltools-terminal.json`; es la versión reducida del contrato destinada única y
@@ -292,6 +388,41 @@ Siempre se pide confirmación. Las acciones del sistema requieren `sudo` cuando
 corresponde; las consultas no modifican nada. En el menú se encuentran en
 «Gestionar servicios, procesos y journal», junto con filtros interactivos,
 dependencias y exportación TSV/JSON.
+
+## Discos, particiones y configuración nativa
+
+El menú muestra estas funciones solo con los nombres y herramientas de la
+plataforma actual. En Linux:
+
+```bash
+./ltools.sh storage status
+./ltools.sh storage partitions
+./ltools.sh storage tools
+./ltools.sh registry status
+./ltools.sh registry paths
+```
+
+`storage partitions` usa `lsblk` como inventario base y añade `parted -l` si
+está disponible; `gparted` se identifica como opción gráfica, pero LTools no
+lo abre ni modifica particiones automáticamente. Si falta una herramienta
+imprescindible, el módulo informa de la alternativa o permite una instalación
+puntual confirmada mediante `doctor --install`.
+
+En Windows, el mismo comando usa PowerShell y las herramientas nativas:
+
+```powershell
+.\ltools.exe storage status
+.\ltools.exe storage partitions
+.\ltools.exe storage tools
+.\ltools.exe registry status
+.\ltools.exe registry query --key HKCU\Software
+.\ltools.exe registry export --key HKCU\Software --out C:\Temp\ltools.reg
+```
+
+Las consultas del Registro son de solo lectura. `export` crea un respaldo
+`.reg`; no importa claves ni cambia el Registro. LTools no usa `systemctl`,
+`parted` ni rutas Wine en el ejecutable Windows, y tampoco usa `sc.exe`,
+`diskpart` ni `reg.exe` en el ejecutable Linux.
 
 El AppImage principal es autónomo. Al abrirlo sin argumentos, desde el gestor de
 archivos o desde otra terminal, busca un emulador de terminal del sistema, abre
@@ -385,7 +516,35 @@ La build Linux ejecuta rustfmt, Clippy, tests Rust, sintaxis Bash, contratos,
 compilación release, tarball, AppImage, smoke, E2E de migración/rollback y E2E
 de menús y funciones. También valida AppStream, FUSE, idiomas, gestores de
 paquetes, duplicados y las rutas efectivas del ecosistema Wine. No ejecuta
-binarios Windows mediante Wine.
+binarios Windows mediante Wine salvo que se active explícitamente
+`--windows-wine`.
+
+`dist/` es staging local: contiene logs, tiempos, informes y salidas de trabajo.
+`release/` es la carpeta canónica de publicación: el builder copia allí los
+artefactos finales sin mezclar código Linux y Windows. Tras ejecutar ambos
+builders, contiene los AppImage Linux, los `.exe` y ZIP Windows, los perfiles
+CLI, los descriptores JSON, sus esquemas y `ltools-release.json`.
+
+Validación Windows opcional desde la misma build Linux:
+
+```bash
+./build.sh --windows-wine
+./build.sh --windows-wine --windows-wine-runner "$HOME/.local/share/umu/compatibilitytools/UMU-Latest/files/bin/wine"
+```
+
+Esta etapa compila `x86_64-pc-windows-gnu`, comprueba que el runner puede abrir
+una consola Windows y ejecuta la misma superficie verificable del ejecutable:
+versión, ayuda, capacidades JSON, rutas por defecto y menú. Usa un prefijo
+temporal aislado, registra tiempos y salida en el log principal y deja una
+copia de validación en `dist/windows-wine/`. El `.exe` generado allí sirve para
+probar la build; la release oficial Windows sigue siendo la producida por
+`windows/build.ps1` con MSVC.
+
+En una ejecución interactiva sin argumentos, el builder pregunta si también se
+quiere activar esta etapa. `--windows-wine-prefix` permite usar un prefijo
+concreto, y `--windows-wine-install-mono` permite preparar Wine Mono cuando el
+runner no lo incluye. LTools no necesita Mono: se ofrece únicamente para
+validar el entorno de otras aplicaciones Windows.
 
 La salida Linux ofrece tres entregables de uso:
 
@@ -407,12 +566,31 @@ Opciones frecuentes:
 
 ```bash
 ./build.sh --clean --output /tmp/ltools-dist
+./build.sh --release-dir /tmp/ltools-release
 ./build.sh --appimage --no-package
 ./build.sh --non-interactive --no-smoke --no-e2e
 ./build.sh --appimage --require-fuse
 ```
 
 El builder Windows está en `windows/build.ps1` y usa MSVC por defecto:
+
+### Validación Windows desde Linux con Wine/Proton
+
+Para compilar el target GNU y ejecutar el ejecutable Windows en un prefijo
+aislado, usa:
+
+```bash
+./tests/linux/windows-wine.sh
+```
+
+El comprobador prioriza UMU-Wine, prueba la consola, el ejecutable, el JSON,
+defaults y el menú, y elimina el prefijo temporal al terminar. También acepta
+`--runner RUTA`, `--prefix RUTA`, `--output DIR`, `--keep-prefix`,
+`--no-tests`, `--fast`, `--offline`, `--jobs N` y `--install-mono`. Wine Mono no
+se instala por defecto porque LTools no usa .NET; esa opción solo prepara el
+prefijo para probar software Windows que sí lo necesite. Este flujo es una
+validación desde Linux; la release oficial continúa compilándose con el builder
+nativo Windows.
 
 ### Descarga desde GitHub y manifiesto de release
 
@@ -439,15 +617,15 @@ desde cualquier binario release de LTools:
 ```bash
 VERSION="$(sed -n 's/^version = "\([^" ]*\)"/\1/p' rust/Cargo.toml | head -n1)"
 ./ltools.sh release-manifest \
-  --output dist/ltools-release.json \
+  --output release/ltools-release.json \
   --repository Darkeiser003/Tools \
   --tag "v$VERSION" \
-  --artifacts-dir dist \
-  --artifacts-dir dist/windows
+  --artifacts-dir release
 ```
 
-Sube a la release de GitHub los artefactos y `dist/ltools-release.json` con el
-nombre exacto `ltools-release.json`. La terminal puede leer primero el descriptor
+Sube a la release de GitHub todos los archivos publicables de `release/`,
+incluido `release/ltools-release.json` con el nombre exacto
+`ltools-release.json`. La terminal puede leer primero el descriptor
 del proyecto, seleccionar el artefacto apropiado para el sistema y verificar el
 SHA-256 antes de ofrecer la instalación. El descriptor de integración de
 terminal sigue siendo opcional y separado.
@@ -459,11 +637,15 @@ Para cambiar de repositorio o de etiqueta sin editar archivos, usa
 .\windows\build.ps1
 .\windows\build.ps1 -Fast
 .\windows\build.ps1 -Force -NoRun
+.\windows\build.ps1 -ReleaseOutput .\release
 .\windows\build.ps1 -Target x86_64-pc-windows-gnu
 ```
 
 Mantiene su estado incremental en `dist/windows/.build-state.json`, separa el
-target en `rust/target/windows` y genera un ZIP portable por arquitectura.
+target en `rust/target/windows`, genera un ZIP portable por arquitectura y
+publica el `.exe`, el perfil CLI, el ZIP y los JSON en `release/`. `-Output`
+controla el staging Windows y `-ReleaseOutput` la carpeta que se puede subir a
+GitHub.
 
 ## Arquitectura
 
@@ -474,13 +656,17 @@ El proyecto mantiene dos capas compatibles:
 ├── ltools.sh                 Lanzador compatible del backend Rust
 ├── rust/
 │   ├── Cargo.toml            Backend nativo y metadata de la aplicación
-│   └── src/                  Núcleo compartido y adaptadores por plataforma
-│       └── platform/         Implementaciones Linux y Windows aisladas
+│   └── src/                  Núcleo compartido y módulos funcionales
+│       ├── platform/         Capacidades, privilegios e instalación por plataforma
+│       ├── storage/          Discos y particiones: Linux/Windows separados
+│       └── registry/         Configuración: Linux/Windows separados
 ├── platform/
 │   └── linux/
 │       └── build.sh          Builder Linux/AppImage
 ├── appimage/                 AppRun, desktop, icono y metadata AppStream
 ├── windows/                  Builder, lanzadores y tests nativos Windows
+├── release/                  Artefactos publicables regenerables (ignorado)
+├── dist/                     Staging, logs y salidas locales (ignorado)
 ├── tests/                    Contratos y pruebas
 │   └── linux/                Smoke y E2E Linux/AppImage
 └── build.sh                  Lanzador compatible del builder Linux
@@ -565,10 +751,18 @@ En Windows nativo:
 .\windows\build.ps1 -Force
 ```
 
+El ejecutable Windows es nativo y no comparte los detectores Linux: `games`
+inspecciona Steam, Epic Games, Ubisoft Connect, EA app, itch.io, Battle.net,
+Rockstar, GOG y Xbox/Microsoft Store mediante rutas y manifiestos Windows.
+`prefix` se conserva como comando reconocido para devolver una explicación,
+pero no busca ni migra prefijos Wine/Proton. `defaults` muestra las ubicaciones
+nativas de esos lanzadores.
+
 El smoke y la E2E Windows están en `windows/tests/` y prueban el ejecutable,
-informes, copia verificada, planes, listado y papelera nativa. Deben ejecutarse
-en Windows; el pipeline Linux solo compila/verifica estáticamente el target
-Windows y no invoca Wine.
+el contrato de capacidades, el inventario nativo, informes, planes y acciones
+del sistema. Deben ejecutarse en Windows. Desde Linux, la compilación y prueba
+aislada opcional bajo Wine/Proton se solicita con `./build.sh --windows-wine`;
+usa un prefijo temporal y no activa la lógica Linux de prefijos.
 
 ## Seguridad y límites
 
