@@ -260,12 +260,32 @@ for arg in "$@"; do
 done
 set -- "${ARGS[@]}"
 
-# El perfil AppImage es autónomo: sin argumentos siempre solicita una ventana
-# de terminal propia, incluso si se lanzó desde otra terminal. Se evita la
-# recursión con una variable de entorno; AppRun-cli y las integraciones pasan
-# explícitamente LTOOLS_NO_AUTO_TERMINAL o el comando `menu`.
-if [[ "$#" -eq 0 && "${LTOOLS_TERMINAL_LAUNCH:-0}" != 1 &&
+# El perfil gráfico es autónomo: sin argumentos intenta primero la ventana
+# nativa de Rust. Si GTK no está disponible o no hay sesión gráfica, se usa
+# la terminal externa como fallback. AppRun-cli y las integraciones pasan
+# explícitamente LTOOLS_NO_AUTO_TERMINAL o un comando.
+if [[ "$#" -eq 0 && ( "${LTOOLS_DISABLE_GUI:-0}" == 1 || "${LTOOLS_TERMINAL:-auto}" != auto ) &&
+    "${LTOOLS_TERMINAL_LAUNCH:-0}" != 1 &&
     "${LTOOLS_NO_AUTO_TERMINAL:-0}" != 1 ]]; then
+    launch_menu_in_terminal
+    exit $?
+fi
+if [[ "$#" -eq 0 && "${LTOOLS_DISABLE_GUI:-0}" != 1 &&
+    "${LTOOLS_TERMINAL:-auto}" == auto &&
+    "${LTOOLS_TERMINAL_LAUNCH:-0}" != 1 &&
+    "${LTOOLS_NO_AUTO_TERMINAL:-0}" != 1 ]]; then
+    gui_log="${LTOOLS_GUI_LOG:-${LTOOLS_LAUNCH_LOG:-/tmp/ltools-gui.log}}"
+    mkdir -p -- "$(dirname -- "$gui_log")" 2>/dev/null || gui_log="/tmp/ltools-gui.log"
+    printf '[%s] intentando GUI nativa de LTools\n' "$(date --iso-8601=seconds 2>/dev/null || date)" >>"$gui_log"
+    LTOOLS_GUI_REQUIRED=1 "$BACKEND" >>"$gui_log" 2>&1
+    gui_status=$?
+    if [[ "$gui_status" -eq 0 ]]; then
+        printf 'LTools se cerró correctamente.\n'
+        printf 'Registro GUI: %s\n' "$gui_log"
+        exit 0
+    fi
+    printf '[%s] GUI no disponible: código=%s; se activa fallback de terminal\n' \
+        "$(date --iso-8601=seconds 2>/dev/null || date)" "$gui_status" >>"$gui_log"
     launch_menu_in_terminal
     exit $?
 fi

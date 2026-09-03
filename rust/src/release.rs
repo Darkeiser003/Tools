@@ -5,9 +5,10 @@
 
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::fs::{self, File};
-use std::io::Read;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{common, i18n, VERSION};
 
@@ -50,8 +51,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         fs::create_dir_all(parent)
             .map_err(|e| format!("no se pudo crear {}: {e}", parent.display()))?;
     }
-    fs::write(&output, json)
-        .map_err(|e| format!("no se pudo escribir {}: {e}", output.display()))?;
+    write_atomic(&output, &json)?;
     println!("Manifiesto de release: {}", output.display());
     println!("Artefactos incluidos: {}", artifacts.len());
     for artifact in &artifacts {
@@ -60,6 +60,64 @@ pub fn run(args: &[String]) -> Result<(), String> {
             artifact.platform, artifact.kind, artifact.filename
         );
     }
+    Ok(())
+}
+
+/// Genera el fichero de comprobaciones que se publica junto a la release.
+/// Solo considera ficheros regulares directamente dentro de la carpeta de
+/// publicación, que es el formato plano usado por GitHub Releases.
+pub fn checksums(args: &[String]) -> Result<(), String> {
+    let output = option(args, "--output")
+        .map(PathBuf::from)
+        .ok_or_else(|| "release-checksums requiere --output FICHERO".to_string())?;
+    let dirs = repeated_options(args, "--artifacts-dir");
+    if dirs.is_empty() {
+        return Err("release-checksums requiere al menos un --artifacts-dir".into());
+    }
+    let mut files = BTreeMap::new();
+    for directory in dirs {
+        let path = Path::new(&directory);
+        if !path.is_dir() {
+            return Err(format!(
+                "no existe la carpeta de artefactos: {}",
+                path.display()
+            ));
+        }
+        for entry in
+            fs::read_dir(path).map_err(|e| format!("no se pudo leer {}: {e}", path.display()))?
+        {
+            let entry = entry
+                .map_err(|e| format!("no se pudo leer una entrada de {}: {e}", path.display()))?;
+            let file = entry.path();
+            if !file.is_file() {
+                continue;
+            }
+            let name = file_name(&file)?;
+            if name == "SHA256SUMS.txt"
+                || name == "SHA256SUMS.txt.sig"
+                || name.ends_with(".tmp")
+                || name.ends_with(".bak")
+            {
+                continue;
+            }
+            let hash = sha256_file(&file)?;
+            if files.insert(name.clone(), hash).is_some() {
+                return Err(format!("nombre de artefacto duplicado: {name}"));
+            }
+        }
+    }
+    if files.is_empty() {
+        return Err("no se encontraron ficheros para SHA256SUMS.txt".into());
+    }
+    let mut contents = String::new();
+    for (name, hash) in files {
+        contents.push_str(&hash);
+        contents.push_str("  ");
+        contents.push_str(&name);
+        contents.push('\n');
+    }
+    write_atomic(&output, &contents)?;
+    println!("SHA256SUMS generado: {}", output.display());
     Ok(())
 }
 
@@ -87,7 +145,7 @@ fn collect_artifacts(
                 continue;
             }
             let Some((platform, architecture, kind, executable)) =
-                classify(entry.file_name().to_string_lossy().as_ref())
+                classify(entry.file_name().to_string_lossy().as_ref(), VERSION)
             else {
                 continue;
             };
@@ -117,8 +175,17 @@ fn collect_artifacts(
     Ok(artifacts.into_values().collect())
 }
 
-fn classify(filename: &str) -> Option<(&'static str, String, &'static str, bool)> {
+fn classify(
+    filename: &str,
+    expected_version: &str,
+) -> Option<(&'static str, String, &'static str, bool)> {
     if !filename.starts_with("ltools-") || filename == "ltools-release.json" {
+        return None;
+    }
+    // Una carpeta de publicación puede conservar artefactos de versiones
+    // anteriores. Nunca deben entrar silenciosamente en el manifiesto actual.
+    let version_prefix = format!("ltools-{expected_version}-");
+    if !filename.starts_with(&version_prefix) {
         return None;
     }
     let parts: Vec<&str> = filename.split('-').collect();
@@ -296,51 +363,158 @@ fn json_escape(value: &str) -> String {
         .replace('\r', "\\r")
 }
 
+/// Escribe un manifiesto completo antes de sustituir el anterior. En Linux la
+/// sustitución es atómica; Windows no reemplaza un archivo existente con
+/// `rename`, por lo que se conserva temporalmente el anterior y se restaura si
+/// el segundo paso falla. Así un corte durante la publicación no deja un JSON
+/// truncado que parezca una release válida.
+fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("ltools-release.json");
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let temporary = parent.join(format!(".{name}.tmp-{}-{nonce}", std::process::id()));
+    #[cfg(windows)]
+    let backup = parent.join(format!(".{name}.bak-{}-{nonce}", std::process::id()));
+
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|error| format!("no se pudo crear {}: {error}", temporary.display()))?;
+        file.write_all(contents.as_bytes())
+            .map_err(|error| format!("no se pudo escribir {}: {error}", temporary.display()))?;
+        file.sync_all()
+            .map_err(|error| format!("no se pudo confirmar {}: {error}", temporary.display()))?;
+
+        #[cfg(windows)]
+        {
+            let had_previous = path.exists();
+            if had_previous {
+                fs::rename(path, &backup).map_err(|error| {
+                    format!("no se pudo reservar el manifiesto anterior: {error}")
+                })?;
+            }
+            if let Err(error) = fs::rename(&temporary, path) {
+                if had_previous {
+                    let _ = fs::rename(&backup, path);
+                }
+                return Err(format!("no se pudo publicar {}: {error}", path.display()));
+            }
+            if had_previous {
+                let _ = fs::remove_file(&backup);
+            }
+        }
+        #[cfg(not(windows))]
+        fs::rename(&temporary, path)
+            .map_err(|error| format!("no se pudo publicar {}: {error}", path.display()))?;
+
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+        #[cfg(windows)]
+        if !path.exists() && backup.exists() {
+            let _ = fs::rename(&backup, path);
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
-    use super::classify;
+    use super::{classify, write_atomic};
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn clasifica_assets_linux_y_windows() {
         assert_eq!(
-            classify(concat!(
-                "ltools-",
-                env!("CARGO_PKG_VERSION"),
-                "-linux-x86_64.AppImage"
-            )),
+            classify(
+                concat!(
+                    "ltools-",
+                    env!("CARGO_PKG_VERSION"),
+                    "-linux-x86_64.AppImage"
+                ),
+                env!("CARGO_PKG_VERSION")
+            ),
             Some(("linux", "x86_64".into(), "appimage", true))
         );
         assert_eq!(
-            classify(concat!(
-                "ltools-",
-                env!("CARGO_PKG_VERSION"),
-                "-linux-x86_64-cli.AppImage"
-            )),
+            classify(
+                concat!(
+                    "ltools-",
+                    env!("CARGO_PKG_VERSION"),
+                    "-linux-x86_64-cli.AppImage"
+                ),
+                env!("CARGO_PKG_VERSION")
+            ),
             Some(("linux", "x86_64".into(), "appimage-cli", true))
         );
         assert_eq!(
-            classify(concat!(
-                "ltools-",
-                env!("CARGO_PKG_VERSION"),
-                "-windows-x86_64.exe"
-            )),
+            classify(
+                concat!("ltools-", env!("CARGO_PKG_VERSION"), "-windows-x86_64.exe"),
+                env!("CARGO_PKG_VERSION")
+            ),
             Some(("windows", "x86_64".into(), "exe", true))
         );
         assert_eq!(
-            classify(concat!(
-                "ltools-",
-                env!("CARGO_PKG_VERSION"),
-                "-windows-x86_64-cli.exe"
-            )),
+            classify(
+                concat!(
+                    "ltools-",
+                    env!("CARGO_PKG_VERSION"),
+                    "-windows-x86_64-cli.exe"
+                ),
+                env!("CARGO_PKG_VERSION")
+            ),
             Some(("windows", "x86_64".into(), "exe-cli", true))
         );
         assert_eq!(
-            classify(concat!(
-                "ltools-",
-                env!("CARGO_PKG_VERSION"),
-                "-windows-x86_64.zip"
-            )),
+            classify(
+                concat!("ltools-", env!("CARGO_PKG_VERSION"), "-windows-x86_64.zip"),
+                env!("CARGO_PKG_VERSION")
+            ),
             Some(("windows", "x86_64".into(), "portable-zip", false))
         );
+        assert_eq!(
+            classify(
+                "ltools-0.0.0-linux-x86_64.AppImage",
+                env!("CARGO_PKG_VERSION")
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn manifiesto_se_publica_completo_y_se_puede_reemplazar() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ltools-release-test-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).unwrap();
+        let output = directory.join("manifest.json");
+        write_atomic(&output, "{\"version\":1}\n").unwrap();
+        assert_eq!(fs::read_to_string(&output).unwrap(), "{\"version\":1}\n");
+        write_atomic(&output, "{\"version\":2}\n").unwrap();
+        assert_eq!(fs::read_to_string(&output).unwrap(), "{\"version\":2}\n");
+        assert_eq!(
+            fs::read_dir(&directory)
+                .unwrap()
+                .filter_map(Result::ok)
+                .count(),
+            1
+        );
+        fs::remove_dir_all(directory).unwrap();
     }
 }

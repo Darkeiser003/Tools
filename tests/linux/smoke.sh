@@ -55,6 +55,17 @@ ok 'perfil CLI sin argumentos muestra ayuda sin abrir menú'
 CLI_WRAPPER_OUTPUT="$("$ROOT_DIR/ltools-cli.sh")"
 grep -Fq 'Uso: ltools' <<<"$CLI_WRAPPER_OUTPUT" || die 'ltools-cli.sh sin argumentos no mostró la ayuda'
 ok 'lanzador CLI Linux conserva el modo sin argumentos'
+if command -v xvfb-run >/dev/null 2>&1; then
+    if timeout 10 xvfb-run -a true >/dev/null 2>&1; then
+        GUI_OUTPUT="$(timeout 20 xvfb-run -a env GDK_BACKEND=x11 LTOOLS_GUI_SMOKE=1 LTOOLS_GUI_REQUIRED=1 HOME="$TMP_DIR/gui-home" XDG_STATE_HOME="$TMP_DIR/gui-state" "$BIN" 2>&1)" ||
+            die 'la GUI Rust no pudo abrir y cerrar una ventana de prueba'
+        ok 'GUI Rust Linux abre y cierra una ventana aislada'
+    else
+        skip 'GUI Rust Linux: xvfb-run está instalado, pero Xvfb no puede crear un display aislado'
+    fi
+else
+    skip 'GUI Rust Linux: xvfb-run no está disponible'
+fi
 CAPABILITIES_JSON="$($BIN capabilities --format json)"
 grep -Fq '"schema": "ltools-capabilities-v1"' <<<"$CAPABILITIES_JSON" ||
     die 'el contrato JSON de capacidades no se pudo generar'
@@ -102,7 +113,7 @@ grep -Fq '"exclusive_host_family": "lterminal"' <<<"$TERMINAL_JSON" ||
 grep -Fq 'WinSlim Terminal' <<<"$TERMINAL_JSON" ||
     die 'el descriptor de terminal no declara WinSlim Terminal'
 if command -v jq >/dev/null 2>&1; then
-    jq -e '(.actions | length >= 15) and all(.actions[]; .id and .executable and (.args | type == "array") and .terminal == true and .shell == "none" and (.supports | index("dry-run") != null))' \
+    jq -e '(.actions | length >= 20) and any(.actions[]; .id == "package-search") and any(.actions[]; .id == "package-install") and any(.actions[]; .id == "git-pull") and all(.actions[]; .id and .executable and (.args | type == "array") and .terminal == true and .shell == "none" and (.supports | index("dry-run") != null))' \
         <<<"$TERMINAL_JSON" >/dev/null || die 'las acciones declarativas no tienen el contrato esperado'
 fi
 ok 'descriptor JSON específico para terminales'
@@ -187,6 +198,23 @@ if [[ -n "$APPIMAGE_PATH" ]]; then
     fi
     ok "ejecución directa del AppImage; log: $DIRECT_LOG"
 
+    if command -v xvfb-run >/dev/null 2>&1; then
+        if timeout 10 xvfb-run -a true >/dev/null 2>&1; then
+            APPIMAGE_GUI_OUTPUT="$(timeout 30 xvfb-run -a env GDK_BACKEND=x11 \
+                LTOOLS_GUI_SMOKE=1 LTOOLS_GUI_REQUIRED=1 \
+                HOME="$TMP_DIR/appimage-gui-home" XDG_STATE_HOME="$TMP_DIR/appimage-gui-state" \
+                APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" 2>&1)" ||
+                die 'el AppImage normal no pudo abrir y cerrar su GUI sin argumentos'
+            grep -Fq 'LTools se cerró correctamente' <<<"$APPIMAGE_GUI_OUTPUT" ||
+                die 'el AppImage normal no confirmó el cierre limpio de la GUI'
+            ok 'AppImage normal abre y cierra su GUI sin argumentos'
+        else
+            skip 'GUI AppImage: Xvfb no puede crear un display aislado'
+        fi
+    else
+        skip 'GUI AppImage: xvfb-run no está disponible'
+    fi
+
     CLI_APPIMAGE_PATH="${APPIMAGE_PATH%.AppImage}-cli.AppImage"
     if [[ -x "$CLI_APPIMAGE_PATH" ]]; then
         CLI_APPIMAGE_OUTPUT="$(env APPIMAGE_EXTRACT_AND_RUN=1 timeout 30 "$CLI_APPIMAGE_PATH" 2>&1)" ||
@@ -222,7 +250,7 @@ EOF
     LTERMINAL_LAUNCH_LOG="$TMP_DIR/lterminal-launch.log"
     : > "$LTERMINAL_OUTPUT_FILE"
     env -u LTOOLS_NO_AUTO_TERMINAL -u LTOOLS_TERMINAL_LAUNCH \
-        LTOOLS_TERMINAL=lterminal \
+        LTOOLS_DISABLE_GUI=1 LTOOLS_TERMINAL=lterminal \
         HOME="$TMP_DIR/home-lterminal" XDG_STATE_HOME="$TMP_DIR/state-lterminal" \
         LTOOLS_LAUNCH_LOG="$LTERMINAL_LAUNCH_LOG" \
         LTOOLS_LTERMINAL="$LTERMINAL_STUB_DIR/lterminal" \
@@ -284,7 +312,7 @@ EOF
     # una barra invertida puede sacar el resto de las variables del entorno.
     set +e
     env -u LTOOLS_ALLOW_TERMINAL_FALLBACK -u LTOOLS_NO_AUTO_TERMINAL -u LTOOLS_TERMINAL_LAUNCH \
-        LTOOLS_TERMINAL=lterminal \
+        LTOOLS_DISABLE_GUI=1 LTOOLS_TERMINAL=lterminal \
         HOME="$TMP_DIR/home-incompatible" XDG_STATE_HOME="$TMP_DIR/state-incompatible" \
         LTOOLS_LAUNCH_LOG="$TMP_DIR/incompatible-lterminal-launch.log" \
         LTOOLS_LTERMINAL="$INCOMPATIBLE_LTERMINAL_DIR/lterminal" \
@@ -305,7 +333,7 @@ EOF
     FALLBACK_OUTPUT="$TMP_DIR/explicit-fallback-output.log"
     set +e
     env -u LTOOLS_NO_AUTO_TERMINAL -u LTOOLS_TERMINAL_LAUNCH \
-        LTOOLS_ALLOW_TERMINAL_FALLBACK=1 \
+        LTOOLS_DISABLE_GUI=1 LTOOLS_ALLOW_TERMINAL_FALLBACK=1 \
         LTOOLS_TERMINAL=x-terminal-emulator \
         HOME="$TMP_DIR/home-fallback" XDG_STATE_HOME="$TMP_DIR/state-fallback" \
         LTOOLS_LAUNCH_LOG="$TMP_DIR/fallback-launch.log" \
@@ -329,7 +357,7 @@ EOF
     # still exercised, but extraction mode prevents a terminal child from
     # keeping the runtime's captured pipe open on some desktop environments.
     env -u LTOOLS_NO_AUTO_TERMINAL -u LTOOLS_TERMINAL_LAUNCH \
-        HOME="$TMP_DIR/home" XDG_STATE_HOME="$TMP_DIR/state" LTOOLS_LAUNCH_LOG="$AUTO_LAUNCH_LOG" \
+        LTOOLS_DISABLE_GUI=1 HOME="$TMP_DIR/home" XDG_STATE_HOME="$TMP_DIR/state" LTOOLS_LAUNCH_LOG="$AUTO_LAUNCH_LOG" \
         LTOOLS_LTERMINAL="$INCOMPATIBLE_LTERMINAL_DIR/lterminal" LTOOLS_TERMINAL=auto \
         PATH="$TERMINAL_STUB_DIR:$PATH" LTOOLS_TERMINAL_STUB_LOG="$TERMINAL_STUB_LOG" \
         APPIMAGE_EXTRACT_AND_RUN=1 timeout 10 "$APPIMAGE_PATH" >"$AUTO_TERMINAL_OUTPUT_FILE" 2>&1 &

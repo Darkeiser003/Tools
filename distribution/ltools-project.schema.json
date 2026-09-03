@@ -6,7 +6,7 @@
   "type": "object",
   "required": [
     "$schema", "schema", "id", "name", "repository", "homepage", "releases",
-    "latest_release_api", "release_manifest", "license", "integration", "platforms", "verification"
+    "latest_release_api", "release_manifest", "license", "integration", "distribution", "platforms", "verification"
   ],
   "properties": {
     "$schema": { "type": "string", "format": "uri" },
@@ -22,11 +22,33 @@
     "license": { "type": "string", "minLength": 1 },
     "integration": {
       "type": "object",
-      "required": ["optional", "descriptor", "standalone_releases_require_it"],
+      "required": ["optional", "descriptor", "hosts", "standalone_releases_require_it"],
       "properties": {
         "optional": { "const": true },
         "descriptor": { "const": "ltools-terminal.json" },
+        "hosts": { "const": ["LTerminal", "WinSlim Terminal"] },
         "standalone_releases_require_it": { "const": false }
+      },
+      "additionalProperties": false
+    },
+    "distribution": {
+      "type": "object",
+      "required": ["source", "stable_only", "manifest", "verification", "update_strategy", "keep_previous", "allowed_asset_hosts"],
+      "properties": {
+        "source": { "const": "github-releases" },
+        "stable_only": { "const": true },
+        "manifest": { "const": "ltools-release.json" },
+        "verification": { "const": "sha256" },
+        "update_strategy": { "const": "stage-verify-promote" },
+        "keep_previous": { "const": true },
+        "allowed_asset_hosts": {
+          "const": [
+            "github.com",
+            "objects.githubusercontent.com",
+            "release-assets.githubusercontent.com",
+            "github-releases.githubusercontent.com"
+          ]
+        }
       },
       "additionalProperties": false
     },
@@ -41,11 +63,22 @@
     },
     "verification": {
       "type": "object",
-      "required": ["hash_algorithm", "manifest_required", "signature_supported"],
+      "required": ["hash_algorithm", "manifest_required", "signature_supported", "signature"],
       "properties": {
         "hash_algorithm": { "const": "sha256" },
         "manifest_required": { "const": true },
-        "signature_supported": { "type": "boolean" }
+        "signature_supported": { "const": true },
+        "signature": {
+          "type": "object",
+          "required": ["algorithm", "manifest", "detached_signature", "encoding"],
+          "properties": {
+            "algorithm": { "const": "ed25519" },
+            "manifest": { "const": "SHA256SUMS.txt" },
+            "detached_signature": { "const": "SHA256SUMS.txt.sig" },
+            "encoding": { "const": "base64" }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     }
@@ -60,11 +93,15 @@
         "asset_patterns": { "type": "object", "minProperties": 1, "additionalProperties": { "type": "string" } },
         "install": {
           "type": "object",
-          "required": ["portable", "recommended_directory", "executable"],
+          "required": ["portable", "recommended_directory", "executable", "entrypoint", "gui_entrypoint", "cli_entrypoint", "update_strategy"],
           "properties": {
             "portable": { "const": true },
             "recommended_directory": { "type": "string", "minLength": 1 },
-            "executable": { "const": true }
+            "executable": { "const": true },
+            "entrypoint": { "type": "string", "minLength": 1 },
+            "gui_entrypoint": { "type": "string", "minLength": 1 },
+            "cli_entrypoint": { "type": "string", "minLength": 1 },
+            "update_strategy": { "const": "stage-verify-promote" }
           },
           "additionalProperties": false
         }

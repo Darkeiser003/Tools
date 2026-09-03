@@ -151,7 +151,11 @@ try {
     if ($launcherRows -match 'Wine|Lutris|Heroic|UMU') {
         throw 'Las filas del inventario Windows incluyen detectores Linux/Wine.'
     }
-    if ($launcherRows -notmatch 'Steam\tmanifest') {
+    # PowerShell aplica `-notmatch` elemento a elemento cuando el operando es
+    # un array: bastaría con que existiera otra fila para entrar aquí aunque
+    # el manifiesto Steam sí estuviera presente. La comprobación debe preguntar
+    # si existe al menos una coincidencia, no si todas las filas coinciden.
+    if (-not @($launcherRows | Where-Object { $_ -match '^Steam\tmanifest\t' }).Count) {
         throw 'El inventario Windows no recogió el manifiesto nativo de Steam.'
     }
     if ($gamesOutput -notmatch 'Auditoría nativa de juegos Windows') {

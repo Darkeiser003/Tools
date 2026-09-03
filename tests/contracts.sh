@@ -30,12 +30,14 @@ ok() { printf '  OK    %s\n' "$1"; }
 [[ -f "$ROOT_DIR/rust/src/registry/linux.rs" ]] || fail 'falta registro Linux separado'
 [[ -f "$ROOT_DIR/rust/src/registry/windows.rs" ]] || fail 'falta registro Windows separado'
 [[ -x "$ROOT_DIR/tests/linux/windows-wine.sh" ]] || fail 'falta el smoke Windows bajo Wine/Proton'
+[[ -x "$ROOT_DIR/tests/linux/software-git-e2e.sh" ]] || fail 'falta la E2E de stores y Git'
 [[ -f "$ROOT_DIR/appimage/org.ltools.LTools.metainfo.xml.in" ]] || fail 'falta el manifiesto AppStream'
 [[ -f "$ROOT_DIR/appimage/ltools-capabilities.schema.json" ]] || fail 'falta el esquema JSON de capacidades'
 [[ -f "$ROOT_DIR/appimage/ltools-terminal.schema.json" ]] || fail 'falta el esquema JSON de integración de terminal'
 [[ -f "$ROOT_DIR/distribution/ltools-project.json" ]] || fail 'falta el descriptor declarativo del proyecto'
 [[ -f "$ROOT_DIR/distribution/ltools-project.schema.json" ]] || fail 'falta el esquema del descriptor de proyecto'
 [[ -f "$ROOT_DIR/distribution/ltools-release.schema.json" ]] || fail 'falta el esquema del manifiesto de release'
+[[ -f "$ROOT_DIR/docs/lterminal-integration.md" ]] || fail 'falta el contrato documentado de integración con LTerminal'
 [[ -x "$ROOT_DIR/appimage/AppRun-cli" ]] || fail 'falta el AppRun del perfil CLI'
 [[ -f "$ROOT_DIR/appimage/ltools-cli.desktop" ]] || fail 'falta el descriptor del perfil CLI'
 grep -Fq 'appstreamcli validate --no-net' "$ROOT_DIR/platform/linux/build.sh" || fail 'build Linux sin validación explícita AppStream'
@@ -83,6 +85,8 @@ grep -Fq 'install_package' "$ROOT_DIR/rust/src/platform/linux.rs" || fail 'catá
 grep -Fq 'install_package' "$ROOT_DIR/rust/src/platform/windows.rs" || fail 'catálogo Windows sin metadatos de instalación'
 grep -Fq 'tests/encoding.sh' "$ROOT_DIR/platform/linux/build.sh" || fail 'build sin auditoría de codificaciones'
 grep -Fq 'tests/release-e2e.sh' "$ROOT_DIR/platform/linux/build.sh" || fail 'build sin E2E de publicación release'
+grep -Fq 'release_e2e_args+=(--no-package)' "$ROOT_DIR/platform/linux/build.sh" || fail 'build sin propagar --no-package a la E2E release'
+grep -Fq 'release_e2e_args+=(--no-appimage)' "$ROOT_DIR/platform/linux/build.sh" || fail 'build sin propagar --no-appimage a la E2E release'
 grep -Fq 'docker-compose-primary-installer' "$ROOT_DIR/rust/src/platform/linux.rs" || fail 'catálogo Linux sin instalador primario de Compose'
 grep -Fq 'kubernetes-primary-client-installer' "$ROOT_DIR/rust/src/platform/linux.rs" || fail 'catálogo Linux sin instalador primario de Kubernetes'
 grep -Fq 'Docker.DockerCompose' "$ROOT_DIR/rust/src/platform/windows.rs" || fail 'catálogo Windows sin instalador primario de Compose'
@@ -119,6 +123,10 @@ else
     ok 'catálogo del anfitrión sin módulos ajenos al alcance'
 fi
 grep -Fq 'ltools-terminal-integration-v1' "$ROOT_DIR/rust/src/compat.rs" || fail 'backend sin descriptor JSON específico de terminal'
+grep -Fq 'package-search' "$ROOT_DIR/rust/src/compat.rs" || fail 'descriptor sin acción de búsqueda de paquetes'
+grep -Fq 'git-pull' "$ROOT_DIR/rust/src/compat.rs" || fail 'descriptor sin acción Git'
+grep -Fq 'mod software;' "$ROOT_DIR/rust/src/main.rs" || fail 'backend sin módulo Rust de software'
+grep -Fq 'mod git;' "$ROOT_DIR/rust/src/main.rs" || fail 'backend sin módulo Rust de Git'
 grep -Fq 'standalone_releases_require_it' "$ROOT_DIR/rust/src/compat.rs" || fail 'descriptor sin independencia del host de terminal'
 grep -Fq 'WinSlim Terminal' "$ROOT_DIR/rust/src/compat.rs" || fail 'descriptor sin host Windows WinSlim Terminal'
 grep -Fq 'requiresCommands' "$ROOT_DIR/rust/src/compat.rs" || fail 'descriptor sin requisitos declarativos de acciones'
@@ -130,6 +138,8 @@ grep -Fq 'capabilities --format json' "$ROOT_DIR/windows/build.ps1" || fail 'bui
 grep -Fq 'capabilities --format terminal-json' "$ROOT_DIR/platform/linux/build.sh" || fail 'build Linux sin descriptor JSON de terminal'
 grep -Fq 'capabilities --format terminal-json' "$ROOT_DIR/windows/build.ps1" || fail 'build Windows sin descriptor JSON de terminal'
 grep -Fq 'release-manifest' "$ROOT_DIR/platform/linux/build.sh" || fail 'build Linux sin manifiesto verificable de release'
+grep -Fq 'release-checksums' "$ROOT_DIR/platform/linux/build.sh" || fail 'build Linux sin SHA256SUMS reproducible'
+grep -Fq 'release-signature' "$ROOT_DIR/platform/linux/build.sh" || fail 'build Linux sin firma Ed25519'
 grep -Fq -- '--release-dir' "$ROOT_DIR/platform/linux/build.sh" || fail 'build Linux sin carpeta de publicación configurable'
 grep -Fq -- '--windows-wine' "$ROOT_DIR/platform/linux/build.sh" || fail 'build raíz sin opción Windows bajo Wine/Proton'
 grep -Fq 'windows-wine.sh' "$ROOT_DIR/platform/linux/build.sh" || fail 'pipeline sin etapa Windows bajo Wine/Proton'
@@ -149,13 +159,36 @@ else
     ok 'catálogo Windows sin herramientas Wine/Lutris/Heroic/UMU'
 fi
 grep -Fq 'release-manifest' "$ROOT_DIR/windows/build.ps1" || fail 'build Windows sin manifiesto verificable de release'
+grep -Fq 'release-checksums' "$ROOT_DIR/windows/build.ps1" || fail 'build Windows sin SHA256SUMS reproducible'
+grep -Fq 'release-signature' "$ROOT_DIR/windows/build.ps1" || fail 'build Windows sin firma Ed25519'
 grep -Fq 'ReleaseOutput' "$ROOT_DIR/windows/build.ps1" || fail 'build Windows sin carpeta de publicación configurable'
 grep -Fq 'Carpeta release Windows preparada' "$ROOT_DIR/windows/build.ps1" || fail 'build Windows sin publicación en release'
 grep -Fq 'sha256' "$ROOT_DIR/distribution/ltools-release.schema.json" || fail 'esquema de release sin SHA-256'
+grep -Fq 'ed25519' "$ROOT_DIR/distribution/ltools-project.json" || fail 'descriptor de proyecto sin firma Ed25519'
+grep -Fq 'SHA256SUMS.txt.sig' "$ROOT_DIR/distribution/ltools-project.schema.json" || fail 'esquema de proyecto sin firma separada'
 if command -v jq >/dev/null 2>&1; then
     jq -e '.schema == "ltools-project-v1" and .repository == "Darkeiser003/Tools" and .platforms.linux and .platforms.windows' \
         "$ROOT_DIR/distribution/ltools-project.json" >/dev/null \
         || fail 'descriptor declarativo del proyecto inválido'
+    jq -e '.verification.signature_supported == true and
+        .verification.signature.algorithm == "ed25519" and
+        .verification.signature.manifest == "SHA256SUMS.txt" and
+        .verification.signature.detached_signature == "SHA256SUMS.txt.sig"' \
+        "$ROOT_DIR/distribution/ltools-project.json" >/dev/null \
+        || fail 'descriptor declarativo sin contrato de firma Ed25519'
+    jq -e '.integration.hosts == ["LTerminal", "WinSlim Terminal"] and
+        .distribution.source == "github-releases" and
+        .distribution.update_strategy == "stage-verify-promote" and
+        .platforms.linux.install.entrypoint == "ltools" and
+        .platforms.windows.install.entrypoint == "ltools.exe"' \
+        "$ROOT_DIR/distribution/ltools-project.json" >/dev/null \
+        || fail 'descriptor declarativo sin flujo común de instalación/actualización'
+    jq -e '((.required | index("distribution")) != null) and
+        .properties.distribution and
+        .properties.integration.properties.hosts and
+        ."$defs".platform.properties.install.properties.entrypoint' \
+        "$ROOT_DIR/distribution/ltools-project.schema.json" >/dev/null \
+        || fail 'esquema de proyecto sin contrato de distribución/instalación'
     jq -e '.properties.schema.const == "ltools-release-v1" and .properties.hash_algorithm.const == "sha256"' \
         "$ROOT_DIR/distribution/ltools-release.schema.json" >/dev/null \
         || fail 'esquema del manifiesto de release inválido'
@@ -184,6 +217,14 @@ if rg -n '& \$Binary|LASTEXITCODE' "$ROOT_DIR/windows/tests" >/tmp/ltools-window
     fail 'los tests Windows conservan captura directa o LASTEXITCODE stale'
 else
     ok 'tests Windows sin runner de procesos frágil'
+fi
+grep -Fq "Where-Object { \$_ -match '^Steam\\tmanifest\\t' }" "$ROOT_DIR/windows/tests/smoke.ps1" \
+    || fail 'smoke Windows valida Steam con una comparación incorrecta sobre arrays'
+if rg -n '\$launcherRows -notmatch' "$ROOT_DIR/windows/tests/smoke.ps1" >/tmp/ltools-windows-array-match.txt 2>/dev/null; then
+    sed -n '1,20p' /tmp/ltools-windows-array-match.txt >&2
+    fail 'smoke Windows conserva una aserción -notmatch vulnerable en arrays'
+else
+    ok 'smoke Windows valida inventarios sin falsos negativos por arrays'
 fi
 grep -Fq 'ltools-cli.exe' "$ROOT_DIR/windows/build.ps1" || fail 'builder Windows no empaqueta el perfil CLI'
 grep -Fq 'exe-cli' "$ROOT_DIR/rust/src/release.rs" || fail 'manifiesto sin tipo de ejecutable CLI Windows'

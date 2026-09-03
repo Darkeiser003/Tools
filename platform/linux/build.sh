@@ -42,6 +42,7 @@ TESTS=1
 SMOKE=1
 E2E=1
 MENU_E2E=1
+SOFTWARE_GIT_E2E=1
 PACKAGE=1
 APPIMAGE=1
 APPIMAGE_REQUIRED=0
@@ -67,6 +68,9 @@ NO_LOG=0
 WINDOWS_WINE_ARTIFACT_DIR=""
 WINDOWS_WINE_ARTIFACT=""
 WINDOWS_WINE_LOG=""
+SIGNING_REQUIRED=0
+SIGNING_PRIVATE_KEY_FILE=""
+SIGNING_PUBLIC_KEY_FILE=""
 STEP_STARTED=$SECONDS
 STEP_ACTIVE=0
 # init_logging redirige stdout a tee; conserva antes el estado real de la
@@ -180,6 +184,8 @@ Opciones:
   --no-smoke           No ejecuta los smoke tests posteriores al empaquetado.
   --no-e2e             No ejecuta la prueba E2E aislada de migración/rollback.
   --no-menu-e2e        No ejecuta la E2E de menús y funciones con fixtures aislados.
+  --no-software-git-e2e
+                       No ejecuta la E2E aislada de stores y operaciones Git.
   --offline            Usa Cargo en modo offline.
   --windows-wine       Compila el target Windows y ejecuta sus pruebas con Wine/Proton.
   --no-windows-wine    Desactiva la etapa Windows bajo Wine/Proton.
@@ -196,6 +202,8 @@ Opciones:
   --require-fuse       Falla si el equipo no puede montar AppImages con FUSE.
   --output DIR         Directorio de salida (por defecto: ./dist).
   --release-dir DIR    Carpeta canónica de publicación (por defecto: ./release).
+  --require-signing    Exige claves Ed25519 y una firma válida para release/.
+  --allow-unsigned     Permite una release local sin firma aunque CI esté activo.
   --jobs N             Paralelismo de Cargo (por defecto: 2).
   --log FICHERO        Guarda la transcripción completa en esta ruta.
   --no-log             Desactiva el log persistente y la tabla de tiempos.
@@ -206,7 +214,8 @@ Opciones:
 
 La build AppImage genera un perfil terminal, un perfil CLI y
 ltools-terminal.json para integradores de terminal, además de
-ltools-release.json con los hashes SHA-256 de los artefactos encontrados.
+ltools-release.json, SHA256SUMS.txt y su firma Ed25519 separada cuando hay
+material de firma disponible.
 
 Sin opciones, en una terminal interactiva, permite elegir limpieza, perfil y
 validaciones. En CI o con cualquier opción explícita es no interactivo.
@@ -215,6 +224,73 @@ EOF
 
 require_command() {
     command -v "$1" >/dev/null 2>&1 || die "falta la herramienta «$1» en PATH"
+}
+
+load_signing_material() {
+    local config_home
+    if [[ -n "${LTOOLS_SIGNING_PRIVATE_KEY_FILE:-}" ]]; then
+        SIGNING_PRIVATE_KEY_FILE="$LTOOLS_SIGNING_PRIVATE_KEY_FILE"
+    elif [[ -n "${LTERMINAL_SIGNING_PRIVATE_KEY_FILE:-}" ]]; then
+        SIGNING_PRIVATE_KEY_FILE="$LTERMINAL_SIGNING_PRIVATE_KEY_FILE"
+    else
+        config_home="${LTOOLS_CONFIG_HOME:-${XDG_CONFIG_HOME:-${HOME:-$ROOT_DIR/.config}}}"
+        SIGNING_PRIVATE_KEY_FILE="$config_home/lterminal/release-signing-private.pem"
+    fi
+    if [[ -n "${LTOOLS_UPDATE_PUBLIC_KEY_FILE:-}" ]]; then
+        SIGNING_PUBLIC_KEY_FILE="$LTOOLS_UPDATE_PUBLIC_KEY_FILE"
+    elif [[ -n "${LTERMINAL_UPDATE_PUBLIC_KEY_FILE:-}" ]]; then
+        SIGNING_PUBLIC_KEY_FILE="$LTERMINAL_UPDATE_PUBLIC_KEY_FILE"
+    else
+        config_home="${LTOOLS_CONFIG_HOME:-${XDG_CONFIG_HOME:-${HOME:-$ROOT_DIR/.config}}}"
+        SIGNING_PUBLIC_KEY_FILE="$config_home/lterminal/release-signing-public.hex"
+    fi
+    if [[ "${LTOOLS_REQUIRE_SIGNING:-${LTERMINAL_REQUIRE_SIGNING:-${CI:-0}}}" =~ ^(1|true|yes)$ ]]; then
+        SIGNING_REQUIRED=1
+    fi
+    if [[ -n "${LTOOLS_ALLOW_UNSIGNED:-}" && "${LTOOLS_ALLOW_UNSIGNED}" =~ ^(1|true|yes)$ ]]; then
+        SIGNING_REQUIRED=0
+    fi
+    if [[ -n "${LTOOLS_REQUIRE_SIGNING:-}" && "${LTOOLS_REQUIRE_SIGNING}" =~ ^(1|true|yes)$ ]]; then
+        SIGNING_REQUIRED=1
+    fi
+}
+
+release_signature_args() {
+    RELEASE_SIGNATURE_ARGS=(release-signature --manifest "$RELEASE_DIR/SHA256SUMS.txt" --signature "$RELEASE_DIR/SHA256SUMS.txt.sig")
+    if [[ -r "$SIGNING_PRIVATE_KEY_FILE" ]]; then
+        RELEASE_SIGNATURE_ARGS+=(--private-key-file "$SIGNING_PRIVATE_KEY_FILE")
+    fi
+    if [[ -r "$SIGNING_PUBLIC_KEY_FILE" ]]; then
+        RELEASE_SIGNATURE_ARGS+=(--public-key-file "$SIGNING_PUBLIC_KEY_FILE")
+    fi
+}
+
+prepare_release_signature() {
+    local private_available=0 public_available=0
+    [[ -r "$SIGNING_PRIVATE_KEY_FILE" || -n "${LTOOLS_SIGNING_PRIVATE_KEY:-${LTERMINAL_SIGNING_PRIVATE_KEY:-}}" ]] && private_available=1
+    [[ -r "$SIGNING_PUBLIC_KEY_FILE" || -n "${LTOOLS_UPDATE_PUBLIC_KEY:-${LTERMINAL_UPDATE_PUBLIC_KEY:-}}" ]] && public_available=1
+    run_logged "$BIN" release-checksums --output "$RELEASE_DIR/SHA256SUMS.txt" --artifacts-dir "$RELEASE_DIR"
+    if (( private_available && public_available )); then
+        release_signature_args
+        run_logged "$BIN" "${RELEASE_SIGNATURE_ARGS[@]}"
+        release_signature_args
+        run_logged "$BIN" "${RELEASE_SIGNATURE_ARGS[@]}" --verify
+        ok 'SHA256SUMS.txt firmado y verificado con Ed25519'
+    else
+        rm -f -- "$RELEASE_DIR/SHA256SUMS.txt.sig"
+        if (( SIGNING_REQUIRED )); then
+            die "release estricta: faltan la clave privada y/o pública Ed25519; se esperaban $SIGNING_PRIVATE_KEY_FILE y $SIGNING_PUBLIC_KEY_FILE"
+        fi
+        warn "release local sin firma: no se encontraron ambas claves Ed25519; se conserva SHA256SUMS.txt y se retira cualquier .sig antiguo"
+    fi
+    if [[ "$RELEASE_DIR" != "$OUTPUT_DIR" ]]; then
+        cp -a -- "$RELEASE_DIR/SHA256SUMS.txt" "$OUTPUT_DIR/SHA256SUMS.txt"
+        if [[ -s "$RELEASE_DIR/SHA256SUMS.txt.sig" ]]; then
+            cp -a -- "$RELEASE_DIR/SHA256SUMS.txt.sig" "$OUTPUT_DIR/SHA256SUMS.txt.sig"
+        else
+            rm -f -- "$OUTPUT_DIR/SHA256SUMS.txt.sig"
+        fi
+    fi
 }
 
 ask_yes_no() {
@@ -248,6 +324,7 @@ configure_interactive() {
     if ask_yes_no 'Ejecutar smoke tests' "$SMOKE"; then SMOKE=1; else SMOKE=0; fi
     if ask_yes_no 'Ejecutar prueba E2E de migración y rollback' "$E2E"; then E2E=1; else E2E=0; fi
     if ask_yes_no 'Ejecutar E2E de menús y funciones aisladas' "$MENU_E2E"; then MENU_E2E=1; else MENU_E2E=0; fi
+    if ask_yes_no 'Ejecutar E2E de stores y Git' "$SOFTWARE_GIT_E2E"; then SOFTWARE_GIT_E2E=1; else SOFTWARE_GIT_E2E=0; fi
     if ask_yes_no 'Compilar y probar también Windows con Wine/Proton' "$WINDOWS_WINE"; then WINDOWS_WINE=1; else WINDOWS_WINE=0; fi
     if ask_yes_no 'Generar el paquete tar.gz' "$PACKAGE"; then PACKAGE=1; else PACKAGE=0; fi
     if ask_yes_no 'Generar también el AppImage' "$APPIMAGE"; then APPIMAGE=1; else APPIMAGE=0; fi
@@ -262,8 +339,9 @@ parse_args() {
             --skip-checks|--no-checks) CHECKS=0 ;;
             --no-tests) TESTS=0 ;;
             --no-smoke) SMOKE=0 ;;
-            --no-e2e) E2E=0; MENU_E2E=0 ;;
+            --no-e2e) E2E=0; MENU_E2E=0; SOFTWARE_GIT_E2E=0 ;;
             --no-menu-e2e) MENU_E2E=0 ;;
+            --no-software-git-e2e) SOFTWARE_GIT_E2E=0 ;;
             --offline) OFFLINE=1 ;;
             --windows-wine|--wine-windows) WINDOWS_WINE=1 ;;
             --no-windows-wine|--no-wine-windows) WINDOWS_WINE=0 ;;
@@ -286,9 +364,11 @@ parse_args() {
             --output)
                 (($# >= 2)) || die '--output necesita un directorio'
                 OUTPUT_DIR="$2"; shift ;;
-            --release-dir)
-                (($# >= 2)) || die '--release-dir necesita un directorio'
-                RELEASE_DIR="$2"; shift ;;
+        --release-dir)
+            (($# >= 2)) || die '--release-dir necesita un directorio'
+            RELEASE_DIR="$2"; shift ;;
+        --require-signing) SIGNING_REQUIRED=1 ;;
+        --allow-unsigned) SIGNING_REQUIRED=0 ;;
             --jobs)
                 (($# >= 2)) || die '--jobs necesita un número'
                 [[ "$2" =~ ^[1-9][0-9]*$ ]] || die '--jobs necesita un número positivo'
@@ -333,10 +413,12 @@ configure_cargo_profile() {
 
 parse_args "$@"
 init_logging "$@"
+load_signing_material
 configure_interactive
 if [[ "$NO_LOG" -eq 0 ]]; then
-    printf '[CONFIG] clean=%s fast=%s checks=%s tests=%s smoke=%s e2e=%s menu_e2e=%s package=%s appimage=%s offline=%s jobs=%s windows_wine=%s windows_target=%s release_dir=%s\n' \
-        "$CLEAN" "$FAST" "$CHECKS" "$TESTS" "$SMOKE" "$E2E" "$MENU_E2E" "$PACKAGE" "$APPIMAGE" "$OFFLINE" "$JOBS" "$WINDOWS_WINE" "$WINDOWS_TARGET" "$RELEASE_DIR"
+    printf '[CONFIG] clean=%s fast=%s checks=%s tests=%s smoke=%s e2e=%s menu_e2e=%s software_git_e2e=%s package=%s appimage=%s offline=%s jobs=%s windows_wine=%s windows_target=%s release_dir=%s\n' \
+        "$CLEAN" "$FAST" "$CHECKS" "$TESTS" "$SMOKE" "$E2E" "$MENU_E2E" "$SOFTWARE_GIT_E2E" "$PACKAGE" "$APPIMAGE" "$OFFLINE" "$JOBS" "$WINDOWS_WINE" "$WINDOWS_TARGET" "$RELEASE_DIR"
+    printf '[CONFIG] signing_required=%s private_key_file=%s public_key_file=%s\n' "$SIGNING_REQUIRED" "$SIGNING_PRIVATE_KEY_FILE" "$SIGNING_PUBLIC_KEY_FILE"
 fi
 
 [[ -f "$MANIFEST" ]] || die "no existe $MANIFEST"
@@ -709,8 +791,16 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
         warn 'jq no está disponible; se omite la validación estructural adicional del manifiesto de release.'
     fi
     ok "manifiesto generado: $RELEASE_MANIFEST_ARTIFACT"
+    step 'Generando y firmando comprobaciones de artefactos'
+    prepare_release_signature
     step 'Ejecutando E2E de artefactos release'
-    run_logged "$ROOT_DIR/tests/release-e2e.sh" --release-dir "$RELEASE_DIR" --version "$VERSION"
+    release_e2e_args=(--release-dir "$RELEASE_DIR" --version "$VERSION" --signature-verifier "$BIN")
+    [[ "$APPIMAGE" -eq 0 ]] && release_e2e_args+=(--no-appimage)
+    [[ "$PACKAGE" -eq 0 ]] && release_e2e_args+=(--no-package)
+    if [[ -r "$SIGNING_PUBLIC_KEY_FILE" ]]; then
+        release_e2e_args+=(--signature-public-key-file "$SIGNING_PUBLIC_KEY_FILE")
+    fi
+    run_logged "$ROOT_DIR/tests/release-e2e.sh" "${release_e2e_args[@]}"
     ok 'artefactos release verificados'
 fi
 
@@ -741,6 +831,12 @@ if [[ "$MENU_E2E" -eq 1 ]]; then
     ok 'E2E de menús y funciones correcta'
 fi
 
+if [[ "$SOFTWARE_GIT_E2E" -eq 1 ]]; then
+    step 'Ejecutando E2E de stores y Git'
+    run_logged "$ROOT_DIR/tests/linux/software-git-e2e.sh" --binary "$BIN"
+    ok 'E2E de stores y Git correcta'
+fi
+
 if [[ "$NO_LOG" -eq 0 ]]; then
     step 'Validando logs y tiempos del build'
     [[ -s "$LOG_FILE" ]] || die "el log está vacío: $LOG_FILE"
@@ -769,6 +865,8 @@ if [[ "$NO_RUN" -eq 1 ]]; then
     [[ "$APPIMAGE" -eq 1 ]] && printf 'AppImage CLI: %s\n' "$CLI_APPIMAGE_ARTIFACT"
     [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]] && printf 'Contrato terminal: %s\n' "$TERMINAL_DESCRIPTOR_ARTIFACT"
     [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]] && printf 'Release publicable: %s\n' "$RELEASE_DIR"
+    [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]] && printf 'Checksums release: %s\n' "$RELEASE_DIR/SHA256SUMS.txt"
+    [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]] && [[ -s "$RELEASE_DIR/SHA256SUMS.txt.sig" ]] && printf 'Firma release: %s\n' "$RELEASE_DIR/SHA256SUMS.txt.sig"
     [[ "$APPIMAGE" -eq 1 ]] && printf 'Lanzador recomendado: %s\n' "$RUNNER_ARTIFACT"
     [[ "$WINDOWS_WINE" -eq 1 && -f "$WINDOWS_WINE_ARTIFACT" ]] && printf 'Windows validado con Wine/Proton: %s\n' "$WINDOWS_WINE_ARTIFACT"
     [[ "$WINDOWS_WINE" -eq 1 && "$NO_LOG" -eq 0 && -s "$WINDOWS_WINE_LOG" ]] && printf 'Log Windows Wine/Proton: %s\n' "$WINDOWS_WINE_LOG"

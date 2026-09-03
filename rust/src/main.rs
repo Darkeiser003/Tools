@@ -2,13 +2,19 @@ mod audit;
 mod common;
 mod compat;
 mod games;
+mod git;
+#[cfg(any(target_os = "linux", windows))]
+mod gui;
 mod i18n;
 mod packages;
 mod platform;
 mod registry;
 mod release;
+mod signature;
+mod software;
 mod storage;
 mod system;
+mod tools;
 #[cfg(not(windows))]
 mod wine;
 
@@ -36,6 +42,10 @@ fn install_interrupt_handler() {
     // The handler only flips an atomic flag; user-facing work stays in
     // normal Rust code after the interrupted read returns.
     unsafe {
+        // Restore the Unix pipe behaviour so commands such as `ltools --help
+        // | head` finish without a Rust Broken-pipe panic when the consumer
+        // closes stdout early.
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
         let mut action: libc::sigaction = std::mem::zeroed();
         action.sa_sigaction = handle_interrupt as *const () as libc::sighandler_t;
         libc::sigemptyset(&mut action.sa_mask);
@@ -111,6 +121,9 @@ fn usage() {
     println!("  audit       {}", i18n::text("help.audit"));
     println!("  games       {}", i18n::games_help());
     println!("  packages    {}", i18n::text("help.packages"));
+    println!("  software    {}", software::help());
+    println!("  git         {}", git::help());
+    println!("  tools       {}", i18n::tools_text("help"));
     println!("  clean       {}", i18n::text("help.clean"));
     println!("  prefix      {}", i18n::prefix_help());
     println!("  defaults    {}", i18n::defaults_help());
@@ -123,6 +136,8 @@ fn usage() {
     println!("  registry    {}", i18n::registry_help());
     println!("  capabilities  {}", i18n::text("help.capabilities"));
     println!("  release-manifest  Genera el manifiesto verificable de una release de GitHub");
+    println!("  release-checksums  Genera SHA256SUMS.txt para los artefactos publicables");
+    println!("  release-signature  Firma o verifica SHA256SUMS.txt con Ed25519");
     println!();
     println!("{}", i18n::text("help.common"));
     println!("{}", i18n::text("help.clean.options"));
@@ -140,6 +155,16 @@ enum MenuSelection {
     Quit,
 }
 
+#[derive(Clone, Copy)]
+enum MenuCategory {
+    Audits,
+    Cleanup,
+    Applications,
+    System,
+    Packages,
+    Diagnostics,
+}
+
 fn execute_action(command: &str, ctx: &Context, args: &[String]) -> Result<(), String> {
     match command {
         "audit" | "disk-audit" => audit::run(ctx, args, false),
@@ -147,6 +172,17 @@ fn execute_action(command: &str, ctx: &Context, args: &[String]) -> Result<(), S
         #[cfg(not(windows))]
         "wine-audit" => games::run(ctx, args),
         "packages" | "pkg-audit" | "package-audit" => packages::run(ctx, args),
+        "software" | "package-search" | "package-install" | "install-package" => {
+            software::run(ctx, args)
+        }
+        "git" | "git-tools" => git::run(ctx, args),
+        "tools" | "quick-actions" => tools::menu(ctx),
+        "menu-audits" => category_menu(ctx, MenuCategory::Audits),
+        "menu-cleanup" => category_menu(ctx, MenuCategory::Cleanup),
+        "menu-applications" => category_menu(ctx, MenuCategory::Applications),
+        "menu-system" => category_menu(ctx, MenuCategory::System),
+        "menu-packages" => category_menu(ctx, MenuCategory::Packages),
+        "menu-diagnostics" => category_menu(ctx, MenuCategory::Diagnostics),
         "clean" | "cleanup" => packages::clean(ctx, args),
         #[cfg(not(windows))]
         "prefix" | "wine" => wine::run(ctx, args),
@@ -196,10 +232,12 @@ fn run_interactive_menu(base_args: &[String], dry_run: bool, plan_path: Option<P
         };
         let mut action_args = base_args.to_vec();
         action_args.append(&mut args);
-        let is_submenu = matches!(
-            command.as_str(),
-            "clean" | "system" | "storage" | "registry"
-        ) && action_args.iter().any(|arg| arg == "menu");
+        let is_submenu = command == "tools"
+            || command.starts_with("menu-")
+            || (matches!(
+                command.as_str(),
+                "clean" | "system" | "storage" | "registry"
+            ) && action_args.iter().any(|arg| arg == "menu"));
         let plan = match Plan::create(requested_plan_path.take(), &format!("rust-{command}")) {
             Ok(plan) => plan,
             Err(error) => {
@@ -217,6 +255,9 @@ fn run_interactive_menu(base_args: &[String], dry_run: bool, plan_path: Option<P
         if is_submenu && result.is_ok() {
             // El submenú ya gestiona su navegación. Al salir con Enter/q,
             // volver directamente al menú que lo abrió, sin una pausa extra.
+            if interrupt_requested() {
+                return;
+            }
             continue;
         }
         match result {
@@ -271,6 +312,18 @@ fn main() {
         if cli_profile() {
             usage();
         } else {
+            #[cfg(any(target_os = "linux", windows))]
+            {
+                if let Err(error) = gui::run() {
+                    if env::var_os("LTOOLS_GUI_REQUIRED").is_some() {
+                        eprintln!("No se pudo iniciar la interfaz gráfica: {error}");
+                        std::process::exit(3);
+                    }
+                    eprintln!("No se pudo iniciar la interfaz gráfica ({error}); se usará el menú de consola.");
+                    run_interactive_menu(&[], false, None);
+                }
+            }
+            #[cfg(not(any(target_os = "linux", windows)))]
             run_interactive_menu(&[], false, None);
         }
         return;
@@ -366,6 +419,20 @@ fn main() {
         }
         return;
     }
+    if matches!(command.as_str(), "release-checksums" | "checksums") {
+        if let Err(error) = release::checksums(&filtered) {
+            eprintln!("Error: {error}");
+            std::process::exit(2);
+        }
+        return;
+    }
+    if matches!(command.as_str(), "release-signature" | "sign-release") {
+        if let Err(error) = signature::run(&filtered) {
+            eprintln!("Error: {error}");
+            std::process::exit(2);
+        }
+        return;
+    }
     if command == "menu" || command == "m" {
         run_interactive_menu(&filtered, dry_run, plan_path);
         return;
@@ -412,7 +479,19 @@ fn main() {
         eprintln!("Error: {error}");
         std::process::exit(1);
     }
-    println!("Plan: {}", ctx.plan_path.unwrap().display());
+    let machine_output = matches!(command.as_str(), "software" | "package-search")
+        && filtered
+            .iter()
+            .any(|argument| argument == "--format=json" || argument == "json")
+        || (matches!(command.as_str(), "software" | "package-search")
+            && filtered
+                .windows(2)
+                .any(|window| window[0] == "--format" && window[1] == "json"));
+    if machine_output {
+        eprintln!("Plan: {}", ctx.plan_path.unwrap().display());
+    } else {
+        println!("Plan: {}", ctx.plan_path.unwrap().display());
+    }
 }
 
 fn menu_choice() -> MenuSelection {
@@ -429,16 +508,12 @@ fn menu_choice() -> MenuSelection {
 #[cfg(not(windows))]
 fn menu_choice_linux() -> MenuSelection {
     println!("{} Rust {VERSION}", i18n::text("menu.title"));
-    println!("  1) {}", i18n::text("menu.audit"));
-    println!("  2) {}", i18n::games_label());
-    println!("  3) {}", i18n::text("menu.clean"));
-    println!("  4) {}", i18n::prefix_label());
-    println!("  5) {}", i18n::text("menu.defaults"));
-    println!("  6) {}", i18n::text("menu.system"));
-    println!("  7) {}", i18n::text("menu.doctor"));
-    println!("  8) {}", i18n::text("menu.packages"));
-    println!("  9) {}", i18n::storage_label());
-    println!(" 10) {}", i18n::registry_label());
+    println!("  1) {}", i18n::category_text("audits"));
+    println!("  2) {}", i18n::category_text("cleanup"));
+    println!("  3) {}", i18n::category_text("applications"));
+    println!("  4) {}", i18n::category_text("system"));
+    println!("  5) {}", i18n::category_text("packages"));
+    println!("  6) {}", i18n::category_text("diagnostics"));
     println!("  h) {}", i18n::text("menu.help"));
     println!("  q) {}", i18n::text("menu.quit"));
     print!("{}", i18n::text("menu.prompt"));
@@ -454,22 +529,12 @@ fn menu_choice_linux() -> MenuSelection {
     };
     match answer.trim().to_lowercase().as_str() {
         "" => MenuSelection::Quit,
-        "1" => menu_audit()
-            .map(|args| MenuSelection::Command("audit".into(), args))
-            .unwrap_or(MenuSelection::Quit),
-        "2" => menu_games()
-            .map(|args| MenuSelection::Command("games".into(), args))
-            .unwrap_or(MenuSelection::Quit),
-        "3" => MenuSelection::Command("clean".into(), vec!["menu".into()]),
-        "4" => MenuSelection::Command("prefix".into(), vec!["list".into()]),
-        "5" => MenuSelection::Command("defaults".into(), Vec::new()),
-        "6" => MenuSelection::Command("system".into(), vec!["menu".into()]),
-        "7" => MenuSelection::Command("doctor".into(), Vec::new()),
-        "8" => menu_packages()
-            .map(|args| MenuSelection::Command("packages".into(), args))
-            .unwrap_or(MenuSelection::Quit),
-        "9" => MenuSelection::Command("storage".into(), vec!["menu".into()]),
-        "10" => MenuSelection::Command("registry".into(), vec!["menu".into()]),
+        "1" => MenuSelection::Command("menu-audits".into(), Vec::new()),
+        "2" => MenuSelection::Command("menu-cleanup".into(), Vec::new()),
+        "3" => MenuSelection::Command("menu-applications".into(), Vec::new()),
+        "4" => MenuSelection::Command("menu-system".into(), Vec::new()),
+        "5" => MenuSelection::Command("menu-packages".into(), Vec::new()),
+        "6" => MenuSelection::Command("menu-diagnostics".into(), Vec::new()),
         "q" | "quit" | "salir" => MenuSelection::Quit,
         "h" => {
             usage();
@@ -485,15 +550,12 @@ fn menu_choice_linux() -> MenuSelection {
 #[cfg(windows)]
 fn menu_choice_windows() -> MenuSelection {
     println!("{} Rust {VERSION}", i18n::text("menu.title"));
-    println!("  1) {}", i18n::text("menu.audit"));
-    println!("  2) {}", i18n::games_label());
-    println!("  3) {}", i18n::text("menu.clean"));
-    println!("  4) {}", i18n::storage_label());
-    println!("  5) {}", i18n::registry_label());
-    println!("  6) {}", i18n::text("menu.system"));
-    println!("  7) {}", i18n::text("menu.doctor"));
-    println!("  8) {}", i18n::text("menu.packages"));
-    println!("  9) {}", i18n::defaults_help());
+    println!("  1) {}", i18n::category_text("audits"));
+    println!("  2) {}", i18n::category_text("cleanup"));
+    println!("  3) {}", i18n::category_text("applications"));
+    println!("  4) {}", i18n::category_text("system"));
+    println!("  5) {}", i18n::category_text("packages"));
+    println!("  6) {}", i18n::category_text("diagnostics"));
     println!("  h) {}", i18n::text("menu.help"));
     println!("  q) {}", i18n::text("menu.quit"));
     print!("{}", i18n::text("menu.prompt"));
@@ -509,21 +571,12 @@ fn menu_choice_windows() -> MenuSelection {
     };
     match answer.trim().to_lowercase().as_str() {
         "" => MenuSelection::Quit,
-        "1" => menu_audit()
-            .map(|args| MenuSelection::Command("audit".into(), args))
-            .unwrap_or(MenuSelection::Quit),
-        "2" => menu_games()
-            .map(|args| MenuSelection::Command("games".into(), args))
-            .unwrap_or(MenuSelection::Quit),
-        "3" => MenuSelection::Command("clean".into(), vec!["menu".into()]),
-        "4" => MenuSelection::Command("storage".into(), vec!["menu".into()]),
-        "5" => MenuSelection::Command("registry".into(), vec!["menu".into()]),
-        "6" => MenuSelection::Command("system".into(), vec!["menu".into()]),
-        "7" => MenuSelection::Command("doctor".into(), vec!["menu".into()]),
-        "8" => menu_packages()
-            .map(|args| MenuSelection::Command("packages".into(), args))
-            .unwrap_or(MenuSelection::Quit),
-        "9" => MenuSelection::Command("defaults".into(), Vec::new()),
+        "1" => MenuSelection::Command("menu-audits".into(), Vec::new()),
+        "2" => MenuSelection::Command("menu-cleanup".into(), Vec::new()),
+        "3" => MenuSelection::Command("menu-applications".into(), Vec::new()),
+        "4" => MenuSelection::Command("menu-system".into(), Vec::new()),
+        "5" => MenuSelection::Command("menu-packages".into(), Vec::new()),
+        "6" => MenuSelection::Command("menu-diagnostics".into(), Vec::new()),
         "q" | "quit" | "salir" => MenuSelection::Quit,
         "h" => {
             usage();
@@ -533,6 +586,155 @@ fn menu_choice_windows() -> MenuSelection {
             println!("Opción no válida.");
             MenuSelection::Continue
         }
+    }
+}
+
+fn category_menu(ctx: &Context, category: MenuCategory) -> Result<(), String> {
+    loop {
+        clear_screen();
+        println!(
+            "{} · {} Rust {VERSION}\n",
+            i18n::text("menu.title"),
+            i18n::category_text(category.key())
+        );
+        match category {
+            MenuCategory::Audits => {
+                println!("  1) {}", i18n::text("menu.audit"));
+                println!("  2) {}", i18n::games_label());
+                println!("  3) {}", i18n::text("menu.packages"));
+            }
+            MenuCategory::Cleanup => {
+                println!("  1) {}", i18n::text("menu.clean"));
+            }
+            MenuCategory::Applications => {
+                #[cfg(not(windows))]
+                {
+                    println!("  1) {}", i18n::games_label());
+                    println!("  2) {}", i18n::prefix_label());
+                    println!("  3) {}", i18n::text("menu.defaults"));
+                }
+                #[cfg(windows)]
+                {
+                    println!("  1) {}", i18n::games_label());
+                    println!("  2) {}", i18n::text("menu.defaults"));
+                }
+            }
+            MenuCategory::System => {
+                println!("  1) {}", i18n::text("menu.system"));
+                println!("  2) {}", i18n::storage_label());
+                println!("  3) {}", i18n::registry_label());
+            }
+            MenuCategory::Packages => {
+                println!("  1) {}", i18n::text("menu.packages"));
+                println!("  2) {}", software::menu_label());
+            }
+            MenuCategory::Diagnostics => {
+                println!("  1) {}", i18n::text("menu.doctor"));
+                println!("  2) {}", i18n::text("menu.help"));
+            }
+        }
+        println!("  q) {}", i18n::text("menu.back"));
+
+        let answer = match menu_input(i18n::text("menu.prompt")) {
+            Some(answer) => answer.to_lowercase(),
+            None => return Ok(()),
+        };
+        if answer.is_empty() || matches!(answer.as_str(), "q" | "quit" | "salir") {
+            return Ok(());
+        }
+        if matches!(answer.as_str(), "h" | "help" | "ayuda") {
+            usage();
+            continue;
+        }
+
+        let stay_in_category = match category {
+            MenuCategory::Audits => match answer.as_str() {
+                "1" => category_leaf(ctx, "audit", menu_audit()),
+                "2" => category_leaf(ctx, "games", menu_games()),
+                "3" => category_leaf(ctx, "packages", menu_packages()),
+                _ => category_invalid(),
+            },
+            MenuCategory::Cleanup => match answer.as_str() {
+                "1" => category_submenu(ctx, "clean", vec!["menu".into()])?,
+                _ => category_invalid(),
+            },
+            MenuCategory::Applications => match answer.as_str() {
+                "1" => category_leaf(ctx, "games", menu_games()),
+                #[cfg(not(windows))]
+                "2" => category_leaf(ctx, "prefix", Some(vec!["list".into()])),
+                #[cfg(not(windows))]
+                "3" => category_leaf(ctx, "defaults", Some(Vec::new())),
+                #[cfg(windows)]
+                "2" => category_leaf(ctx, "defaults", Some(Vec::new())),
+                _ => category_invalid(),
+            },
+            MenuCategory::System => match answer.as_str() {
+                "1" => category_submenu(ctx, "system", vec!["menu".into()])?,
+                "2" => category_submenu(ctx, "storage", vec!["menu".into()])?,
+                "3" => category_submenu(ctx, "registry", vec!["menu".into()])?,
+                _ => category_invalid(),
+            },
+            MenuCategory::Packages => match answer.as_str() {
+                "1" => category_leaf(ctx, "packages", menu_packages()),
+                "2" => category_submenu(ctx, "tools", Vec::new())?,
+                _ => category_invalid(),
+            },
+            MenuCategory::Diagnostics => match answer.as_str() {
+                "1" => category_leaf(ctx, "doctor", Some(Vec::new())),
+                "2" => {
+                    usage();
+                    true
+                }
+                _ => category_invalid(),
+            },
+        };
+
+        if !stay_in_category || interrupt_requested() {
+            if interrupt_requested() {
+                finish_after_interrupt();
+            }
+            return Ok(());
+        }
+    }
+}
+
+impl MenuCategory {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Audits => "audits",
+            Self::Cleanup => "cleanup",
+            Self::Applications => "applications",
+            Self::System => "system",
+            Self::Packages => "packages",
+            Self::Diagnostics => "diagnostics",
+        }
+    }
+}
+
+fn category_invalid() -> bool {
+    println!("{}", i18n::text("menu.invalid"));
+    true
+}
+
+fn category_submenu(ctx: &Context, command: &str, args: Vec<String>) -> Result<bool, String> {
+    execute_action(command, ctx, &args)?;
+    Ok(true)
+}
+
+fn category_leaf(ctx: &Context, command: &str, args: Option<Vec<String>>) -> bool {
+    let Some(args) = args else {
+        return false;
+    };
+    match execute_action(command, ctx, &args) {
+        Ok(()) => println!("Operación terminada correctamente."),
+        Err(error) => eprintln!("Error: {error}"),
+    }
+    if let Some(plan_path) = &ctx.plan_path {
+        println!("Plan: {}", plan_path.display());
+    }
+    match menu_input(i18n::tools_text("pause")) {
+        Some(answer) => !matches!(answer.to_lowercase().as_str(), "q" | "quit" | "salir"),
+        None => false,
     }
 }
 

@@ -348,6 +348,257 @@ pub fn prefix_flags() -> &'static str {
     }
 }
 
+/// Textos de la ventana gráfica. Se mantienen aquí para que GUI y CLI
+/// compartan el idioma seleccionado y no introduzcan cadenas de plataforma
+/// cruzada en los módulos gráficos.
+#[cfg(any(target_os = "linux", windows))]
+pub fn gui_text(key: &str) -> &'static str {
+    match (current(), key) {
+        ("en", "title") => "LTools",
+        ("en", "subtitle") => "Safe system tools and quick actions",
+        ("en", "ready") => "Ready",
+        ("en", "running") => "Running…",
+        ("en", "completed") => "Completed",
+        ("en", "audit") => "Audit disks and applications",
+        ("en", "games") => "Inventory games and launchers",
+        ("en", "packages") => "Package inventory",
+        ("en", "prefixes") => "Wine/Proton prefixes",
+        ("en", "defaults") => "Default paths",
+        ("en", "system") => "System status",
+        ("en", "doctor") => "Dependencies and diagnostics",
+        ("en", "storage") => "Disks and partitions",
+        ("en", "stores") => "Package stores",
+        ("en", "git") => "Git status",
+        ("en", "package_placeholder") => "Package name…",
+        ("en", "search") => "Search package",
+        ("en", "enter_package") => "Enter a package name first",
+        ("en", "close") => "Close",
+        ("de", "title") => "LTools",
+        ("de", "subtitle") => "Sichere Systemwerkzeuge und Schnellaktionen",
+        ("de", "ready") => "Bereit",
+        ("de", "running") => "Wird ausgeführt…",
+        ("de", "completed") => "Abgeschlossen",
+        ("de", "audit") => "Datenträger und Anwendungen prüfen",
+        ("de", "games") => "Spiele und Launcher inventarisieren",
+        ("de", "packages") => "Paketinventar",
+        ("de", "prefixes") => "Wine-/Proton-Präfixe",
+        ("de", "defaults") => "Standardpfade",
+        ("de", "system") => "Systemstatus",
+        ("de", "doctor") => "Abhängigkeiten und Diagnose",
+        ("de", "storage") => "Datenträger und Partitionen",
+        ("de", "stores") => "Paketquellen",
+        ("de", "git") => "Git-Status",
+        ("de", "package_placeholder") => "Paketname…",
+        ("de", "search") => "Paket suchen",
+        ("de", "enter_package") => "Zuerst einen Paketnamen eingeben",
+        ("de", "close") => "Schließen",
+        ("fr", "title") => "LTools",
+        ("fr", "subtitle") => "Outils système sûrs et actions rapides",
+        ("fr", "ready") => "Prêt",
+        ("fr", "running") => "Exécution…",
+        ("fr", "completed") => "Terminé",
+        ("fr", "audit") => "Auditer les disques et applications",
+        ("fr", "games") => "Inventorier jeux et lanceurs",
+        ("fr", "packages") => "Inventaire des paquets",
+        ("fr", "prefixes") => "Préfixes Wine/Proton",
+        ("fr", "defaults") => "Chemins par défaut",
+        ("fr", "system") => "État du système",
+        ("fr", "doctor") => "Dépendances et diagnostic",
+        ("fr", "storage") => "Disques et partitions",
+        ("fr", "stores") => "Sources de paquets",
+        ("fr", "git") => "État Git",
+        ("fr", "package_placeholder") => "Nom du paquet…",
+        ("fr", "search") => "Rechercher un paquet",
+        ("fr", "enter_package") => "Saisissez d’abord un nom de paquet",
+        ("fr", "close") => "Fermer",
+        ("pt", "title") => "LTools",
+        ("pt", "subtitle") => "Ferramentas de sistema seguras e ações rápidas",
+        ("pt", "ready") => "Pronto",
+        ("pt", "running") => "A executar…",
+        ("pt", "completed") => "Concluído",
+        ("pt", "audit") => "Auditar discos e aplicações",
+        ("pt", "games") => "Inventariar jogos e lançadores",
+        ("pt", "packages") => "Inventário de pacotes",
+        ("pt", "prefixes") => "Prefixos Wine/Proton",
+        ("pt", "defaults") => "Caminhos predefinidos",
+        ("pt", "system") => "Estado do sistema",
+        ("pt", "doctor") => "Dependências e diagnóstico",
+        ("pt", "storage") => "Discos e partições",
+        ("pt", "stores") => "Fontes de pacotes",
+        ("pt", "git") => "Estado do Git",
+        ("pt", "package_placeholder") => "Nome do pacote…",
+        ("pt", "search") => "Pesquisar pacote",
+        ("pt", "enter_package") => "Introduza primeiro um nome de pacote",
+        ("pt", "close") => "Fechar",
+        (_, "title") => "LTools",
+        (_, "subtitle") => "Herramientas seguras del sistema y acciones rápidas",
+        (_, "ready") => "Listo",
+        (_, "running") => "Ejecutando…",
+        (_, "completed") => "Terminado",
+        (_, "audit") => "Auditar discos y aplicaciones",
+        (_, "games") => "Inventariar juegos y lanzadores",
+        (_, "packages") => "Inventario de paquetes",
+        (_, "prefixes") => "Prefijos Wine/Proton",
+        (_, "defaults") => "Rutas predeterminadas",
+        (_, "system") => "Estado del sistema",
+        (_, "doctor") => "Dependencias y diagnóstico",
+        (_, "storage") => "Discos y particiones",
+        (_, "stores") => "Almacenes de paquetes",
+        (_, "git") => "Estado de Git",
+        (_, "package_placeholder") => "Nombre del paquete…",
+        (_, "search") => "Buscar paquete",
+        (_, "enter_package") => "Introduce primero un nombre de paquete",
+        (_, "close") => "Cerrar",
+        _ => "",
+    }
+}
+
+/// Textos del módulo de paquetes/Git. Las operaciones y sus argumentos son
+/// estables para automatización; solo se traduce la interfaz visible.
+pub fn tools_text(key: &str) -> &'static str {
+    match (current(), key) {
+        ("en", "menu") => "Packages, stores and Git",
+        ("en", "help") => "Search/install from detected stores and perform guarded Git operations",
+        ("en", "title") => "=== Packages, stores and Git ===",
+        ("en", "search") => "Search a package in available stores",
+        ("en", "install") => "Choose and install a package",
+        ("en", "git_status") => "Git repository status",
+        ("en", "git_clone") => "Clone a Git repository",
+        ("en", "git_fetch") => "Fetch remote Git references",
+        ("en", "git_pull") => "Pull and integrate Git changes",
+        ("en", "git_login") => "Check Git identity and optional GitHub login",
+        ("en", "stores_title") => "Detected package stores",
+        ("en", "search_title") => "Package search",
+        ("en", "no_candidates") => "No candidates found in the available stores.",
+        ("en", "no_results") => "No package candidate was found.",
+        ("en", "query_prompt") => "Package name (Enter to go back): ",
+        ("en", "select_candidate") => "Choose a candidate number: ",
+        ("en", "selected") => "Selected:",
+        ("en", "confirm_install") => "Install this package?",
+        ("en", "cancelled") => "Operation cancelled.",
+        ("en", "dry_run") => "Dry run: nothing was changed.",
+        ("en", "done") => "Operation completed.",
+        ("en", "pause") => "Press Enter to return: ",
+        ("de", "menu") => "Pakete, Quellen und Git",
+        ("de", "help") => "Suche/Installation aus erkannten Quellen und geschützte Git-Operationen",
+        ("de", "title") => "=== Pakete, Quellen und Git ===",
+        ("de", "search") => "Paket in verfügbaren Quellen suchen",
+        ("de", "install") => "Paket auswählen und installieren",
+        ("de", "git_status") => "Git-Repository-Status",
+        ("de", "git_clone") => "Git-Repository klonen",
+        ("de", "git_fetch") => "Remote-Git-Referenzen abrufen",
+        ("de", "git_pull") => "Git-Änderungen abrufen und integrieren",
+        ("de", "git_login") => "Git-Identität und optionale GitHub-Anmeldung prüfen",
+        ("de", "stores_title") => "Erkannte Paketquellen",
+        ("de", "search_title") => "Paketsuche",
+        ("de", "no_candidates") => "Keine Kandidaten in den verfügbaren Quellen gefunden.",
+        ("de", "no_results") => "Kein Paketkandidat gefunden.",
+        ("de", "query_prompt") => "Paketname (Enter zum Zurückgehen): ",
+        ("de", "select_candidate") => "Nummer des Kandidaten: ",
+        ("de", "selected") => "Ausgewählt:",
+        ("de", "confirm_install") => "Dieses Paket installieren?",
+        ("de", "cancelled") => "Vorgang abgebrochen.",
+        ("de", "dry_run") => "Simulation: Es wurde nichts geändert.",
+        ("de", "done") => "Vorgang abgeschlossen.",
+        ("de", "pause") => "Enter zum Zurückgehen: ",
+        ("fr", "menu") => "Paquets, sources et Git",
+        ("fr", "help") => {
+            "Rechercher/installer depuis les sources détectées et gérer Git prudemment"
+        }
+        ("fr", "title") => "=== Paquets, sources et Git ===",
+        ("fr", "search") => "Rechercher un paquet dans les sources disponibles",
+        ("fr", "install") => "Choisir et installer un paquet",
+        ("fr", "git_status") => "État du dépôt Git",
+        ("fr", "git_clone") => "Cloner un dépôt Git",
+        ("fr", "git_fetch") => "Récupérer les références Git distantes",
+        ("fr", "git_pull") => "Récupérer et intégrer les changements Git",
+        ("fr", "git_login") => "Vérifier l’identité Git et la connexion GitHub optionnelle",
+        ("fr", "stores_title") => "Sources de paquets détectées",
+        ("fr", "search_title") => "Recherche de paquets",
+        ("fr", "no_candidates") => "Aucun candidat trouvé dans les sources disponibles.",
+        ("fr", "no_results") => "Aucun candidat de paquet trouvé.",
+        ("fr", "query_prompt") => "Nom du paquet (Entrée pour revenir) : ",
+        ("fr", "select_candidate") => "Numéro du candidat : ",
+        ("fr", "selected") => "Sélectionné :",
+        ("fr", "confirm_install") => "Installer ce paquet ?",
+        ("fr", "cancelled") => "Opération annulée.",
+        ("fr", "dry_run") => "Simulation : aucune modification.",
+        ("fr", "done") => "Opération terminée.",
+        ("fr", "pause") => "Entrée pour revenir : ",
+        ("pt", "menu") => "Pacotes, fontes e Git",
+        ("pt", "help") => {
+            "Pesquisar/instalar nas fontes detetadas e executar operações Git protegidas"
+        }
+        ("pt", "title") => "=== Pacotes, fontes e Git ===",
+        ("pt", "search") => "Pesquisar um pacote nas fontes disponíveis",
+        ("pt", "install") => "Escolher e instalar um pacote",
+        ("pt", "git_status") => "Estado do repositório Git",
+        ("pt", "git_clone") => "Clonar um repositório Git",
+        ("pt", "git_fetch") => "Obter referências Git remotas",
+        ("pt", "git_pull") => "Obter e integrar alterações Git",
+        ("pt", "git_login") => "Verificar identidade Git e início de sessão GitHub opcional",
+        ("pt", "stores_title") => "Fontes de pacotes detetadas",
+        ("pt", "search_title") => "Pesquisa de pacotes",
+        ("pt", "no_candidates") => "Não foram encontrados candidatos nas fontes disponíveis.",
+        ("pt", "no_results") => "Não foi encontrado nenhum pacote.",
+        ("pt", "query_prompt") => "Nome do pacote (Enter para voltar): ",
+        ("pt", "select_candidate") => "Número do candidato: ",
+        ("pt", "selected") => "Selecionado:",
+        ("pt", "confirm_install") => "Instalar este pacote?",
+        ("pt", "cancelled") => "Operação cancelada.",
+        ("pt", "dry_run") => "Simulação: nada foi alterado.",
+        ("pt", "done") => "Operação concluída.",
+        ("pt", "pause") => "Enter para voltar: ",
+        ("it", "menu") => "Pacchetti, fonti e Git",
+        ("it", "help") => "Cerca/installa dalle fonti rilevate ed esegui operazioni Git protette",
+        ("it", "title") => "=== Pacchetti, fonti e Git ===",
+        ("it", "search") => "Cerca un pacchetto nelle fonti disponibili",
+        ("it", "install") => "Scegli e installa un pacchetto",
+        ("ca", "menu") => "Paquets, fonts i Git",
+        ("ca", "help") => {
+            "Cerca/instal·la des de les fonts detectades i executa operacions Git protegides"
+        }
+        ("ca", "title") => "=== Paquets, fonts i Git ===",
+        ("ca", "search") => "Cercar un paquet a les fonts disponibles",
+        ("ca", "install") => "Triar i instal·lar un paquet",
+        ("nl", "menu") => "Pakketten, bronnen en Git",
+        ("nl", "help") => {
+            "Zoek/installeer uit gevonden bronnen en voer beveiligde Git-bewerkingen uit"
+        }
+        ("nl", "title") => "=== Pakketten, bronnen en Git ===",
+        ("nl", "search") => "Zoek een pakket in beschikbare bronnen",
+        ("nl", "install") => "Kies en installeer een pakket",
+        ("pl", "menu") => "Pakiety, źródła i Git",
+        ("pl", "help") => "Szukaj/instaluj z wykrytych źródeł i wykonuj chronione operacje Git",
+        ("pl", "title") => "=== Pakiety, źródła i Git ===",
+        ("pl", "search") => "Szukaj pakietu w dostępnych źródłach",
+        ("pl", "install") => "Wybierz i zainstaluj pakiet",
+        (_, "menu") => "Paquetes, almacenes y Git",
+        (_, "help") => "Buscar/instalar en stores detectadas y ejecutar operaciones Git protegidas",
+        (_, "title") => "=== Paquetes, almacenes y Git ===",
+        (_, "search") => "Buscar un paquete en las stores disponibles",
+        (_, "install") => "Elegir e instalar un paquete",
+        (_, "git_status") => "Estado del repositorio Git",
+        (_, "git_clone") => "Clonar un repositorio Git",
+        (_, "git_fetch") => "Descargar referencias Git remotas",
+        (_, "git_pull") => "Descargar e integrar cambios Git",
+        (_, "git_login") => "Comprobar identidad Git e inicio de sesión GitHub opcional",
+        (_, "stores_title") => "Stores de paquetes detectadas",
+        (_, "search_title") => "Búsqueda de paquetes",
+        (_, "no_candidates") => "No se encontraron candidatos en las stores disponibles.",
+        (_, "no_results") => "No se encontró ningún candidato de paquete.",
+        (_, "query_prompt") => "Nombre del paquete (Enter para volver): ",
+        (_, "select_candidate") => "Elige el número del candidato: ",
+        (_, "selected") => "Seleccionado:",
+        (_, "confirm_install") => "¿Instalar este paquete?",
+        (_, "cancelled") => "Operación cancelada.",
+        (_, "dry_run") => "Simulación: no se ha modificado nada.",
+        (_, "done") => "Operación terminada.",
+        (_, "pause") => "Pulsa Enter para volver: ",
+        (_, _) => "",
+    }
+}
+
 pub fn text(key: &str) -> &'static str {
     if key == "app.title" {
         return PRODUCT_NAME;
@@ -801,9 +1052,72 @@ pub fn text(key: &str) -> &'static str {
     }
 }
 
+/// Categorías del menú principal. Se mantienen separadas del catálogo de
+/// comandos para que la CLI pueda cambiar su jerarquía sin cambiar el
+/// contrato de automatización ni los nombres de las acciones.
+pub fn category_text(key: &str) -> &'static str {
+    match (current(), key) {
+        ("en", "audits") => "Audits and inventories",
+        ("en", "cleanup") => "Cleanup and storage",
+        ("en", "applications") => "Applications and compatibility",
+        ("en", "system") => "System and devices",
+        ("en", "packages") => "Packages and Git",
+        ("en", "diagnostics") => "Diagnostics and help",
+        ("de", "audits") => "Prüfungen und Inventare",
+        ("de", "cleanup") => "Bereinigung und Speicher",
+        ("de", "applications") => "Anwendungen und Kompatibilität",
+        ("de", "system") => "System und Geräte",
+        ("de", "packages") => "Pakete und Git",
+        ("de", "diagnostics") => "Diagnose und Hilfe",
+        ("fr", "audits") => "Audits et inventaires",
+        ("fr", "cleanup") => "Nettoyage et stockage",
+        ("fr", "applications") => "Applications et compatibilité",
+        ("fr", "system") => "Système et périphériques",
+        ("fr", "packages") => "Paquets et Git",
+        ("fr", "diagnostics") => "Diagnostic et aide",
+        ("pt", "audits") => "Auditorias e inventários",
+        ("pt", "cleanup") => "Limpeza e armazenamento",
+        ("pt", "applications") => "Aplicações e compatibilidade",
+        ("pt", "system") => "Sistema e dispositivos",
+        ("pt", "packages") => "Pacotes e Git",
+        ("pt", "diagnostics") => "Diagnóstico e ajuda",
+        ("it", "audits") => "Audit e inventari",
+        ("it", "cleanup") => "Pulizia e archiviazione",
+        ("it", "applications") => "Applicazioni e compatibilità",
+        ("it", "system") => "Sistema e dispositivi",
+        ("it", "packages") => "Pacchetti e Git",
+        ("it", "diagnostics") => "Diagnostica e aiuto",
+        ("ca", "audits") => "Auditories i inventaris",
+        ("ca", "cleanup") => "Neteja i emmagatzematge",
+        ("ca", "applications") => "Aplicacions i compatibilitat",
+        ("ca", "system") => "Sistema i dispositius",
+        ("ca", "packages") => "Paquets i Git",
+        ("ca", "diagnostics") => "Diagnòstic i ajuda",
+        ("nl", "audits") => "Audits en inventarissen",
+        ("nl", "cleanup") => "Opschonen en opslag",
+        ("nl", "applications") => "Toepassingen en compatibiliteit",
+        ("nl", "system") => "Systeem en apparaten",
+        ("nl", "packages") => "Pakketten en Git",
+        ("nl", "diagnostics") => "Diagnose en help",
+        ("pl", "audits") => "Audyty i inwentaryzacja",
+        ("pl", "cleanup") => "Czyszczenie i pamięć masowa",
+        ("pl", "applications") => "Aplikacje i zgodność",
+        ("pl", "system") => "System i urządzenia",
+        ("pl", "packages") => "Pakiety i Git",
+        ("pl", "diagnostics") => "Diagnostyka i pomoc",
+        (_, "audits") => "Auditorías e inventarios",
+        (_, "cleanup") => "Limpieza y almacenamiento",
+        (_, "applications") => "Aplicaciones y compatibilidad",
+        (_, "system") => "Sistema y dispositivos",
+        (_, "packages") => "Paquetes y Git",
+        (_, "diagnostics") => "Diagnóstico y ayuda",
+        (_, _) => "",
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{normalize, SUPPORTED};
+    use super::{category_text, normalize, set, SUPPORTED};
 
     #[test]
     fn normalizes_language_variants() {
@@ -818,5 +1132,23 @@ mod tests {
             SUPPORTED,
             &["es", "en", "de", "fr", "pt", "it", "ca", "nl", "pl"]
         );
+    }
+
+    #[test]
+    fn exposes_all_main_menu_categories_in_every_language() {
+        for language in SUPPORTED {
+            set(language);
+            for category in [
+                "audits",
+                "cleanup",
+                "applications",
+                "system",
+                "packages",
+                "diagnostics",
+            ] {
+                assert!(!category_text(category).is_empty());
+            }
+        }
+        set("es");
     }
 }

@@ -19,6 +19,8 @@ param(
     [switch]$NoRun,
     [switch]$NonInteractive,
     [switch]$NoLog,
+    [switch]$RequireSigning,
+    [switch]$AllowUnsigned,
     [string]$Log,
     [string]$Output,
     [string]$ReleaseOutput,
@@ -40,6 +42,9 @@ $Binary = Join-Path $CargoReleaseDir "ltools.exe"
 $PackageArch = if ($Target -match '^aarch64') { 'arm64' } elseif ($Target -match '^i686') { 'x86' } else { 'x86_64' }
 $StatePath = Join-Path $OutputDir ".build-state.json"
 $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$SigningPrivateKeyFile = $null
+$SigningPublicKeyFile = $null
+$SigningRequired = $false
 
 function Show-Help {
     @"
@@ -56,6 +61,8 @@ Uso: powershell -ExecutionPolicy Bypass -File windows\build.ps1 [opciones]
   -ReleaseOutput RUTA
                   Carpeta canónica de publicación (por defecto ..\release).
   -Log FICHERO    Fichero de log; -NoLog desactiva logs.
+  -RequireSigning Exige claves Ed25519 y firma válida para release.
+  -AllowUnsigned  Permite una release local sin firma.
   -NonInteractive No solicita confirmaciones.
 
 Salida: ltools-VERSION-windows-ARQUITECTURA.zip, perfiles exe/CLI y una carpeta
@@ -165,6 +172,55 @@ function Invoke-Cargo([string[]]$Arguments) {
     $exitCode = Invoke-NativeCommand 'cargo' $Arguments
     if ($exitCode -ne 0) { throw "cargo terminó con código $exitCode" }
 }
+function Initialize-Signing {
+    $configHome = if ($env:LTOOLS_CONFIG_HOME) { $env:LTOOLS_CONFIG_HOME } elseif ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } elseif ($env:USERPROFILE) { Join-Path $env:USERPROFILE '.config' } else { $null }
+    if ($env:LTOOLS_SIGNING_PRIVATE_KEY_FILE) { $script:SigningPrivateKeyFile = $env:LTOOLS_SIGNING_PRIVATE_KEY_FILE }
+    elseif ($env:LTERMINAL_SIGNING_PRIVATE_KEY_FILE) { $script:SigningPrivateKeyFile = $env:LTERMINAL_SIGNING_PRIVATE_KEY_FILE }
+    elseif ($configHome) { $script:SigningPrivateKeyFile = Join-Path $configHome 'lterminal\release-signing-private.pem' }
+    if ($env:LTOOLS_UPDATE_PUBLIC_KEY_FILE) { $script:SigningPublicKeyFile = $env:LTOOLS_UPDATE_PUBLIC_KEY_FILE }
+    elseif ($env:LTERMINAL_UPDATE_PUBLIC_KEY_FILE) { $script:SigningPublicKeyFile = $env:LTERMINAL_UPDATE_PUBLIC_KEY_FILE }
+    elseif ($configHome) { $script:SigningPublicKeyFile = Join-Path $configHome 'lterminal\release-signing-public.hex' }
+    $script:SigningRequired = $RequireSigning -or (($env:LTOOLS_REQUIRE_SIGNING -match '^(1|true|yes)$')) -or (($env:LTERMINAL_REQUIRE_SIGNING -match '^(1|true|yes)$')) -or (($env:CI -match '^(1|true|yes)$'))
+    if ($AllowUnsigned -or ($env:LTOOLS_ALLOW_UNSIGNED -match '^(1|true|yes)$')) { $script:SigningRequired = $false }
+}
+function Invoke-ReleaseSigning {
+    $checksums = Join-Path $PublishDir 'SHA256SUMS.txt'
+    $signature = Join-Path $PublishDir 'SHA256SUMS.txt.sig'
+    Invoke-Step 'Generando SHA256SUMS.txt' {
+        $exitCode = Invoke-NativeCommand $Binary @('release-checksums', '--output', $checksums, '--artifacts-dir', $PublishDir)
+        if ($exitCode -ne 0) { throw "no se pudo generar SHA256SUMS.txt (código $exitCode)" }
+    }
+    $privateAvailable = ($SigningPrivateKeyFile -and (Test-Path -LiteralPath $SigningPrivateKeyFile -PathType Leaf)) -or $env:LTOOLS_SIGNING_PRIVATE_KEY -or $env:LTERMINAL_SIGNING_PRIVATE_KEY
+    $publicAvailable = ($SigningPublicKeyFile -and (Test-Path -LiteralPath $SigningPublicKeyFile -PathType Leaf)) -or $env:LTOOLS_UPDATE_PUBLIC_KEY -or $env:LTERMINAL_UPDATE_PUBLIC_KEY
+    if ($privateAvailable -and $publicAvailable) {
+        $signArgs = @('release-signature', '--manifest', $checksums, '--signature', $signature)
+        if ($SigningPrivateKeyFile -and (Test-Path -LiteralPath $SigningPrivateKeyFile -PathType Leaf)) { $signArgs += @('--private-key-file', $SigningPrivateKeyFile) }
+        if ($SigningPublicKeyFile -and (Test-Path -LiteralPath $SigningPublicKeyFile -PathType Leaf)) { $signArgs += @('--public-key-file', $SigningPublicKeyFile) }
+        Invoke-Step 'Firmando SHA256SUMS.txt con Ed25519' {
+            $exitCode = Invoke-NativeCommand $Binary $signArgs
+            if ($exitCode -ne 0) { throw "la firma Ed25519 terminó con código $exitCode" }
+        }
+        Invoke-Step 'Verificando firma Ed25519 de release' {
+            $verifyArgs = $signArgs + @('--verify')
+            $exitCode = Invoke-NativeCommand $Binary $verifyArgs
+            if ($exitCode -ne 0) { throw "la verificación Ed25519 terminó con código $exitCode" }
+        }
+        Write-Log 'Firma Ed25519 generada y verificada correctamente.'
+    } else {
+        Remove-Item -LiteralPath $signature -Force -ErrorAction SilentlyContinue
+        if ($SigningRequired) { throw "release estricta: faltan las claves Ed25519; se esperaban $SigningPrivateKeyFile y $SigningPublicKeyFile" }
+        Write-Log 'AVISO: release local sin firma; se conserva SHA256SUMS.txt y se retira cualquier firma antigua.'
+    }
+    New-Item -ItemType Directory -Force -Path (Join-Path $Root 'dist') | Out-Null
+    Copy-Item -LiteralPath $checksums -Destination (Join-Path $Root 'dist\SHA256SUMS.txt') -Force
+    if (Test-Path -LiteralPath $signature -PathType Leaf) {
+        Copy-Item -LiteralPath $signature -Destination (Join-Path $Root 'dist\SHA256SUMS.txt.sig') -Force
+    } else {
+        Remove-Item -LiteralPath (Join-Path $Root 'dist\SHA256SUMS.txt.sig') -Force -ErrorAction SilentlyContinue
+    }
+    Write-Log "Checksums release: $checksums"
+    if (Test-Path -LiteralPath $signature -PathType Leaf) { Write-Log "Firma release: $signature" }
+}
 function Ensure-Target {
     $rustup = Get-Command rustup -ErrorAction SilentlyContinue
     if (-not $rustup) {
@@ -188,6 +244,10 @@ Write-Log "WinSlim-Tools Windows build $Version"
 Write-Log "Target: $Target"
 Write-Log "Salida: $OutputDir"
 Write-Log "Publicación: $PublishDir"
+Initialize-Signing
+Write-Log "Firma requerida: $SigningRequired"
+Write-Log "Clave privada: $SigningPrivateKeyFile"
+Write-Log "Clave pública: $SigningPublicKeyFile"
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { throw "No se encontró cargo. Instala Rust mediante rustup." }
 if (-not (Get-Command rustc -ErrorAction SilentlyContinue)) { throw "No se encontró rustc." }
 Ensure-Target
@@ -346,6 +406,7 @@ if ($needPackage -and -not $NoPackage) {
         throw 'El manifiesto de release Windows no supera la validación estructural.'
     }
     Write-Log "Manifiesto de release: $releaseManifestOutput"
+    Invoke-ReleaseSigning
 }
 
 $state = [ordered]@{ version = $Version; target = $Target; builtAt = (Get-Date).ToUniversalTime().ToString('o'); files = $newSignatures }

@@ -7,6 +7,10 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 RELEASE_DIR="$ROOT_DIR/release"
 VERSION=""
 REQUIRE_WINDOWS=0
+REQUIRE_APPIMAGE=1
+REQUIRE_PACKAGE=1
+SIGNATURE_PUBLIC_KEY_FILE=""
+SIGNATURE_VERIFIER=""
 
 die() { printf 'RELEASE E2E ERROR: %s\n' "$1" >&2; exit 1; }
 ok() { printf '  OK    %s\n' "$1"; }
@@ -18,6 +22,12 @@ Uso: $0 [opciones]
   --release-dir DIR   Carpeta publicable; por defecto: ./release.
   --version VERSION   Versión esperada; por defecto se lee de Cargo.toml.
   --require-windows   Exige EXE, EXE-CLI y ZIP Windows además de Linux.
+  --no-appimage       No exige los dos perfiles AppImage Linux.
+  --no-package        No exige el tarball runtime Linux.
+  --signature-public-key-file FICHERO
+                      Clave pública para verificar SHA256SUMS.txt.sig.
+  --signature-verifier FICHERO
+                      Backend LTools/WinSlim-Tools que verifica la firma.
   -h, --help          Muestra esta ayuda.
 EOF
 }
@@ -27,6 +37,10 @@ while (($#)); do
         --release-dir) (($# >= 2)) || die '--release-dir necesita una ruta'; RELEASE_DIR="$2"; shift ;;
         --version) (($# >= 2)) || die '--version necesita un valor'; VERSION="$2"; shift ;;
         --require-windows) REQUIRE_WINDOWS=1 ;;
+        --no-appimage) REQUIRE_APPIMAGE=0 ;;
+        --no-package) REQUIRE_PACKAGE=0 ;;
+        --signature-public-key-file) (($# >= 2)) || die '--signature-public-key-file necesita una ruta'; SIGNATURE_PUBLIC_KEY_FILE="$2"; shift ;;
+        --signature-verifier) (($# >= 2)) || die '--signature-verifier necesita una ruta'; SIGNATURE_VERIFIER="$2"; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "argumento desconocido: $1" ;;
     esac
@@ -66,15 +80,24 @@ for schema in \
 done
 ok 'JSON y esquemas publicables válidos'
 
-required_linux=(
-    "ltools-$VERSION-linux-x86_64.AppImage"
-    "ltools-$VERSION-linux-x86_64-cli.AppImage"
-    "ltools-$VERSION-linux-x86_64.tar.gz"
-)
+required_linux=()
+if (( REQUIRE_APPIMAGE )); then
+    required_linux+=(
+        "ltools-$VERSION-linux-x86_64.AppImage"
+        "ltools-$VERSION-linux-x86_64-cli.AppImage"
+    )
+fi
+if (( REQUIRE_PACKAGE )); then
+    required_linux+=("ltools-$VERSION-linux-x86_64.tar.gz")
+fi
 for artifact in "${required_linux[@]}"; do
     [[ -s "$RELEASE_DIR/$artifact" ]] || die "falta el artefacto Linux $artifact"
 done
-ok 'artefactos Linux principal y CLI presentes'
+if (( ${#required_linux[@]} )); then
+    ok 'artefactos Linux solicitados presentes'
+else
+    ok 'no se han solicitado artefactos binarios Linux adicionales'
+fi
 
 if (( REQUIRE_WINDOWS )); then
     required_windows=(
@@ -102,6 +125,40 @@ while IFS= read -r -d '' file; do
         || die "el manifiesto no coincide con $name"
 done < <(find "$RELEASE_DIR" -maxdepth 1 -type f -print0 | sort -z)
 ok 'cada artefacto reconocido coincide con tamaño y SHA-256 del manifiesto'
+
+checksums="$RELEASE_DIR/SHA256SUMS.txt"
+signature="$RELEASE_DIR/SHA256SUMS.txt.sig"
+if [[ -e "$checksums" ]]; then
+    [[ -s "$checksums" ]] || die 'SHA256SUMS.txt está vacío'
+    declare -A listed=()
+    checksum_count=0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ "${#line}" -gt 66 && "${line:0:64}" =~ ^[[:xdigit:]]{64}$ && "${line:64:2}" == '  ' ]] ||
+            die "línea inválida en SHA256SUMS.txt"
+        expected="${line:0:64}"
+        name="${line:66}"
+        [[ -n "$name" && "$name" != */* && "$name" != .* && "$name" != *'..'* ]] || die "nombre inseguro en SHA256SUMS.txt: $name"
+        [[ -f "$RELEASE_DIR/$name" ]] || die "SHA256SUMS.txt referencia un fichero inexistente: $name"
+        [[ -z "${listed[$name]+yes}" ]] || die "SHA256SUMS.txt contiene el fichero duplicado: $name"
+        listed[$name]=1
+        actual="$(sha256sum -- "$RELEASE_DIR/$name" | awk '{print $1}')"
+        [[ "${actual,,}" == "${expected,,}" ]] || die "SHA256SUMS.txt no coincide para $name"
+        checksum_count=$((checksum_count + 1))
+    done < "$checksums"
+    expected_count="$(find "$RELEASE_DIR" -maxdepth 1 -type f ! -name 'SHA256SUMS.txt' ! -name 'SHA256SUMS.txt.sig' -printf '%f\n' | wc -l)"
+    [[ "$checksum_count" == "$expected_count" ]] || die "SHA256SUMS.txt no cubre todos los ficheros publicables"
+    ok 'SHA256SUMS.txt cubre todos los artefactos y sus hashes coinciden'
+    if [[ -e "$signature" ]]; then
+        [[ -s "$signature" ]] || die 'SHA256SUMS.txt.sig está vacío'
+        [[ -n "$SIGNATURE_PUBLIC_KEY_FILE" && -s "$SIGNATURE_PUBLIC_KEY_FILE" ]] || die 'hay firma, pero falta --signature-public-key-file para verificarla'
+        [[ -x "$SIGNATURE_VERIFIER" ]] || die 'hay firma, pero falta --signature-verifier ejecutable'
+        "$SIGNATURE_VERIFIER" release-signature \
+            --manifest "$checksums" --signature "$signature" \
+            --public-key-file "$SIGNATURE_PUBLIC_KEY_FILE" --verify >/dev/null \
+            || die 'la firma Ed25519 de SHA256SUMS.txt no es válida'
+        ok 'firma Ed25519 de SHA256SUMS.txt verificada'
+    fi
+fi
 
 if (( REQUIRE_WINDOWS )); then
     jq -e '([.artifacts[].platform] | index("linux")) != null and

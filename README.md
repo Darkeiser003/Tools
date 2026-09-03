@@ -35,11 +35,14 @@ admiten `--dry-run` y generan planes reversibles cuando corresponde.
 - [Auditoría de Wine, Proton y juegos](#auditoría-de-wine-proton-y-juegos)
 - [Migración de prefijos](#migración-de-prefijos)
 - [Paquetes y limpieza](#paquetes-y-limpieza)
+- [Búsqueda e instalación contextual](#búsqueda-e-instalación-contextual)
+- [Operaciones Git](#operaciones-git)
 - [Salud y gestión del sistema](#salud-y-gestión-del-sistema)
 - [Discos, particiones y configuración nativa](#discos-particiones-y-configuración-nativa)
 - [Build y distribución](#build-y-distribución)
 - [Descarga desde GitHub y manifiesto de release](#descarga-desde-github-y-manifiesto-de-release)
 - [Integración JSON y terminal](#integración-json-y-terminal)
+- [Contrato de integración con LTerminal](docs/lterminal-integration.md)
 - [Arquitectura](#arquitectura)
 - [Idiomas](#idiomas)
 - [Logs, planes y rollback](#logs-planes-y-rollback)
@@ -182,6 +185,39 @@ no contengan bytes dependientes de una página de código.
   la ejecución y las pruebas Windows se reservan a Windows nativo.
 
 ## Instalación y primer uso
+
+### Interfaz gráfica y perfil CLI
+
+El AppImage Linux normal y el `ltools.exe` Windows normal abren su propia
+ventana gráfica nativa escrita en Rust. La ventana ofrece botones para las
+auditorías, prefijos o lanzadores, rutas predeterminadas, estado del sistema,
+discos, almacenes, Git y búsqueda de paquetes; la salida se muestra dentro de
+la propia aplicación. En Linux usa GTK3 del sistema y en Windows usa Win32.
+Si el entorno Linux no tiene sesión gráfica o GTK, el AppImage conserva el
+fallback controlado a una terminal externa.
+
+Los artefactos con sufijo `-cli` no abren ninguna ventana: sin argumentos
+muestran la ayuda y con argumentos ejecutan exclusivamente la acción solicitada.
+El JSON de integración sigue siendo opcional y solo sirve para que LTerminal o
+WinSlim Terminal lancen acciones declarativas; no es necesario para la GUI ni
+para el funcionamiento autónomo de las releases.
+
+La CLI usa una navegación jerárquica para evitar un menú principal saturado:
+
+1. **Auditorías e inventarios**: discos y aplicaciones, juegos y lanzadores,
+   o inventario de paquetes.
+2. **Limpieza y almacenamiento**: limpieza protegida y sus comprobaciones.
+3. **Aplicaciones y compatibilidad**: prefijos y rutas predeterminadas en
+   Linux; lanzadores y rutas compatibles en Windows.
+4. **Sistema y dispositivos**: servicios, procesos, journal, discos,
+   particiones y configuración nativa.
+5. **Paquetes y Git**: inventario de paquetes, almacenes detectados y Git.
+6. **Diagnóstico y ayuda**: dependencias, capacidades y ayuda completa.
+
+En cualquier nivel, `Enter` o `q` vuelven al nivel anterior; desde el menú
+principal `q` sale de la aplicación y `h` muestra la ayuda. Después de una
+acción, una entrada vacía conserva el contexto actual; la pantalla se limpia
+al cambiar de nivel.
 
 ### AppImage Linux
 
@@ -509,6 +545,51 @@ El modo de limpieza no incluye automáticamente bibliotecas de juegos, máquinas
 virtuales, prefijos ni puntos de montaje. Esas rutas requieren selección
 explícita y mantienen los bloqueos de seguridad.
 
+### Búsqueda e instalación contextual
+
+`software search` consulta únicamente las stores que existan en el sistema
+actual. En Linux reconoce pacman/AUR (`pacman`, `paru`, `yay`, `pikaur`), apt,
+dnf/yum, zypper, apk, XBPS, pkg, Flatpak, Snap, Homebrew, Nix, Guix y eopkg;
+en Windows reconoce solo `winget`, Chocolatey y Scoop. No ejecuta `update`, no
+mantiene un catálogo propio y continúa si una store no responde.
+
+```bash
+./ltools.sh software stores
+./ltools.sh software search firefox --format json
+./ltools.sh --dry-run software install firefox --candidate 2 --yes
+```
+
+Si hay varios resultados, muestra gestor, identificador, versión y origen, y
+exige elegir uno. La instalación real siempre muestra el comando nativo y
+solicita confirmación; `--yes` solo evita esa pregunta cuando el usuario ya
+ha seleccionado un candidato exacto con `--candidate`. Los gestores que
+requieren privilegios usan UAC/sudo según la plataforma. LTools nunca instala
+varios paquetes en lote ni resuelve dependencias a ciegas.
+
+El formato JSON usa el esquema `ltools-package-search-v1`, pensado para que
+una acción rápida pueda presentar candidatos sin interpretar texto humano.
+
+### Operaciones Git
+
+El módulo `git` no es un cliente de credenciales ni modifica una shell. Usa
+`git` mediante argumentos separados y valida repositorios, URLs y destinos.
+
+```bash
+./ltools.sh git status --repo ./proyecto
+./ltools.sh --dry-run git clone https://github.com/usuario/proyecto.git ./proyecto --yes
+./ltools.sh --dry-run git fetch --repo ./proyecto --prune --yes
+./ltools.sh --dry-run git pull --repo ./proyecto --rebase --yes
+./ltools.sh git login
+```
+
+`pull` se bloquea si hay cambios sin confirmar salvo que se indique
+`--allow-dirty` de forma explícita. `clone`, `fetch` y `pull` piden
+confirmación y quedan registrados en el plan; no se ofrece rollback automático
+de cambios Git porque un fetch/pull puede implicar hooks, merges o trabajo
+remoto irreversible. `git login` solo muestra la identidad configurada y, si
+existe GitHub CLI (`gh`), ofrece abrir su flujo oficial; no lee, guarda ni
+imprime tokens o contraseñas.
+
 ## Build y distribución
 
 Build Linux completa:
@@ -518,8 +599,8 @@ Build Linux completa:
 ```
 
 La build Linux ejecuta rustfmt, Clippy, tests Rust, sintaxis Bash, contratos,
-compilación release, tarball, AppImage, smoke, E2E de migración/rollback y E2E
-de menús y funciones. También valida AppStream, FUSE, idiomas, gestores de
+compilación release, tarball, AppImage, smoke, E2E de migración/rollback, E2E
+de menús y funciones, y una E2E aislada de stores simuladas y Git. También valida AppStream, FUSE, idiomas, gestores de
 paquetes, duplicados y las rutas efectivas del ecosistema Wine. No ejecuta
 binarios Windows mediante Wine salvo que se active explícitamente
 `--windows-wine`.
@@ -610,6 +691,37 @@ con su plataforma, arquitectura, tipo, tamaño, URL directa de GitHub y hash
 SHA-256. El generador es Rust y no depende de scripts Bash para calcular ni
 verificar los datos.
 
+Las releases publicables generan además `SHA256SUMS.txt` y su firma separada
+`SHA256SUMS.txt.sig`. La firma usa Ed25519 y contiene Base64 de la firma del
+contenido exacto de `SHA256SUMS.txt`, el mismo formato que usa LTerminal. El
+builder busca automáticamente estas claves, sin incluirlas en el paquete:
+
+```text
+~/.config/lterminal/release-signing-private.pem
+~/.config/lterminal/release-signing-public.hex
+```
+
+También se pueden indicar otras rutas con `LTOOLS_SIGNING_PRIVATE_KEY_FILE` y
+`LTOOLS_UPDATE_PUBLIC_KEY_FILE` (o sus equivalentes `LTERMINAL_*`). La clave
+privada nunca debe entrar en GitHub ni en el repositorio. Para una release
+oficial se recomienda exigir la firma:
+
+```bash
+LTOOLS_REQUIRE_SIGNING=1 ./build.sh
+```
+
+En un entorno sin claves, una build local puede conservar el checksum y
+advertir que no está firmada. `--require-signing` convierte esa advertencia en
+un error. El backend también permite verificar manualmente una release:
+
+```bash
+./ltools.sh release-signature \
+  --manifest release/SHA256SUMS.txt \
+  --signature release/SHA256SUMS.txt.sig \
+  --public-key-file ~/.config/lterminal/release-signing-public.hex \
+  --verify
+```
+
 La URL estable para la terminal será:
 
 ```text
@@ -629,11 +741,11 @@ VERSION="$(sed -n 's/^version = "\([^" ]*\)"/\1/p' rust/Cargo.toml | head -n1)"
 ```
 
 Sube a la release de GitHub todos los archivos publicables de `release/`,
-incluido `release/ltools-release.json` con el nombre exacto
-`ltools-release.json`. La terminal puede leer primero el descriptor
+incluidos `ltools-release.json`, `SHA256SUMS.txt` y `SHA256SUMS.txt.sig` con
+esos nombres exactos. La terminal puede leer primero el descriptor
 del proyecto, seleccionar el artefacto apropiado para el sistema y verificar el
-SHA-256 antes de ofrecer la instalación. El descriptor de integración de
-terminal sigue siendo opcional y separado.
+SHA-256 y la firma Ed25519 antes de ofrecer la instalación. El descriptor de
+integración de terminal sigue siendo opcional y separado.
 
 Para cambiar de repositorio o de etiqueta sin editar archivos, usa
 `LTOOLS_GITHUB_REPOSITORY` y `LTOOLS_GITHUB_TAG` al ejecutar los builders.
@@ -748,6 +860,7 @@ cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings
 ./tests/linux/smoke.sh --binary rust/target/release/ltools
 ./tests/linux/e2e.sh --binary rust/target/release/ltools
 ./tests/linux/menu-e2e.sh --binary rust/target/release/ltools
+./tests/linux/software-git-e2e.sh --binary rust/target/release/ltools
 ```
 
 En Windows nativo:

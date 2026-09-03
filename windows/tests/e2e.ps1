@@ -84,6 +84,13 @@ try {
     if ($storagePartitions -notmatch 'Discos y particiones Windows') { throw 'El inventario de particiones Windows falló.' }
     $registryOutput = Run @('registry', 'status')
     if ($registryOutput -notmatch 'Registro Windows') { throw 'El módulo Windows de registro falló.' }
+    $storesOutput = Run @('software', 'stores')
+    if ($storesOutput -match 'pacman|apt|flatpak|dnf|zypper|brew') {
+        throw 'El inventario Windows de stores mezcló gestores Linux.'
+    }
+    if ($storesOutput -notmatch 'winget|choco|scoop') {
+        throw 'El inventario Windows no mostró su catálogo nativo de stores.'
+    }
     $cliResult = Invoke-NativeProcess -FileName $Binary -EnvironmentOverrides @{ LTOOLS_CLI = '1' } -TimeoutSeconds 15
     $cliOutput = [string]$cliResult.Stdout + [string]$cliResult.Stderr
     if ($cliResult.ExitCode -ne 0 -or $cliOutput -notmatch 'Uso: ltools|Usage: ltools') {

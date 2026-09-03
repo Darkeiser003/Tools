@@ -13,7 +13,22 @@
   "integration": {
     "optional": true,
     "descriptor": "ltools-terminal.json",
+    "hosts": ["LTerminal", "WinSlim Terminal"],
     "standalone_releases_require_it": false
+  },
+  "distribution": {
+    "source": "github-releases",
+    "stable_only": true,
+    "manifest": "ltools-release.json",
+    "verification": "sha256",
+    "update_strategy": "stage-verify-promote",
+    "keep_previous": true,
+    "allowed_asset_hosts": [
+      "github.com",
+      "objects.githubusercontent.com",
+      "release-assets.githubusercontent.com",
+      "github-releases.githubusercontent.com"
+    ]
   },
   "platforms": {
     "linux": {
@@ -27,7 +42,11 @@
       "install": {
         "portable": true,
         "recommended_directory": "~/.local/bin",
-        "executable": true
+        "executable": true,
+        "entrypoint": "ltools",
+        "gui_entrypoint": "ltools",
+        "cli_entrypoint": "ltools-cli",
+        "update_strategy": "stage-verify-promote"
       }
     },
     "windows": {
@@ -41,13 +60,23 @@
       "install": {
         "portable": true,
         "recommended_directory": "%LOCALAPPDATA%\\WinSlim-Tools",
-        "executable": true
+        "executable": true,
+        "entrypoint": "ltools.exe",
+        "gui_entrypoint": "ltools.exe",
+        "cli_entrypoint": "ltools-cli.exe",
+        "update_strategy": "stage-verify-promote"
       }
     }
   },
   "verification": {
     "hash_algorithm": "sha256",
     "manifest_required": true,
-    "signature_supported": false
+    "signature_supported": true,
+    "signature": {
+      "algorithm": "ed25519",
+      "manifest": "SHA256SUMS.txt",
+      "detached_signature": "SHA256SUMS.txt.sig",
+      "encoding": "base64"
+    }
   }
 }

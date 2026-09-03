@@ -65,13 +65,13 @@ pub fn descriptor_json() -> String {
     "linux": {{
       "artifacts": ["AppImage", "AppImage-cli", "tar.gz"],
       "standalone": true,
-      "no_arguments": "opens-a-new-system-terminal-window",
+      "no_arguments": "opens-native-graphical-window",
       "shell": "LTOOLS_SHELL or SHELL, then bash/sh"
     }},
     "windows": {{
       "artifacts": ["exe", "portable-zip"],
       "standalone": true,
-      "no_arguments": "opens-the-native-console-menu",
+      "no_arguments": "opens-native-graphical-window",
       "shell": "cmd.exe or PowerShell host"
     }}
   }},
@@ -432,6 +432,104 @@ fn terminal_actions_json(platform: &str) -> String {
             true,
         ),
     );
+    actions.push(action_json(
+        "package-search",
+        "Buscar un paquete en stores disponibles",
+        "Buscar paquetes",
+        "Paquetes",
+        "Consulta solo los gestores instalados y devuelve candidatos por gestor y versión.",
+        command,
+        &["software", "search", "--format", "json"],
+        &[],
+        true,
+        false,
+        "none",
+        true,
+    ));
+    actions.push(action_json(
+        "package-install",
+        "Elegir e instalar un paquete",
+        "Instalar paquete",
+        "Paquetes",
+        "Busca en los gestores disponibles, permite elegir un candidato y confirma antes de instalar.",
+        command,
+        &["software", "install"],
+        &[],
+        true,
+        false,
+        "required",
+        false,
+    ));
+    actions.push(action_json(
+        "git-status",
+        "Estado de repositorio Git",
+        "Git status",
+        "Git",
+        "Consulta el repositorio actual o el indicado sin modificarlo.",
+        command,
+        &["git", "status"],
+        &["git"],
+        false,
+        false,
+        "none",
+        true,
+    ));
+    actions.push(action_json(
+        "git-clone",
+        "Clonar repositorio Git",
+        "Git clone",
+        "Git",
+        "Clona una URL confirmada en un destino nuevo, sin sobrescribir carpetas existentes.",
+        command,
+        &["git", "clone"],
+        &["git"],
+        true,
+        false,
+        "required",
+        false,
+    ));
+    actions.push(action_json(
+        "git-fetch",
+        "Actualizar referencias Git",
+        "Git fetch",
+        "Git",
+        "Actualiza referencias remotas en un repositorio elegido tras confirmación.",
+        command,
+        &["git", "fetch"],
+        &["git"],
+        true,
+        false,
+        "required",
+        false,
+    ));
+    actions.push(action_json(
+        "git-pull",
+        "Integrar cambios Git",
+        "Git pull",
+        "Git",
+        "Protege repositorios con cambios sin confirmar y confirma antes de integrar cambios.",
+        command,
+        &["git", "pull"],
+        &["git"],
+        true,
+        false,
+        "required",
+        false,
+    ));
+    actions.push(action_json(
+        "git-login",
+        "Comprobar identidad y autenticación Git",
+        "Git login",
+        "Git",
+        "Muestra la identidad configurada y ofrece gh auth login si GitHub CLI está instalado; nunca maneja secretos.",
+        command,
+        &["git", "login"],
+        &["git"],
+        true,
+        false,
+        "required",
+        true,
+    ));
     if platform != "windows" {
         actions.push(action_json(
             "prefixes",

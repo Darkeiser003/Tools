@@ -6,8 +6,23 @@ description = "Núcleo nativo y seguro para LTools"
 license = "MIT"
 
 [dependencies]
+base64 = "0.22"
+ed25519-dalek = { version = "2.2", features = ["pem"] }
 libc = "0.2"
 sha2 = "0.10"
+
+[features]
+default = []
+gtk-legacy = []
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_Controls",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [profile.release]
 strip = true
