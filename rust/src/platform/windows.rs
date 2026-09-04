@@ -509,6 +509,11 @@ pub fn fuse_available() -> bool {
     false
 }
 
+pub fn winslim_root() -> Option<PathBuf> {
+    let root = PathBuf::from(r"C:\WSCore");
+    root.is_dir().then_some(root)
+}
+
 fn command_output(program: &str, args: &[&str]) -> Option<String> {
     let output = Command::new(program).args(args).output().ok()?;
     output.status.success().then(|| {

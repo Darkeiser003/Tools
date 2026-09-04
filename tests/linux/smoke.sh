@@ -55,6 +55,12 @@ ok 'perfil CLI sin argumentos muestra ayuda sin abrir menú'
 CLI_WRAPPER_OUTPUT="$("$ROOT_DIR/ltools-cli.sh")"
 grep -Fq 'Uso: ltools' <<<"$CLI_WRAPPER_OUTPUT" || die 'ltools-cli.sh sin argumentos no mostró la ayuda'
 ok 'lanzador CLI Linux conserva el modo sin argumentos'
+MENU_OUTPUT="$(printf 'q\n' | HOME="$TMP_DIR/menu-home" XDG_STATE_HOME="$TMP_DIR/menu-state" "$BIN" menu 2>&1)"
+for marker in 'Auditar / Inventariar' 'Gestión de discos' 'Servicios / Dependencias' 'Rutas predeterminadas' 'Automatización' 'Importar scripts'; do
+    grep -Fq -- "$marker" <<<"$MENU_OUTPUT" || die "el menú principal no muestra la categoría: $marker"
+done
+! grep -Fq -- 'WinSlim' <<<"$MENU_OUTPUT" || die 'la build Linux mostró la categoría exclusiva de WinSlim'
+ok 'menú principal Linux con categorías generales y sin WinSlim'
 if command -v xvfb-run >/dev/null 2>&1; then
     if timeout 10 xvfb-run -a true >/dev/null 2>&1; then
         GUI_OUTPUT="$(timeout 20 xvfb-run -a env GDK_BACKEND=x11 LTOOLS_GUI_SMOKE=1 LTOOLS_GUI_REQUIRED=1 HOME="$TMP_DIR/gui-home" XDG_STATE_HOME="$TMP_DIR/gui-state" "$BIN" 2>&1)" ||

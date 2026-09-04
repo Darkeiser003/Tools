@@ -1,4 +1,5 @@
 mod audit;
+mod automation;
 mod common;
 mod compat;
 mod games;
@@ -123,6 +124,7 @@ fn usage() {
     println!("  packages    {}", i18n::text("help.packages"));
     println!("  software    {}", software::help());
     println!("  git         {}", git::help());
+    println!("  automation  {}", i18n::automation_text("help"));
     println!("  tools       {}", i18n::tools_text("help"));
     println!("  clean       {}", i18n::text("help.clean"));
     println!("  prefix      {}", i18n::prefix_help());
@@ -157,12 +159,13 @@ enum MenuSelection {
 
 #[derive(Clone, Copy)]
 enum MenuCategory {
-    Audits,
-    Cleanup,
-    Applications,
-    System,
-    Packages,
-    Diagnostics,
+    AuditInventory,
+    Storage,
+    Services,
+    Defaults,
+    Automation,
+    Import,
+    WinSlim,
 }
 
 fn execute_action(command: &str, ctx: &Context, args: &[String]) -> Result<(), String> {
@@ -177,12 +180,21 @@ fn execute_action(command: &str, ctx: &Context, args: &[String]) -> Result<(), S
         }
         "git" | "git-tools" => git::run(ctx, args),
         "tools" | "quick-actions" => tools::menu(ctx),
-        "menu-audits" => category_menu(ctx, MenuCategory::Audits),
-        "menu-cleanup" => category_menu(ctx, MenuCategory::Cleanup),
-        "menu-applications" => category_menu(ctx, MenuCategory::Applications),
-        "menu-system" => category_menu(ctx, MenuCategory::System),
-        "menu-packages" => category_menu(ctx, MenuCategory::Packages),
-        "menu-diagnostics" => category_menu(ctx, MenuCategory::Diagnostics),
+        "automation" | "automations" | "import" => automation::run(ctx, args),
+        "menu-audit-inventory" => category_menu(ctx, MenuCategory::AuditInventory),
+        "menu-storage" => category_menu(ctx, MenuCategory::Storage),
+        "menu-services" => category_menu(ctx, MenuCategory::Services),
+        "menu-defaults" => category_menu(ctx, MenuCategory::Defaults),
+        "menu-automation" => category_menu(ctx, MenuCategory::Automation),
+        "menu-import" => category_menu(ctx, MenuCategory::Import),
+        "menu-winslim" => category_menu(ctx, MenuCategory::WinSlim),
+        // Kept for older terminal descriptors and launchers.
+        "menu-audits" => category_menu(ctx, MenuCategory::AuditInventory),
+        "menu-cleanup" => category_menu(ctx, MenuCategory::Storage),
+        "menu-applications" => category_menu(ctx, MenuCategory::AuditInventory),
+        "menu-system" => category_menu(ctx, MenuCategory::Services),
+        "menu-packages" => category_menu(ctx, MenuCategory::Automation),
+        "menu-diagnostics" => category_menu(ctx, MenuCategory::Services),
         "clean" | "cleanup" => packages::clean(ctx, args),
         #[cfg(not(windows))]
         "prefix" | "wine" => wine::run(ctx, args),
@@ -507,55 +519,26 @@ fn menu_choice() -> MenuSelection {
 
 #[cfg(not(windows))]
 fn menu_choice_linux() -> MenuSelection {
-    println!("{} Rust {VERSION}", i18n::text("menu.title"));
-    println!("  1) {}", i18n::category_text("audits"));
-    println!("  2) {}", i18n::category_text("cleanup"));
-    println!("  3) {}", i18n::category_text("applications"));
-    println!("  4) {}", i18n::category_text("system"));
-    println!("  5) {}", i18n::category_text("packages"));
-    println!("  6) {}", i18n::category_text("diagnostics"));
-    println!("  h) {}", i18n::text("menu.help"));
-    println!("  q) {}", i18n::text("menu.quit"));
-    print!("{}", i18n::text("menu.prompt"));
-    let _ = io::stdout().flush();
-    let answer = match read_menu_line() {
-        Ok(Some(answer)) if !finish_after_interrupt() => answer,
-        Ok(Some(_)) | Ok(None) => return MenuSelection::Quit,
-        Err(error) if error.kind() == io::ErrorKind::Interrupted || interrupt_requested() => {
-            finish_after_interrupt();
-            return MenuSelection::Quit;
-        }
-        Err(_) => return MenuSelection::Quit,
-    };
-    match answer.trim().to_lowercase().as_str() {
-        "" => MenuSelection::Quit,
-        "1" => MenuSelection::Command("menu-audits".into(), Vec::new()),
-        "2" => MenuSelection::Command("menu-cleanup".into(), Vec::new()),
-        "3" => MenuSelection::Command("menu-applications".into(), Vec::new()),
-        "4" => MenuSelection::Command("menu-system".into(), Vec::new()),
-        "5" => MenuSelection::Command("menu-packages".into(), Vec::new()),
-        "6" => MenuSelection::Command("menu-diagnostics".into(), Vec::new()),
-        "q" | "quit" | "salir" => MenuSelection::Quit,
-        "h" => {
-            usage();
-            MenuSelection::Continue
-        }
-        _ => {
-            println!("Opción no válida.");
-            MenuSelection::Continue
-        }
-    }
+    menu_choice_for_platform()
 }
 
 #[cfg(windows)]
 fn menu_choice_windows() -> MenuSelection {
+    menu_choice_for_platform()
+}
+
+fn menu_choice_for_platform() -> MenuSelection {
     println!("{} Rust {VERSION}", i18n::text("menu.title"));
-    println!("  1) {}", i18n::category_text("audits"));
-    println!("  2) {}", i18n::category_text("cleanup"));
-    println!("  3) {}", i18n::category_text("applications"));
-    println!("  4) {}", i18n::category_text("system"));
-    println!("  5) {}", i18n::category_text("packages"));
-    println!("  6) {}", i18n::category_text("diagnostics"));
+    println!("  1) {}", i18n::category_text("audit_inventory"));
+    println!("  2) {}", i18n::category_text("storage"));
+    println!("  3) {}", i18n::category_text("services"));
+    println!("  4) {}", i18n::category_text("defaults"));
+    println!("  5) {}", i18n::category_text("automation"));
+    println!("  6) {}", i18n::category_text("import"));
+    #[cfg(windows)]
+    if platform::winslim_available() {
+        println!("  7) {}", i18n::category_text("winslim"));
+    }
     println!("  h) {}", i18n::text("menu.help"));
     println!("  q) {}", i18n::text("menu.quit"));
     print!("{}", i18n::text("menu.prompt"));
@@ -571,19 +554,23 @@ fn menu_choice_windows() -> MenuSelection {
     };
     match answer.trim().to_lowercase().as_str() {
         "" => MenuSelection::Quit,
-        "1" => MenuSelection::Command("menu-audits".into(), Vec::new()),
-        "2" => MenuSelection::Command("menu-cleanup".into(), Vec::new()),
-        "3" => MenuSelection::Command("menu-applications".into(), Vec::new()),
-        "4" => MenuSelection::Command("menu-system".into(), Vec::new()),
-        "5" => MenuSelection::Command("menu-packages".into(), Vec::new()),
-        "6" => MenuSelection::Command("menu-diagnostics".into(), Vec::new()),
+        "1" => MenuSelection::Command("menu-audit-inventory".into(), Vec::new()),
+        "2" => MenuSelection::Command("menu-storage".into(), Vec::new()),
+        "3" => MenuSelection::Command("menu-services".into(), Vec::new()),
+        "4" => MenuSelection::Command("menu-defaults".into(), Vec::new()),
+        "5" => MenuSelection::Command("menu-automation".into(), Vec::new()),
+        "6" => MenuSelection::Command("menu-import".into(), Vec::new()),
+        #[cfg(windows)]
+        "7" if platform::winslim_available() => {
+            MenuSelection::Command("menu-winslim".into(), Vec::new())
+        }
         "q" | "quit" | "salir" => MenuSelection::Quit,
         "h" => {
             usage();
             MenuSelection::Continue
         }
         _ => {
-            println!("Opción no válida.");
+            println!("{}", i18n::text("menu.invalid"));
             MenuSelection::Continue
         }
     }
@@ -598,39 +585,42 @@ fn category_menu(ctx: &Context, category: MenuCategory) -> Result<(), String> {
             i18n::category_text(category.key())
         );
         match category {
-            MenuCategory::Audits => {
+            MenuCategory::AuditInventory => {
                 println!("  1) {}", i18n::text("menu.audit"));
                 println!("  2) {}", i18n::games_label());
                 println!("  3) {}", i18n::text("menu.packages"));
-            }
-            MenuCategory::Cleanup => {
-                println!("  1) {}", i18n::text("menu.clean"));
-            }
-            MenuCategory::Applications => {
                 #[cfg(not(windows))]
-                {
-                    println!("  1) {}", i18n::games_label());
-                    println!("  2) {}", i18n::prefix_label());
-                    println!("  3) {}", i18n::text("menu.defaults"));
-                }
-                #[cfg(windows)]
-                {
-                    println!("  1) {}", i18n::games_label());
-                    println!("  2) {}", i18n::text("menu.defaults"));
-                }
+                println!("  4) {}", i18n::prefix_label());
             }
-            MenuCategory::System => {
+            MenuCategory::Storage => {
+                println!("  1) {}", i18n::storage_label());
+                println!("  2) {}", i18n::text("menu.clean"));
+            }
+            MenuCategory::Services => {
                 println!("  1) {}", i18n::text("menu.system"));
-                println!("  2) {}", i18n::storage_label());
-                println!("  3) {}", i18n::registry_label());
+                println!("  2) {}", i18n::text("menu.doctor"));
             }
-            MenuCategory::Packages => {
-                println!("  1) {}", i18n::text("menu.packages"));
-                println!("  2) {}", software::menu_label());
+            MenuCategory::Defaults => {
+                println!("  1) {}", i18n::text("menu.defaults"));
+                println!("  2) {}", i18n::registry_label());
             }
-            MenuCategory::Diagnostics => {
-                println!("  1) {}", i18n::text("menu.doctor"));
-                println!("  2) {}", i18n::text("menu.help"));
+            MenuCategory::Automation => {
+                println!("  1) {}", software::menu_label());
+                println!("  2) Git");
+                println!("  3) {}", i18n::text("menu.clean"));
+            }
+            MenuCategory::Import => {
+                println!("  1) {}", i18n::automation_text("menu"));
+            }
+            MenuCategory::WinSlim => {
+                #[cfg(windows)]
+                if let Some(root) = platform::winslim_root() {
+                    println!("{}", i18n::automation_text("winslim_ready"));
+                    println!("  {}", root.display());
+                    println!("{}", i18n::automation_text("winslim_placeholder"));
+                }
+                #[cfg(not(windows))]
+                println!("{}", i18n::automation_text("winslim_unavailable"));
             }
         }
         println!("  q) {}", i18n::text("menu.back"));
@@ -648,43 +638,41 @@ fn category_menu(ctx: &Context, category: MenuCategory) -> Result<(), String> {
         }
 
         let stay_in_category = match category {
-            MenuCategory::Audits => match answer.as_str() {
+            MenuCategory::AuditInventory => match answer.as_str() {
                 "1" => category_leaf(ctx, "audit", menu_audit()),
                 "2" => category_leaf(ctx, "games", menu_games()),
                 "3" => category_leaf(ctx, "packages", menu_packages()),
-                _ => category_invalid(),
-            },
-            MenuCategory::Cleanup => match answer.as_str() {
-                "1" => category_submenu(ctx, "clean", vec!["menu".into()])?,
-                _ => category_invalid(),
-            },
-            MenuCategory::Applications => match answer.as_str() {
-                "1" => category_leaf(ctx, "games", menu_games()),
                 #[cfg(not(windows))]
-                "2" => category_leaf(ctx, "prefix", Some(vec!["list".into()])),
-                #[cfg(not(windows))]
-                "3" => category_leaf(ctx, "defaults", Some(Vec::new())),
-                #[cfg(windows)]
-                "2" => category_leaf(ctx, "defaults", Some(Vec::new())),
+                "4" => category_leaf(ctx, "prefix", Some(vec!["list".into()])),
                 _ => category_invalid(),
             },
-            MenuCategory::System => match answer.as_str() {
+            MenuCategory::Storage => match answer.as_str() {
+                "1" => category_submenu(ctx, "storage", vec!["menu".into()])?,
+                "2" => category_submenu(ctx, "clean", vec!["menu".into()])?,
+                _ => category_invalid(),
+            },
+            MenuCategory::Services => match answer.as_str() {
                 "1" => category_submenu(ctx, "system", vec!["menu".into()])?,
-                "2" => category_submenu(ctx, "storage", vec!["menu".into()])?,
-                "3" => category_submenu(ctx, "registry", vec!["menu".into()])?,
+                "2" => category_leaf(ctx, "doctor", Some(Vec::new())),
                 _ => category_invalid(),
             },
-            MenuCategory::Packages => match answer.as_str() {
-                "1" => category_leaf(ctx, "packages", menu_packages()),
-                "2" => category_submenu(ctx, "tools", Vec::new())?,
+            MenuCategory::Defaults => match answer.as_str() {
+                "1" => category_leaf(ctx, "defaults", Some(Vec::new())),
+                "2" => category_submenu(ctx, "registry", vec!["menu".into()])?,
                 _ => category_invalid(),
             },
-            MenuCategory::Diagnostics => match answer.as_str() {
-                "1" => category_leaf(ctx, "doctor", Some(Vec::new())),
-                "2" => {
-                    usage();
-                    true
-                }
+            MenuCategory::Automation => match answer.as_str() {
+                "1" => category_submenu(ctx, "tools", Vec::new())?,
+                "2" => category_submenu(ctx, "automation", vec!["menu".into()])?,
+                "3" => category_submenu(ctx, "clean", vec!["menu".into()])?,
+                _ => category_invalid(),
+            },
+            MenuCategory::Import => match answer.as_str() {
+                "1" => category_submenu(ctx, "automation", vec!["menu".into()])?,
+                _ => category_invalid(),
+            },
+            MenuCategory::WinSlim => match answer.as_str() {
+                "" | "q" | "quit" | "salir" => false,
                 _ => category_invalid(),
             },
         };
@@ -701,12 +689,13 @@ fn category_menu(ctx: &Context, category: MenuCategory) -> Result<(), String> {
 impl MenuCategory {
     fn key(self) -> &'static str {
         match self {
-            Self::Audits => "audits",
-            Self::Cleanup => "cleanup",
-            Self::Applications => "applications",
-            Self::System => "system",
-            Self::Packages => "packages",
-            Self::Diagnostics => "diagnostics",
+            Self::AuditInventory => "audit_inventory",
+            Self::Storage => "storage",
+            Self::Services => "services",
+            Self::Defaults => "defaults",
+            Self::Automation => "automation",
+            Self::Import => "import",
+            Self::WinSlim => "winslim",
         }
     }
 }

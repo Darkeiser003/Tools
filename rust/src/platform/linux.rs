@@ -661,6 +661,11 @@ pub fn fuse_available() -> bool {
     device && (command_exists("fusermount3") || command_exists("fusermount"))
 }
 
+#[allow(dead_code)]
+pub fn winslim_root() -> Option<PathBuf> {
+    None
+}
+
 fn command_output(program: &str, args: &[&str]) -> Option<String> {
     let output = Command::new(program)
         .args(args)

@@ -190,9 +190,10 @@ no contengan bytes dependientes de una página de código.
 
 El AppImage Linux normal y el `ltools.exe` Windows normal abren su propia
 ventana gráfica nativa escrita en Rust. La ventana ofrece botones para las
-auditorías, prefijos o lanzadores, rutas predeterminadas, estado del sistema,
-discos, almacenes, Git y búsqueda de paquetes; la salida se muestra dentro de
-la propia aplicación. En Linux usa GTK3 del sistema y en Windows usa Win32.
+categorías generales y sus submenús: auditoría/inventario, discos,
+servicios/dependencias, rutas predeterminadas, automatización e importación de
+scripts; la salida se muestra dentro de la propia aplicación. En Linux usa
+GTK3 del sistema y en Windows usa Win32.
 Si el entorno Linux no tiene sesión gráfica o GTK, el AppImage conserva el
 fallback controlado a una terminal externa.
 
@@ -202,17 +203,34 @@ El JSON de integración sigue siendo opcional y solo sirve para que LTerminal o
 WinSlim Terminal lancen acciones declarativas; no es necesario para la GUI ni
 para el funcionamiento autónomo de las releases.
 
-La CLI usa una navegación jerárquica para evitar un menú principal saturado:
+La CLI y la GUI usan una navegación jerárquica para evitar un menú principal saturado:
 
-1. **Auditorías e inventarios**: discos y aplicaciones, juegos y lanzadores,
-   o inventario de paquetes.
-2. **Limpieza y almacenamiento**: limpieza protegida y sus comprobaciones.
-3. **Aplicaciones y compatibilidad**: prefijos y rutas predeterminadas en
-   Linux; lanzadores y rutas compatibles en Windows.
-4. **Sistema y dispositivos**: servicios, procesos, journal, discos,
-   particiones y configuración nativa.
-5. **Paquetes y Git**: inventario de paquetes, almacenes detectados y Git.
-6. **Diagnóstico y ayuda**: dependencias, capacidades y ayuda completa.
+1. **Auditar / Inventariar**: discos y aplicaciones, juegos y lanzadores,
+   paquetes y, en Linux, prefijos Wine/Proton.
+2. **Gestión de discos**: discos, particiones y limpieza protegida.
+3. **Servicios / Dependencias**: servicios, procesos, journal y diagnóstico.
+4. **Rutas predeterminadas**: rutas efectivas y configuración nativa.
+5. **Automatización**: acciones rápidas, gestores detectados, Git y registros.
+6. **Importar scripts**: registrar, listar, ejecutar o retirar automatizaciones.
+
+En Windows aparece una séptima categoría **WinSlim** únicamente si existe
+`C:\WSCore`. Es una superficie reservada para una integración futura y no
+ejecuta todavía ningún componente de WSCore.
+
+Las automatizaciones registradas conservan el programa, el directorio de
+trabajo y cada argumento por separado. LTools invoca el programa sin shell;
+para scripts `.sh`, `.py`, `.cmd`, `.bat` o `.ps1` selecciona el intérprete
+nativo correspondiente. El registro por línea de comandos permite integrar
+botones de una terminal sin depender de un script Bash:
+
+```text
+ltools automation add --name informe --program /ruta/informe.sh --cwd /ruta/proyecto --arg --json
+ltools automation list
+ltools automation run informe
+ltools automation remove informe
+```
+
+La opción Importar del menú ofrece el mismo flujo de forma interactiva.
 
 En cualquier nivel, `Enter` o `q` vuelven al nivel anterior; desde el menú
 principal `q` sale de la aplicación y `h` muestra la ayuda. Después de una
@@ -776,7 +794,8 @@ El proyecto mantiene dos capas compatibles:
 │   └── src/                  Núcleo compartido y módulos funcionales
 │       ├── platform/         Capacidades, privilegios e instalación por plataforma
 │       ├── storage/          Discos y particiones: Linux/Windows separados
-│       └── registry/         Configuración: Linux/Windows separados
+│       ├── registry/         Configuración: Linux/Windows separados
+│       └── automation.rs     Registro seguro de scripts y automatizaciones
 ├── platform/
 │   └── linux/
 │       └── build.sh          Builder Linux/AppImage
@@ -784,6 +803,7 @@ El proyecto mantiene dos capas compatibles:
 ├── windows/                  Builder, lanzadores y tests nativos Windows
 ├── release/                  Artefactos publicables regenerables (ignorado)
 ├── dist/                     Staging, logs y salidas locales (ignorado)
+├── clean-repository.sh       Limpieza segura de artefactos regenerables
 ├── tests/                    Contratos y pruebas
 │   └── linux/                Smoke y E2E Linux/AppImage
 └── build.sh                  Lanzador compatible del builder Linux
@@ -826,18 +846,32 @@ destinos ni modifica datos.
 
 Los logs, informes, planes, targets, staging y artefactos de distribución son
 locales y están excluidos por `.gitignore`. Para inspeccionar qué residuos
-ignorados se eliminarían antes de limpiar el árbol de trabajo:
+regenerables existen antes de limpiar el árbol de trabajo:
 
 ```bash
-git clean -ndX -- dist reports tmp rust/target
+./clean-repository.sh --dry-run
 ```
 
-Cuando la lista sea correcta, se pueden retirar únicamente esas salidas
-regenerables con:
+El limpiador solo conoce carpetas de salida explícitas (`dist/`, `release/`,
+`rust/target/`, targets Windows y caches habituales de herramientas). Protege
+carpetas que contengan archivos versionados, enlaces simbólicos y cualquier
+archivo no ignorado por Git. No borra fuentes, documentación, tests ni
+configuración. La simulación es el comportamiento predeterminado; para
+retirar los candidatos confirmados:
 
 ```bash
-git clean -fdX -- dist reports tmp rust/target
+./clean-repository.sh --apply
 ```
+
+Para automatizaciones no interactivas, después de revisar previamente el plan:
+
+```bash
+./clean-repository.sh --apply --yes
+```
+
+La limpieza no afecta cachés fuera del repositorio ni paquetes del sistema.
+Los artefactos de release se regeneran con `./build.sh`; los cambios de código
+sin commit permanecen intactos.
 
 `./build.sh --clean` limpia solamente los targets Rust y conserva los demás
 resultados locales; el builder vuelve a crear todo lo necesario en la próxima

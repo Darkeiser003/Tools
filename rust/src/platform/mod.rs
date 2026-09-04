@@ -78,3 +78,15 @@ pub fn install_tool(id: &str, dry_run: bool) -> Result<bool, String> {
 pub fn fuse_available() -> bool {
     current::fuse_available()
 }
+
+/// Optional native WinSlim integration root. The platform adapters own this
+/// detection so Linux never compiles or evaluates Windows-specific paths.
+#[allow(dead_code)]
+pub fn winslim_root() -> Option<PathBuf> {
+    current::winslim_root()
+}
+
+#[allow(dead_code)]
+pub fn winslim_available() -> bool {
+    winslim_root().is_some()
+}

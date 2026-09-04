@@ -440,11 +440,20 @@ pub fn gui_text(key: &str) -> &'static str {
         (_, "packages") => "Inventario de paquetes",
         (_, "prefixes") => "Prefijos Wine/Proton",
         (_, "defaults") => "Rutas predeterminadas",
+        (_, "winslim") => "WinSlim",
         (_, "system") => "Estado del sistema",
         (_, "doctor") => "Dependencias y diagnóstico",
         (_, "storage") => "Discos y particiones",
+        (_, "clean") => "Revisar limpieza",
         (_, "stores") => "Almacenes de paquetes",
         (_, "git") => "Estado de Git",
+        (_, "registry") => "Registros y configuración",
+        (_, "automation_name") => "Nombre de la automatización",
+        (_, "automation_program") => "Programa o ruta del script",
+        (_, "automation_cwd") => "Directorio de trabajo (opcional)",
+        (_, "automation_args") => "Argumentos (comillas para espacios)",
+        (_, "register") => "Registrar script",
+        (_, "required") => "Nombre y programa son obligatorios",
         (_, "package_placeholder") => "Nombre del paquete…",
         (_, "search") => "Buscar paquete",
         (_, "enter_package") => "Introduce primero un nombre de paquete",
@@ -1057,6 +1066,69 @@ pub fn text(key: &str) -> &'static str {
 /// contrato de automatización ni los nombres de las acciones.
 pub fn category_text(key: &str) -> &'static str {
     match (current(), key) {
+        ("es", "audit_inventory") => "Auditar / Inventariar",
+        ("es", "storage") => "Gestión de discos",
+        ("es", "services") => "Servicios / Dependencias",
+        ("es", "defaults") => "Rutas predeterminadas",
+        ("es", "automation") => "Automatización",
+        ("es", "import") => "Importar scripts",
+        ("es", "winslim") => "WinSlim",
+        ("en", "audit_inventory") => "Audit / Inventory",
+        ("en", "storage") => "Disk management",
+        ("en", "services") => "Services / Dependencies",
+        ("en", "defaults") => "Default paths",
+        ("en", "automation") => "Automation",
+        ("en", "import") => "Import scripts",
+        ("en", "winslim") => "WinSlim",
+        ("de", "audit_inventory") => "Prüfen / Inventarisieren",
+        ("de", "storage") => "Datenträgerverwaltung",
+        ("de", "services") => "Dienste / Abhängigkeiten",
+        ("de", "defaults") => "Standardpfade",
+        ("de", "automation") => "Automatisierung",
+        ("de", "import") => "Skripte importieren",
+        ("de", "winslim") => "WinSlim",
+        ("fr", "audit_inventory") => "Auditer / Inventorier",
+        ("fr", "storage") => "Gestion des disques",
+        ("fr", "services") => "Services / Dépendances",
+        ("fr", "defaults") => "Chemins par défaut",
+        ("fr", "automation") => "Automatisation",
+        ("fr", "import") => "Importer des scripts",
+        ("fr", "winslim") => "WinSlim",
+        ("pt", "audit_inventory") => "Auditar / Inventariar",
+        ("pt", "storage") => "Gestão de discos",
+        ("pt", "services") => "Serviços / Dependências",
+        ("pt", "defaults") => "Caminhos predefinidos",
+        ("pt", "automation") => "Automação",
+        ("pt", "import") => "Importar scripts",
+        ("pt", "winslim") => "WinSlim",
+        ("it", "audit_inventory") => "Audit / Inventario",
+        ("it", "storage") => "Gestione dischi",
+        ("it", "services") => "Servizi / Dipendenze",
+        ("it", "defaults") => "Percorsi predefiniti",
+        ("it", "automation") => "Automazione",
+        ("it", "import") => "Importa script",
+        ("it", "winslim") => "WinSlim",
+        ("ca", "audit_inventory") => "Auditar / Inventariar",
+        ("ca", "storage") => "Gestió de discs",
+        ("ca", "services") => "Serveis / Dependències",
+        ("ca", "defaults") => "Rutes predeterminades",
+        ("ca", "automation") => "Automatització",
+        ("ca", "import") => "Importar scripts",
+        ("ca", "winslim") => "WinSlim",
+        ("nl", "audit_inventory") => "Auditeren / Inventariseren",
+        ("nl", "storage") => "Schijfbeheer",
+        ("nl", "services") => "Diensten / Afhankelijkheden",
+        ("nl", "defaults") => "Standaardpaden",
+        ("nl", "automation") => "Automatisering",
+        ("nl", "import") => "Scripts importeren",
+        ("nl", "winslim") => "WinSlim",
+        ("pl", "audit_inventory") => "Audyt / Inwentaryzacja",
+        ("pl", "storage") => "Zarządzanie dyskami",
+        ("pl", "services") => "Usługi / Zależności",
+        ("pl", "defaults") => "Ścieżki domyślne",
+        ("pl", "automation") => "Automatyzacja",
+        ("pl", "import") => "Import skryptów",
+        ("pl", "winslim") => "WinSlim",
         ("en", "audits") => "Audits and inventories",
         ("en", "cleanup") => "Cleanup and storage",
         ("en", "applications") => "Applications and compatibility",
@@ -1115,6 +1187,77 @@ pub fn category_text(key: &str) -> &'static str {
     }
 }
 
+/// Textos del registro de automatizaciones. Las automatizaciones son datos
+/// del usuario, no plugins con código embebido; este catálogo solo traduce la
+/// navegación y sus mensajes básicos.
+pub fn automation_text(key: &str) -> &'static str {
+    match (current(), key) {
+        ("en", "title") => "=== Automation / imported scripts ===",
+        ("en", "help") => "register and run user scripts without a shell",
+        ("en", "menu") => "Imported scripts and automations",
+        ("en", "list") => "List registered scripts",
+        ("en", "list_title") => "Registered automations",
+        ("en", "add") => "Register a script",
+        ("en", "run") => "Run a registered script",
+        ("en", "remove") => "Remove a registration",
+        ("en", "name") => "Name",
+        ("en", "program") => "Program or script path",
+        ("en", "working_directory") => "Working directory",
+        ("en", "arguments") => "Arguments",
+        ("en", "current") => "current directory",
+        ("en", "registry") => "Registry",
+        ("en", "none") => "No scripts registered.",
+        ("en", "saved") => "Automation registered.",
+        ("en", "removed") => "Registration removed.",
+        ("en", "command") => "Command",
+        ("en", "winslim_ready") => "WinSlim integration surface detected at:",
+        ("en", "winslim_placeholder") => "Reserved surface: WSCore actions are not executed yet.",
+        ("en", "winslim_unavailable") => {
+            "WinSlim integration is only available on Windows when C:\\WSCore exists."
+        }
+        ("de", "title") => "=== Automatisierung / importierte Skripte ===",
+        ("de", "menu") => "Importierte Skripte und Automatisierungen",
+        ("fr", "title") => "=== Automatisation / scripts importés ===",
+        ("fr", "menu") => "Scripts importés et automatisations",
+        ("pt", "title") => "=== Automação / scripts importados ===",
+        ("pt", "menu") => "Scripts importados e automações",
+        ("it", "title") => "=== Automazione / script importati ===",
+        ("it", "menu") => "Script importati e automazioni",
+        ("ca", "title") => "=== Automatització / scripts importats ===",
+        ("ca", "menu") => "Scripts importats i automatitzacions",
+        ("nl", "title") => "=== Automatisering / geïmporteerde scripts ===",
+        ("nl", "menu") => "Geïmporteerde scripts en automatiseringen",
+        ("pl", "title") => "=== Automatyzacja / importowane skrypty ===",
+        ("pl", "menu") => "Importowane skrypty i automatyzacje",
+        (_, "title") => "=== Automatización / scripts importados ===",
+        (_, "help") => "registrar y ejecutar scripts del usuario sin shell",
+        (_, "menu") => "Scripts importados y automatizaciones",
+        (_, "list") => "Listar scripts registrados",
+        (_, "list_title") => "Automatizaciones registradas",
+        (_, "add") => "Registrar un script",
+        (_, "run") => "Ejecutar un script registrado",
+        (_, "remove") => "Eliminar un registro",
+        (_, "name") => "Nombre",
+        (_, "program") => "Ruta del programa o script",
+        (_, "working_directory") => "Directorio de trabajo",
+        (_, "arguments") => "Argumentos",
+        (_, "current") => "directorio actual",
+        (_, "registry") => "Registro",
+        (_, "none") => "No hay scripts registrados.",
+        (_, "saved") => "Automatización registrada.",
+        (_, "removed") => "Registro eliminado.",
+        (_, "command") => "Comando",
+        (_, "winslim_ready") => "Superficie de integración WinSlim detectada en:",
+        (_, "winslim_placeholder") => {
+            "Superficie reservada: todavía no se ejecutan acciones de WSCore."
+        }
+        (_, "winslim_unavailable") => {
+            "La integración WinSlim solo está disponible en Windows cuando existe C:\\WSCore."
+        }
+        (_, _) => "",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{category_text, normalize, set, SUPPORTED};
@@ -1139,6 +1282,13 @@ mod tests {
         for language in SUPPORTED {
             set(language);
             for category in [
+                "audit_inventory",
+                "storage",
+                "services",
+                "defaults",
+                "automation",
+                "import",
+                "winslim",
                 "audits",
                 "cleanup",
                 "applications",
@@ -1147,6 +1297,26 @@ mod tests {
                 "diagnostics",
             ] {
                 assert!(!category_text(category).is_empty());
+            }
+        }
+        set("es");
+    }
+
+    #[test]
+    fn exposes_automation_navigation_text() {
+        for language in SUPPORTED {
+            set(language);
+            for key in [
+                "title",
+                "menu",
+                "list",
+                "add",
+                "run",
+                "remove",
+                "program",
+                "arguments",
+            ] {
+                assert!(!super::automation_text(key).is_empty());
             }
         }
         set("es");

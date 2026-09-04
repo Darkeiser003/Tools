@@ -337,6 +337,8 @@ mod linux {
         fn gtk_text_view_get_buffer(view: *mut Widget) -> *mut Widget;
         fn gtk_text_buffer_set_text(buffer: *mut Widget, text: *const c_char, length: c_int);
         fn gtk_widget_show_all(widget: *mut Widget);
+        fn gtk_widget_show(widget: *mut Widget);
+        fn gtk_widget_hide(widget: *mut Widget);
         fn gtk_main();
         fn gtk_main_quit();
     }
@@ -415,6 +417,22 @@ mod linux {
         status: *mut Widget,
     }
 
+    struct RegistrationData {
+        fields: [*mut Widget; 4],
+        buffer: *mut Widget,
+        status: *mut Widget,
+    }
+
+    struct NavigationData {
+        main: *mut Widget,
+        pages: [*mut Widget; 6],
+    }
+
+    struct NavigationButtonData {
+        navigation: *mut NavigationData,
+        page: usize,
+    }
+
     unsafe fn connect(
         widget: *mut Widget,
         name: &str,
@@ -465,6 +483,43 @@ mod linux {
             Err(error) => format!("No se pudo ejecutar la acción: {error}"),
         }
     }
+
+    fn run_action_dynamic(command: &str, args: &[String]) -> String {
+        let executable = match std::env::current_exe() {
+            Ok(path) => path,
+            Err(error) => return error.to_string(),
+        };
+        match Command::new(executable)
+            .env("LTOOLS_CLI", "1")
+            .env("LTOOLS_NO_AUTO_TERMINAL", "1")
+            .arg(command)
+            .args(args)
+            .output()
+        {
+            Ok(output) => {
+                let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+                text.push_str(&String::from_utf8_lossy(&output.stderr));
+                if !output.status.success() {
+                    text.push_str(&format!("\nCódigo de salida: {}", output.status));
+                }
+                if text.is_empty() {
+                    "La acción no produjo salida.".into()
+                } else {
+                    text
+                }
+            }
+            Err(error) => error.to_string(),
+        }
+    }
+
+    unsafe fn entry_text(entry: *mut Widget) -> String {
+        let raw = gtk_entry_get_text(entry);
+        if raw.is_null() {
+            String::new()
+        } else {
+            CStr::from_ptr(raw).to_string_lossy().into_owned()
+        }
+    }
     unsafe extern "C" fn on_action(_button: *mut Widget, pointer: *mut c_void) {
         let data = &*(pointer as *const ActionData);
         label(data.status, crate::i18n::gui_text("running"));
@@ -502,8 +557,66 @@ mod linux {
         gtk_text_buffer_set_text(data.buffer, text.as_ptr(), -1);
         label(data.status, crate::i18n::gui_text("completed"));
     }
+
+    unsafe extern "C" fn on_register(_button: *mut Widget, pointer: *mut c_void) {
+        let data = &*(pointer as *const RegistrationData);
+        let name = entry_text(data.fields[0]);
+        let program = entry_text(data.fields[1]);
+        let directory = entry_text(data.fields[2]);
+        let arguments = entry_text(data.fields[3]);
+        if name.trim().is_empty() || program.trim().is_empty() {
+            label(data.status, crate::i18n::gui_text("required"));
+            return;
+        }
+        label(data.status, crate::i18n::gui_text("running"));
+        let mut args = vec![
+            "add".into(),
+            "--name".into(),
+            name,
+            "--program".into(),
+            program,
+        ];
+        if !directory.trim().is_empty() {
+            args.extend(["--cwd".into(), directory]);
+        }
+        if !arguments.trim().is_empty() {
+            args.extend(["--args".into(), arguments]);
+        }
+        let result = run_action_dynamic("automation", &args);
+        let text = CString::new(
+            format!("{}\n\n{}", crate::i18n::gui_text("register"), result).replace('\0', " "),
+        )
+        .unwrap_or_default();
+        gtk_text_buffer_set_text(data.buffer, text.as_ptr(), -1);
+        label(data.status, crate::i18n::gui_text("completed"));
+    }
     unsafe extern "C" fn on_close(_widget: *mut Widget, _data: *mut c_void) {
         gtk_main_quit();
+    }
+
+    unsafe fn show_page(navigation: &NavigationData, page: Option<usize>) {
+        if page.is_some() {
+            gtk_widget_hide(navigation.main);
+        } else {
+            gtk_widget_show(navigation.main);
+        }
+        for (index, widget) in navigation.pages.iter().enumerate() {
+            if Some(index) == page {
+                gtk_widget_show(*widget);
+            } else {
+                gtk_widget_hide(*widget);
+            }
+        }
+    }
+
+    unsafe extern "C" fn on_navigation(_button: *mut Widget, pointer: *mut c_void) {
+        let data = &*(pointer as *const NavigationButtonData);
+        show_page(&*data.navigation, Some(data.page));
+    }
+
+    unsafe extern "C" fn on_back(_button: *mut Widget, pointer: *mut c_void) {
+        let navigation = &*(pointer as *const NavigationData);
+        show_page(navigation, None);
     }
     unsafe extern "C" fn quit_timeout(_data: *mut c_void) -> c_int {
         gtk_main_quit();
@@ -529,6 +642,27 @@ mod linux {
         }));
         connect(button, "clicked", on_action, data.cast());
         gtk_grid_attach(grid, button, row % 2, row / 2, 1, 1);
+    }
+
+    unsafe fn add_navigation_button(
+        grid: *mut Widget,
+        row: c_int,
+        label_text: &'static str,
+        navigation: *mut NavigationData,
+        page: usize,
+    ) {
+        let label_c = CString::new(label_text).unwrap_or_default();
+        let button = gtk_button_new_with_label(label_c.as_ptr());
+        let data = Box::into_raw(Box::new(NavigationButtonData { navigation, page }));
+        connect(button, "clicked", on_navigation, data.cast());
+        gtk_grid_attach(grid, button, row % 2, row / 2, 1, 1);
+    }
+
+    unsafe fn add_back_button(grid: *mut Widget, navigation: *mut NavigationData) {
+        let label = CString::new(crate::i18n::text("menu.back")).unwrap_or_default();
+        let button = gtk_button_new_with_label(label.as_ptr());
+        connect(button, "clicked", on_back, navigation.cast());
+        gtk_grid_attach(grid, button, 0, 99, 2, 1);
     }
     pub fn run() -> Result<(), String> {
         unsafe {
@@ -569,10 +703,66 @@ mod linux {
             let status = gtk_label_new(ready.as_ptr());
             gtk_label_set_xalign(status, 0.0);
             gtk_box_pack_start(root, status, 0, 0, 0);
-            let grid = gtk_grid_new();
-            gtk_grid_set_row_spacing(grid, 8);
-            gtk_grid_set_column_spacing(grid, 8);
-            gtk_box_pack_start(root, grid, 0, 0, 0);
+            let main_grid = gtk_grid_new();
+            gtk_grid_set_row_spacing(main_grid, 8);
+            gtk_grid_set_column_spacing(main_grid, 8);
+            gtk_box_pack_start(root, main_grid, 0, 0, 0);
+            let mut pages = [null_mut(); 6];
+            for page in &mut pages {
+                *page = gtk_grid_new();
+                gtk_grid_set_row_spacing(*page, 8);
+                gtk_grid_set_column_spacing(*page, 8);
+                gtk_box_pack_start(root, *page, 0, 0, 0);
+            }
+            let navigation = Box::into_raw(Box::new(NavigationData {
+                main: main_grid,
+                pages,
+            }));
+            for page in &(*navigation).pages {
+                gtk_widget_hide(*page);
+            }
+            add_navigation_button(
+                main_grid,
+                0,
+                crate::i18n::category_text("audit_inventory"),
+                navigation,
+                0,
+            );
+            add_navigation_button(
+                main_grid,
+                1,
+                crate::i18n::category_text("storage"),
+                navigation,
+                1,
+            );
+            add_navigation_button(
+                main_grid,
+                2,
+                crate::i18n::category_text("services"),
+                navigation,
+                2,
+            );
+            add_navigation_button(
+                main_grid,
+                3,
+                crate::i18n::category_text("defaults"),
+                navigation,
+                3,
+            );
+            add_navigation_button(
+                main_grid,
+                4,
+                crate::i18n::category_text("automation"),
+                navigation,
+                4,
+            );
+            add_navigation_button(
+                main_grid,
+                5,
+                crate::i18n::category_text("import"),
+                navigation,
+                5,
+            );
             let output = gtk_text_view_new();
             gtk_text_view_set_editable(output, 0);
             gtk_text_view_set_cursor_visible(output, 0);
@@ -581,8 +771,9 @@ mod linux {
             gtk_scrolled_window_set_policy(scrolled, 1, 1);
             gtk_container_add(scrolled, output);
             gtk_box_pack_start(root, scrolled, 1, 1, 0);
+            add_back_button((*navigation).pages[0], navigation);
             add_action(
-                grid,
+                (*navigation).pages[0],
                 0,
                 crate::i18n::gui_text("audit"),
                 "audit",
@@ -591,7 +782,7 @@ mod linux {
                 status,
             );
             add_action(
-                grid,
+                (*navigation).pages[0],
                 1,
                 crate::i18n::gui_text("games"),
                 "games",
@@ -600,7 +791,7 @@ mod linux {
                 status,
             );
             add_action(
-                grid,
+                (*navigation).pages[0],
                 2,
                 crate::i18n::gui_text("packages"),
                 "packages",
@@ -609,7 +800,7 @@ mod linux {
                 status,
             );
             add_action(
-                grid,
+                (*navigation).pages[0],
                 3,
                 crate::i18n::gui_text("prefixes"),
                 "prefix",
@@ -617,36 +808,10 @@ mod linux {
                 buffer,
                 status,
             );
+            add_back_button((*navigation).pages[1], navigation);
             add_action(
-                grid,
-                4,
-                crate::i18n::gui_text("defaults"),
-                "defaults",
-                &[],
-                buffer,
-                status,
-            );
-            add_action(
-                grid,
-                5,
-                crate::i18n::gui_text("system"),
-                "system",
-                &["status"],
-                buffer,
-                status,
-            );
-            add_action(
-                grid,
-                6,
-                crate::i18n::gui_text("doctor"),
-                "doctor",
-                &[],
-                buffer,
-                status,
-            );
-            add_action(
-                grid,
-                7,
+                (*navigation).pages[1],
+                0,
                 crate::i18n::gui_text("storage"),
                 "storage",
                 &["status"],
@@ -654,8 +819,56 @@ mod linux {
                 status,
             );
             add_action(
-                grid,
-                8,
+                (*navigation).pages[1],
+                1,
+                crate::i18n::gui_text("clean"),
+                "clean",
+                &[],
+                buffer,
+                status,
+            );
+            add_back_button((*navigation).pages[2], navigation);
+            add_action(
+                (*navigation).pages[2],
+                0,
+                crate::i18n::gui_text("system"),
+                "system",
+                &["status"],
+                buffer,
+                status,
+            );
+            add_action(
+                (*navigation).pages[2],
+                1,
+                crate::i18n::gui_text("doctor"),
+                "doctor",
+                &[],
+                buffer,
+                status,
+            );
+            add_back_button((*navigation).pages[3], navigation);
+            add_action(
+                (*navigation).pages[3],
+                0,
+                crate::i18n::gui_text("defaults"),
+                "defaults",
+                &[],
+                buffer,
+                status,
+            );
+            add_action(
+                (*navigation).pages[3],
+                1,
+                crate::i18n::gui_text("registry"),
+                "registry",
+                &["status"],
+                buffer,
+                status,
+            );
+            add_back_button((*navigation).pages[4], navigation);
+            add_action(
+                (*navigation).pages[4],
+                0,
                 crate::i18n::gui_text("stores"),
                 "software",
                 &["stores"],
@@ -663,14 +876,59 @@ mod linux {
                 status,
             );
             add_action(
-                grid,
-                9,
+                (*navigation).pages[4],
+                1,
                 crate::i18n::gui_text("git"),
                 "git",
                 &["status"],
                 buffer,
                 status,
             );
+            add_action(
+                (*navigation).pages[4],
+                2,
+                crate::i18n::automation_text("list"),
+                "automation",
+                &["list"],
+                buffer,
+                status,
+            );
+            add_back_button((*navigation).pages[5], navigation);
+            add_action(
+                (*navigation).pages[5],
+                0,
+                crate::i18n::automation_text("list"),
+                "automation",
+                &["list"],
+                buffer,
+                status,
+            );
+            let mut registration_fields = [null_mut(); 4];
+            for (index, key) in [
+                "automation_name",
+                "automation_program",
+                "automation_cwd",
+                "automation_args",
+            ]
+            .iter()
+            .enumerate()
+            {
+                let field = gtk_entry_new();
+                let placeholder = CString::new(crate::i18n::gui_text(key)).unwrap_or_default();
+                gtk_entry_set_placeholder_text(field, placeholder.as_ptr());
+                gtk_grid_attach((*navigation).pages[5], field, 0, (index + 1) as c_int, 2, 1);
+                registration_fields[index] = field;
+            }
+            let register_label =
+                CString::new(crate::i18n::gui_text("register")).unwrap_or_default();
+            let register_button = gtk_button_new_with_label(register_label.as_ptr());
+            let registration = Box::into_raw(Box::new(RegistrationData {
+                fields: registration_fields,
+                buffer,
+                status,
+            }));
+            connect(register_button, "clicked", on_register, registration.cast());
+            gtk_grid_attach((*navigation).pages[5], register_button, 0, 5, 2, 1);
             let entry = gtk_entry_new();
             let placeholder = CString::new(crate::i18n::gui_text("package_placeholder")).unwrap();
             gtk_entry_set_placeholder_text(entry, placeholder.as_ptr());
@@ -712,33 +970,33 @@ mod windows {
     use windows_sys::Win32::UI::Controls::SetWindowTheme;
     use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
-    const BUTTON_BASE: i32 = 1000;
+    const CATEGORY_BASE: i32 = 1000;
+    const ACTION_BASE: i32 = 1100;
+    const BACK_BASE: i32 = 1200;
+    const FIELD_BASE: i32 = 1300;
+    const PAGE_COUNT: usize = 7;
     const TERMINAL_BACKGROUND: u32 = 0x0010161b;
     const TERMINAL_TEXT: u32 = 0x00e6edf3;
     fn wide(value: &str) -> Vec<u16> {
         OsStr::new(value).encode_wide().chain(once(0)).collect()
     }
-    fn run_action(id: i32) -> String {
-        let command = match id {
-            0 => "audit",
-            1 => "games",
-            2 => "packages",
-            3 => "defaults",
-            4 => "system",
-            5 => "doctor",
-            6 => "storage",
-            7 => "software",
-            8 => "git",
-            _ => "help",
-        };
-        let args: &[&str] = match id {
-            0 | 1 => &["--no-mounts"],
-            4 => &["status"],
-            6 => &["status"],
-            7 => &["stores"],
-            8 => &["status"],
-            _ => &[],
-        };
+    struct WindowState {
+        main_buttons: [HWND; 7],
+        pages: [HWND; PAGE_COUNT],
+        fields: [HWND; 4],
+    }
+
+    fn run_action(command: &str, args: &[&str]) -> String {
+        if command == "winslim" {
+            return match crate::platform::winslim_root() {
+                Some(root) => format!(
+                    "{}\n{}",
+                    crate::i18n::automation_text("winslim_ready"),
+                    root.display()
+                ),
+                None => crate::i18n::automation_text("winslim_unavailable").into(),
+            };
+        }
         let executable = match std::env::current_exe() {
             Ok(path) => path,
             Err(error) => return error.to_string(),
@@ -761,6 +1019,91 @@ mod windows {
             Err(error) => error.to_string(),
         }
     }
+
+    fn run_action_dynamic(command: &str, args: &[String]) -> String {
+        let executable = match std::env::current_exe() {
+            Ok(path) => path,
+            Err(error) => return error.to_string(),
+        };
+        match std::process::Command::new(executable)
+            .env("LTOOLS_CLI", "1")
+            .arg(command)
+            .args(args)
+            .output()
+        {
+            Ok(output) => {
+                let mut out = String::from_utf8_lossy(&output.stdout).into_owned();
+                out.push_str(&String::from_utf8_lossy(&output.stderr));
+                if !output.status.success() {
+                    out.push_str(&format!("\nCódigo de salida: {}", output.status));
+                }
+                if out.is_empty() {
+                    "La acción no produjo salida.".into()
+                } else {
+                    out
+                }
+            }
+            Err(error) => error.to_string(),
+        }
+    }
+
+    fn action_spec(
+        page: usize,
+        index: usize,
+    ) -> Option<(&'static str, &'static [&'static str], &'static str)> {
+        match (page, index) {
+            (0, 0) => Some(("audit", &["--no-mounts"], "audit")),
+            (0, 1) => Some(("games", &["--no-mounts"], "games")),
+            (0, 2) => Some(("packages", &[], "packages")),
+            (1, 0) => Some(("storage", &["status"], "storage")),
+            (1, 1) => Some(("clean", &[], "clean")),
+            (2, 0) => Some(("system", &["status"], "system")),
+            (2, 1) => Some(("doctor", &[], "doctor")),
+            (3, 0) => Some(("defaults", &[], "defaults")),
+            (3, 1) => Some(("registry", &["status"], "registry")),
+            (4, 0) => Some(("software", &["stores"], "stores")),
+            (4, 1) => Some(("git", &["status"], "git")),
+            (4, 2) => Some(("automation", &["list"], "automation")),
+            (5, 0) => Some(("automation", &["list"], "automation")),
+            (5, 1) => Some(("automation", &[], "register")),
+            (6, 0) => Some(("winslim", &[], "winslim")),
+            _ => None,
+        }
+    }
+
+    unsafe fn state(hwnd: HWND) -> Option<&'static WindowState> {
+        let pointer = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+        (!pointer.eq(&0)).then(|| &*(pointer as *const WindowState))
+    }
+
+    unsafe fn show_page(hwnd: HWND, page: Option<usize>) {
+        let Some(state) = state(hwnd) else {
+            return;
+        };
+        for button in state.main_buttons.iter().filter(|button| !button.is_null()) {
+            ShowWindow(*button, if page.is_none() { SW_SHOW } else { SW_HIDE });
+        }
+        for (index, widget) in state.pages.iter().enumerate() {
+            ShowWindow(
+                *widget,
+                if Some(index) == page {
+                    SW_SHOW
+                } else {
+                    SW_HIDE
+                },
+            );
+        }
+    }
+
+    unsafe fn control_text(control: HWND) -> String {
+        let length = GetWindowTextLengthW(control);
+        if length <= 0 {
+            return String::new();
+        }
+        let mut buffer = vec![0_u16; length as usize + 1];
+        let read = GetWindowTextW(control, buffer.as_mut_ptr(), buffer.len() as i32);
+        String::from_utf16_lossy(&buffer[..read as usize])
+    }
     unsafe extern "system" fn window_proc(
         hwnd: HWND,
         message: u32,
@@ -782,8 +1125,47 @@ mod windows {
             }
             WM_COMMAND => {
                 let id = (wparam & 0xffff) as i32;
-                if (BUTTON_BASE..BUTTON_BASE + 9).contains(&id) {
-                    let text = wide(&run_action(id - BUTTON_BASE));
+                if (CATEGORY_BASE..CATEGORY_BASE + 7).contains(&id) {
+                    show_page(hwnd, Some((id - CATEGORY_BASE) as usize));
+                } else if (BACK_BASE..BACK_BASE + PAGE_COUNT as i32).contains(&id) {
+                    show_page(hwnd, None);
+                } else if (ACTION_BASE..ACTION_BASE + (PAGE_COUNT as i32 * 10)).contains(&id) {
+                    let relative = id - ACTION_BASE;
+                    let page = (relative / 10) as usize;
+                    let index = (relative % 10) as usize;
+                    let Some((command, args, label)) = action_spec(page, index) else {
+                        return 0;
+                    };
+                    let result = if page == 5 && index == 1 {
+                        let Some(state) = state(hwnd) else {
+                            return 0;
+                        };
+                        let name = control_text(state.fields[0]);
+                        let program = control_text(state.fields[1]);
+                        let cwd = control_text(state.fields[2]);
+                        let raw_args = control_text(state.fields[3]);
+                        if name.trim().is_empty() || program.trim().is_empty() {
+                            crate::i18n::gui_text("required").into()
+                        } else {
+                            let mut values = vec![
+                                "add".into(),
+                                "--name".into(),
+                                name,
+                                "--program".into(),
+                                program,
+                            ];
+                            if !cwd.trim().is_empty() {
+                                values.extend(["--cwd".into(), cwd]);
+                            }
+                            if !raw_args.trim().is_empty() {
+                                values.extend(["--args".into(), raw_args]);
+                            }
+                            run_action_dynamic(command, &values)
+                        }
+                    } else {
+                        run_action(command, args)
+                    };
+                    let text = wide(&format!("{}\n\n{}", crate::i18n::gui_text(label), result));
                     MessageBoxW(
                         hwnd,
                         text.as_ptr(),
@@ -836,33 +1218,158 @@ mod windows {
                 return Err("No se pudo crear la ventana Win32".into());
             }
             let labels = [
-                crate::i18n::gui_text("audit"),
-                crate::i18n::gui_text("games"),
-                crate::i18n::gui_text("packages"),
-                crate::i18n::gui_text("defaults"),
-                crate::i18n::gui_text("system"),
-                crate::i18n::gui_text("doctor"),
-                crate::i18n::gui_text("storage"),
-                crate::i18n::gui_text("stores"),
-                crate::i18n::gui_text("git"),
+                crate::i18n::category_text("audit_inventory"),
+                crate::i18n::category_text("storage"),
+                crate::i18n::category_text("services"),
+                crate::i18n::category_text("defaults"),
+                crate::i18n::category_text("automation"),
+                crate::i18n::category_text("import"),
+                crate::i18n::category_text("winslim"),
             ];
-            for (index, label) in labels.iter().enumerate() {
+            let winslim = crate::platform::winslim_available();
+            let pages = [null_mut(); PAGE_COUNT];
+            let mut main_buttons = [null_mut(); 7];
+            let main_button_count = labels.len() - usize::from(!winslim);
+            for index in 0..main_button_count {
                 let button = CreateWindowExW(
                     0,
                     wide("BUTTON").as_ptr(),
-                    wide(label).as_ptr(),
+                    wide(labels[index]).as_ptr(),
                     WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON as u32,
-                    20 + ((index as i32) % 3) * 250,
-                    30 + ((index as i32) / 3) * 48,
+                    20 + ((index as i32) % 2) * 380,
+                    30 + ((index as i32) / 2) * 48,
                     230,
                     36,
                     hwnd,
-                    ((BUTTON_BASE + index as i32) as isize) as *mut c_void,
+                    ((CATEGORY_BASE + index as i32) as isize) as *mut c_void,
                     instance,
                     null_mut(),
                 );
+                main_buttons[index] = button;
                 SetWindowTheme(button, wide("DarkMode_Explorer").as_ptr(), std::ptr::null());
             }
+            let _subtitle = CreateWindowExW(
+                0,
+                wide("STATIC").as_ptr(),
+                wide(crate::i18n::gui_text("subtitle")).as_ptr(),
+                WS_CHILD | WS_VISIBLE,
+                20,
+                200,
+                760,
+                30,
+                hwnd,
+                null_mut(),
+                instance,
+                null_mut(),
+            );
+            let state = Box::into_raw(Box::new(WindowState {
+                main_buttons,
+                pages,
+                fields: [null_mut(); 4],
+            }));
+            // Create a page for every generalized category. Only the WinSlim
+            // page is conditional at runtime; its button is never shown when
+            // C:\\WSCore is absent.
+            for page in 0..PAGE_COUNT {
+                let page_window = CreateWindowExW(
+                    0,
+                    wide("STATIC").as_ptr(),
+                    std::ptr::null(),
+                    WS_CHILD | WS_VISIBLE,
+                    20,
+                    30,
+                    760,
+                    250,
+                    hwnd,
+                    null_mut(),
+                    instance,
+                    null_mut(),
+                );
+                (*state).pages[page] = page_window;
+                for index in 0..4 {
+                    if let Some((_, _, label)) = action_spec(page, index) {
+                        let button = CreateWindowExW(
+                            0,
+                            wide("BUTTON").as_ptr(),
+                            wide(crate::i18n::gui_text(label)).as_ptr(),
+                            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON as u32,
+                            20 + ((index as i32) % 2) * 380,
+                            20 + ((index as i32) / 2) * 42,
+                            350,
+                            34,
+                            page_window,
+                            ((ACTION_BASE + (page as i32) * 10 + index as i32) as isize)
+                                as *mut c_void,
+                            instance,
+                            null_mut(),
+                        );
+                        SetWindowTheme(
+                            button,
+                            wide("DarkMode_Explorer").as_ptr(),
+                            std::ptr::null(),
+                        );
+                    }
+                }
+                if page == 5 {
+                    for (index, key) in [
+                        "automation_name",
+                        "automation_program",
+                        "automation_cwd",
+                        "automation_args",
+                    ]
+                    .iter()
+                    .enumerate()
+                    {
+                        let caption = CreateWindowExW(
+                            0,
+                            wide("STATIC").as_ptr(),
+                            wide(crate::i18n::gui_text(key)).as_ptr(),
+                            WS_CHILD | WS_VISIBLE,
+                            10,
+                            75 + (index as i32) * 36,
+                            170,
+                            24,
+                            page_window,
+                            null_mut(),
+                            instance,
+                            null_mut(),
+                        );
+                        let _ = caption;
+                        let field = CreateWindowExW(
+                            0,
+                            wide("EDIT").as_ptr(),
+                            std::ptr::null(),
+                            WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL as u32,
+                            190,
+                            70 + (index as i32) * 36,
+                            540,
+                            28,
+                            page_window,
+                            ((FIELD_BASE + index as i32) as isize) as *mut c_void,
+                            instance,
+                            null_mut(),
+                        );
+                        (*state).fields[index] = field;
+                    }
+                }
+                let back = CreateWindowExW(
+                    0,
+                    wide("BUTTON").as_ptr(),
+                    wide(crate::i18n::text("menu.back")).as_ptr(),
+                    WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON as u32,
+                    20,
+                    220,
+                    150,
+                    32,
+                    page_window,
+                    ((BACK_BASE + page as i32) as isize) as *mut c_void,
+                    instance,
+                    null_mut(),
+                );
+                SetWindowTheme(back, wide("DarkMode_Explorer").as_ptr(), std::ptr::null());
+            }
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, state as isize);
+            show_page(hwnd, None);
             let mut message = std::mem::zeroed();
             while GetMessageW(&mut message, null_mut(), 0, 0) > 0 {
                 TranslateMessage(&message);

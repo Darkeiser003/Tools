@@ -43,6 +43,12 @@ ok() { printf '  OK    %s\n' "$1"; }
 grep -Fq 'appstreamcli validate --no-net' "$ROOT_DIR/platform/linux/build.sh" || fail 'build Linux sin validación explícita AppStream'
 grep -Fq 'appimagetool --no-appstream' "$ROOT_DIR/platform/linux/build.sh" || fail 'build Linux sin modo AppStream explícito'
 [[ -f "$ROOT_DIR/README.md" ]] || fail 'falta el README del proyecto'
+[[ -x "$ROOT_DIR/clean-repository.sh" ]] || fail 'falta el limpiador seguro del checkout'
+grep -Fq -- '--dry-run' "$ROOT_DIR/clean-repository.sh" || fail 'limpiador sin modo simulación predeterminado'
+if grep -Fq -- 'git clean' "$ROOT_DIR/clean-repository.sh"; then
+    fail 'limpiador no debe delegar en git clean'
+fi
+grep -Fq -- 'No se borran fuentes' "$ROOT_DIR/clean-repository.sh" || fail 'limpiador sin protección de fuentes'
 old_product='cachy'
 old_product+='os-tools'
 old_alias='chary'
@@ -132,6 +138,10 @@ grep -Fq 'WinSlim Terminal' "$ROOT_DIR/rust/src/compat.rs" || fail 'descriptor s
 grep -Fq 'requiresCommands' "$ROOT_DIR/rust/src/compat.rs" || fail 'descriptor sin requisitos declarativos de acciones'
 grep -Fq 'workingDirectory' "$ROOT_DIR/rust/src/compat.rs" || fail 'descriptor sin directorio de trabajo declarativo'
 grep -Fq 'supports' "$ROOT_DIR/rust/src/compat.rs" || fail 'descriptor sin capacidades de acción'
+[[ -f "$ROOT_DIR/rust/src/automation.rs" ]] || fail 'falta el registro Rust de automatizaciones'
+grep -Fq 'menu-audit-inventory' "$ROOT_DIR/rust/src/main.rs" || fail 'menú sin categoría de auditoría/inventario'
+grep -Fq 'menu-import' "$ROOT_DIR/rust/src/main.rs" || fail 'menú sin categoría Importar'
+grep -Fq 'winslim_available' "$ROOT_DIR/rust/src/main.rs" || fail 'menú Windows sin detección condicional de WinSlim'
 grep -Fq 'standalone_releases_require_it' "$ROOT_DIR/rust/src/compat.rs" || fail 'contrato sin independencia de LTerminal'
 grep -Fq 'capabilities --format json' "$ROOT_DIR/platform/linux/build.sh" || fail 'build Linux sin descriptor JSON generado'
 grep -Fq 'capabilities --format json' "$ROOT_DIR/windows/build.ps1" || fail 'build Windows sin descriptor JSON generado'

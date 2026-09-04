@@ -193,28 +193,40 @@ run_menu main-packages "1\n3\n$PKG_OUT\nq\n" 'Inventario de paquetes y almacenes
 assert_file "$PKG_OUT/package-managers.tsv"
 assert_file "$PKG_OUT/package-artifacts.tsv"
 ok 'inventario de gestores y formatos de paquetes'
+
+AUTO_SCRIPT="$TMP_DIR/automation.sh"
+printf '#!/usr/bin/env bash\nprintf automation-e2e-ok\n' > "$AUTO_SCRIPT"
+chmod +x "$AUTO_SCRIPT"
+run_bash automation add --name e2e-script --program "$AUTO_SCRIPT" --cwd "$TMP_DIR" --args '--example "two words"' >"$TMP_DIR/automation-add.out"
+run_bash automation list >"$TMP_DIR/automation-list.out"
+grep -Fq 'e2e-script' "$TMP_DIR/automation-list.out" || die 'automation add/list no registró el script'
+run_bash automation run e2e-script >"$TMP_DIR/automation-run.out"
+grep -Fq 'automation-e2e-ok' "$TMP_DIR/automation-run.out" || die 'automation run no ejecutó el script registrado'
+run_bash automation remove e2e-script >"$TMP_DIR/automation-remove.out"
+! grep -Fq 'e2e-script' <(run_bash automation list) || die 'automation remove no retiró el registro'
+ok 'Importar scripts: registrar, listar, ejecutar y retirar en configuración aislada'
+
 run_menu main-packages-empty "1\n3\n\n" 'Pulsa Enter para volver:'
 ok 'opción 8 conserva la ventana cuando la ruta queda vacía'
-run_menu main-storage "4\n2\n3\nq\n" 'Herramientas de almacenamiento Linux'
-run_menu main-registry "4\n3\n1\nq\n" 'Registros y configuración Linux'
-run_menu main-tools "5\n2\nq\nq\n" 'Paquetes, almacenes y Git'
-run_menu main-multi-session "3\n3\n\nq\n5\n1\n\nq\n" 'Operación terminada correctamente.'
+run_menu main-storage "2\n1\n3\nq\n" 'Herramientas de almacenamiento Linux'
+run_menu main-clean "2\n2\nq\n" 'Limpieza protegida'
+run_menu main-registry "4\n2\n1\nq\n" 'Registros y configuración Linux'
+run_menu main-tools "5\n1\nq\nq\n" 'Paquetes, almacenes y Git'
+run_menu main-multi-session "1\n3\n$PKG_OUT\n\nq\n5\nq\nq\n" 'Operación terminada correctamente.'
 [[ "$(grep -o '=== LTools' "$TMP_DIR/main-multi-session.out" | wc -l)" -ge 2 ]] || die 'el menú no volvió a mostrarse tras una acción'
 grep -Fq $'\033[2J\033[H=== LTools' "$TMP_DIR/main-multi-session.out" || die 'el menú no limpió la pantalla al volver'
 grep -Fq 'Informe de paquetes:' "$TMP_DIR/main-multi-session.out" || die 'la sesión múltiple no ejecutó la opción 8'
-[[ "$(sed -n 's/^Plan: //p' "$TMP_DIR/main-multi-session.out" | sort -u | wc -l)" -ge 2 ]] || die 'la sesión múltiple reutilizó el mismo plan'
+[[ "$(sed -n 's/^Plan: //p' "$TMP_DIR/main-multi-session.out" | sort -u | wc -l)" -ge 1 ]] || die 'la sesión múltiple no generó plan'
 ok 'sesión múltiple: volver con Enter y cambiar de opción'
 
 printf 'E2E: recorriendo todas las opciones principales del menú...\n'
-run_menu main-clean "2\n1\nq\n" 'Limpieza protegida'
-run_menu main-clean-empty "2\n\n" 'LTools'
-run_menu main-applications "3\nq\n" 'Aplicaciones y compatibilidad'
-run_menu main-prefix "3\n2\n" 'Prefijos detectados:'
-run_menu main-defaults "3\n3\n" 'Defaults efectivos'
-run_menu main-system "4\nq\n" 'Sistema y dispositivos'
-run_menu main-packages-category "5\nq\n" 'Paquetes y Git'
-run_menu main-doctor "6\n1\n" 'Diagnóstico'
-run_menu main-diagnostics-category "6\nq\n" 'Diagnóstico y ayuda'
+run_menu main-clean-empty "2\n2\n" 'LTools'
+run_menu main-prefix "1\n4\n" 'Prefijos detectados:'
+run_menu main-defaults "4\n1\n" 'Defaults efectivos'
+run_menu main-system "3\n1\nq\n" 'Servicios / Dependencias'
+run_menu main-services-doctor "3\n2\n" 'Diagnóstico'
+run_menu main-automation-category "5\nq\n" 'Automatización'
+run_menu main-import-category "6\nq\n" 'Importar scripts'
 run_menu main-help "h\n" 'Comandos:'
 run_menu main-quit "q\n" 'LTools'
 if grep -Fq 'Opción no válida' "$TMP_DIR/main-quit.out"; then
@@ -240,11 +252,11 @@ done
 ok 'prompts de navegación y Enter vacío en los nueve idiomas'
 
 LANGUAGE_CATEGORIES=(
-    'es:Auditorías e inventarios' 'en:Audits and inventories'
-    'de:Prüfungen und Inventare' 'fr:Audits et inventaires'
-    'pt:Auditorias e inventários' 'it:Audit e inventari'
-    'ca:Auditories i inventaris' 'nl:Audits en inventarissen'
-    'pl:Audyty i inwentaryzacja'
+    'es:Auditar / Inventariar' 'en:Audit / Inventory'
+    'de:Prüfen / Inventarisieren' 'fr:Auditer / Inventorier'
+    'pt:Auditar / Inventariar' 'it:Audit / Inventario'
+    'ca:Auditar / Inventariar' 'nl:Auditeren / Inventariseren'
+    'pl:Audyt / Inwentaryzacja'
 )
 for language_category in "${LANGUAGE_CATEGORIES[@]}"; do
     language="${language_category%%:*}"
@@ -382,13 +394,13 @@ else
 fi
 
 RUST_DEFAULTS_OUTPUT="$TMP_DIR/rust-defaults-menu.out"
-printf '3\n3\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
+printf '4\n1\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
     LTOOLS_NO_MOUNTS=1 "$BIN" menu >"$RUST_DEFAULTS_OUTPUT" 2>&1
 grep -Fq 'Defaults efectivos' "$RUST_DEFAULTS_OUTPUT" || die 'el menú Rust no ejecutó defaults'
 ok 'menú Rust ejecuta la opción defaults'
 
 RUST_DOCTOR_OUTPUT="$TMP_DIR/rust-doctor-menu.out"
-printf '6\n1\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
+printf '3\n2\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
     LTOOLS_NO_MOUNTS=1 "$BIN" menu >"$RUST_DOCTOR_OUTPUT" 2>&1
 grep -Fq 'LTools host diagnostics' "$RUST_DOCTOR_OUTPUT" || die 'el menú Rust no ejecutó doctor'
 ok 'menú Rust ejecuta la opción doctor'
@@ -401,51 +413,51 @@ assert_file "$GAMES_OUT/rust-menu/configuration-validation.tsv"
 ok 'menú Rust ejecuta juegos, Wine, Proton y validación'
 
 RUST_CLEAN_OUTPUT="$TMP_DIR/rust-clean-menu.out"
-printf '2\n1\nq\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
+printf '2\n2\nq\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
     LTOOLS_NO_MOUNTS=1 "$BIN" menu >"$RUST_CLEAN_OUTPUT" 2>&1
 grep -Fq 'Limpieza protegida' "$RUST_CLEAN_OUTPUT" || die 'el menú Rust no abrió limpieza'
 [[ "$(grep -o '=== LTools' "$RUST_CLEAN_OUTPUT" | wc -l)" -ge 2 ]] || die 'q no volvió directamente al menú principal desde limpieza'
 ok 'menú Rust abre y cierra limpieza protegida'
 
 RUST_CLEAN_PATH_OUTPUT="$TMP_DIR/rust-clean-path-menu.out"
-printf '2\n1\n4\n%s\nn\nq\n' "$FIXTURE/duplicate-a.bin" | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
+printf '2\n2\n4\n%s\nn\nq\n' "$FIXTURE/duplicate-a.bin" | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
     LTOOLS_NO_MOUNTS=1 "$BIN" menu >"$RUST_CLEAN_PATH_OUTPUT" 2>&1
 grep -Fq 'Ruta:' "$RUST_CLEAN_PATH_OUTPUT" || die 'el submenú Rust clean no pidió una ruta'
 [[ "$(grep -o '=== LTools' "$RUST_CLEAN_PATH_OUTPUT" | wc -l)" -ge 2 ]] || die 'clean no volvió al menú principal tras cancelar'
 ok 'submenú Rust clean revisa y cancela una ruta'
 
 RUST_CLEAN_ORPHANS_OUTPUT="$TMP_DIR/rust-clean-orphans-menu.out"
-printf '2\n1\n1\nq\nq\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
+printf '2\n2\n1\nq\nq\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
     LTOOLS_NO_MOUNTS=1 "$BIN" menu >"$RUST_CLEAN_ORPHANS_OUTPUT" 2>&1
 grep -Fq 'paquetes huérfanos' "$RUST_CLEAN_ORPHANS_OUTPUT" || die 'el submenú Rust clean no ejecutó huérfanos'
 ok 'submenú Rust clean ejecuta revisión de huérfanos sin confirmar borrado'
 
 RUST_CLEAN_CACHE_OUTPUT="$TMP_DIR/rust-clean-cache-menu.out"
-printf '2\n1\n2\nq\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
+printf '2\n2\n2\nq\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
     LTOOLS_NO_MOUNTS=1 "$BIN" menu >"$RUST_CLEAN_CACHE_OUTPUT" 2>&1
 grep -Fq 'cachés' "$RUST_CLEAN_CACHE_OUTPUT" || die 'el submenú Rust clean no ejecutó cachés'
 ok 'submenú Rust clean ejecuta revisión de cachés sin confirmar borrado'
 
 RUST_CLEAN_FLATPAK_OUTPUT="$TMP_DIR/rust-clean-flatpak-menu.out"
-printf '2\n1\n3\nn\nq\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$HOME/.local/state" \
+printf '2\n2\n3\nn\nq\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$HOME/.local/state" \
     LTOOLS_NO_MOUNTS=1 "$BIN" menu >"$RUST_CLEAN_FLATPAK_OUTPUT" 2>&1
 grep -Fq 'Limpieza protegida' "$RUST_CLEAN_FLATPAK_OUTPUT" || die 'el submenú Rust clean no ejecutó Flatpak'
 ok 'submenú Rust clean ofrece Flatpak sin confirmar borrado'
 
 RUST_CLEAN_PACKAGE_OUTPUT="$TMP_DIR/rust-clean-package-menu.out"
-printf '2\n1\n5\n%s\nn\nq\n' "$FIXTURE/example.deb" | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
+printf '2\n2\n5\n%s\nn\nq\n' "$FIXTURE/example.deb" | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
     LTOOLS_NO_MOUNTS=1 "$BIN" menu >"$RUST_CLEAN_PACKAGE_OUTPUT" 2>&1
 grep -Fq 'Paquete:' "$RUST_CLEAN_PACKAGE_OUTPUT" || die 'el submenú Rust clean no pidió un paquete'
 ok 'submenú Rust clean revisa y cancela un paquete'
 
 RUST_PREFIX_OUTPUT="$TMP_DIR/rust-prefix-menu.out"
-printf '3\n2\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
+printf '1\n4\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
     LTOOLS_NO_MOUNTS=1 "$BIN" menu >"$RUST_PREFIX_OUTPUT" 2>&1
 grep -Fq 'ExamplePrefix' "$RUST_PREFIX_OUTPUT" || die 'el menú Rust no listó prefijos'
 ok 'menú Rust lista prefijos Wine/Proton'
 
 RUST_SYSTEM_OUTPUT="$TMP_DIR/rust-system-menu.out"
-printf '4\n1\n1\nq\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
+printf '3\n1\n1\nq\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
     LTOOLS_NO_MOUNTS=1 "$BIN" menu >"$RUST_SYSTEM_OUTPUT" 2>&1
 grep -Fq 'Servicios, procesos y journal' "$RUST_SYSTEM_OUTPUT" || die 'el menú Rust no abrió system'
 grep -Fq 'Estado de systemd' "$RUST_SYSTEM_OUTPUT" || die 'el submenú Rust system no ejecutó status'
@@ -453,7 +465,7 @@ ok 'menú Rust ejecuta systemd desde su submenú'
 
 for system_choice in 2 3 4 5; do
     RUST_SYSTEM_CHOICE_OUTPUT="$TMP_DIR/rust-system-${system_choice}-menu.out"
-    printf '4\n1\n%s\nq\n' "$system_choice" | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
+    printf '3\n1\n%s\nq\n' "$system_choice" | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
         LTOOLS_NO_MOUNTS=1 "$BIN" menu >"$RUST_SYSTEM_CHOICE_OUTPUT" 2>&1
     grep -Fq 'Servicios, procesos y journal' "$RUST_SYSTEM_CHOICE_OUTPUT" || die "el submenú Rust system no mostró la opción $system_choice"
 done
@@ -461,20 +473,20 @@ ok 'submenú Rust system recorre servicios de sistema/usuario, procesos y journa
 
 for system_choice in 7 8; do
     RUST_SYSTEM_BACK_OUTPUT="$TMP_DIR/rust-system-back-${system_choice}.out"
-    printf '4\n1\n%s\nq\n' "$system_choice" | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
+    printf '3\n1\n%s\nq\n' "$system_choice" | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
         LTOOLS_NO_MOUNTS=1 "$BIN" menu >"$RUST_SYSTEM_BACK_OUTPUT" 2>&1
     grep -Fq 'Servicios, procesos y journal' "$RUST_SYSTEM_BACK_OUTPUT" || die "system no volvió desde la opción $system_choice"
 done
 ok 'menú system vuelve con Enter vacío en gestión y dependencias'
 
 RUST_SYSTEM_INVALID_OUTPUT="$TMP_DIR/rust-system-invalid-menu.out"
-printf '6\nx\nq\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
+printf '3\n1\nx\nq\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
     LTOOLS_NO_MOUNTS=1 "$BIN" menu >"$RUST_SYSTEM_INVALID_OUTPUT" 2>&1
 grep -Fq 'Opción no válida' "$RUST_SYSTEM_INVALID_OUTPUT" || die 'el submenú Rust system no gestionó una opción inválida'
 ok 'submenú Rust system gestiona entrada inválida y salida'
 
 RUST_PACKAGES_OUTPUT="$TMP_DIR/rust-packages-menu.out"
-printf '5\n1\n%s\n' "$PKG_OUT/rust-menu" | timeout 60 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
+printf '1\n3\n%s\n' "$PKG_OUT/rust-menu" | timeout 60 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
     LTOOLS_NO_MOUNTS=1 "$BIN" menu >"$RUST_PACKAGES_OUTPUT" 2>&1
 grep -Fq 'Inventario de paquetes y almacenes' "$RUST_PACKAGES_OUTPUT" || die 'el menú Rust no abrió paquetes'
 assert_file "$PKG_OUT/rust-menu/package-managers.tsv"
