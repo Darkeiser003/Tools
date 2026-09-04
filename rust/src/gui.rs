@@ -339,6 +339,7 @@ mod linux {
         fn gtk_widget_show_all(widget: *mut Widget);
         fn gtk_widget_show(widget: *mut Widget);
         fn gtk_widget_hide(widget: *mut Widget);
+        fn gtk_widget_set_size_request(widget: *mut Widget, width: c_int, height: c_int);
         fn gtk_main();
         fn gtk_main_quit();
     }
@@ -382,7 +383,7 @@ mod linux {
             "* { color: #e6edf3; }\n\
              window { background-color: #10161b; }\n\
              label { color: #e6edf3; }\n\
-             button { color: #e6edf3; background-image: none; background-color: #1c2b34; border: 1px solid #456878; border-radius: 4px; padding: 7px 12px; }\n\
+             button { color: #e6edf3; background-image: none; background-color: #1c2b34; border: 1px solid #456878; border-radius: 5px; padding: 9px 16px; min-height: 28px; }\n\
              button:hover { background-color: #28586d; border-color: #65c7e8; }\n\
              button:active { background-color: #347f9b; }\n\
              entry, textview, textview text, scrolledwindow { color: #d9f2fa; background-color: #090d10; caret-color: #65c7e8; }\n\
@@ -633,6 +634,7 @@ mod linux {
     ) {
         let label_c = CString::new(label_text).unwrap_or_default();
         let button = gtk_button_new_with_label(label_c.as_ptr());
+        gtk_widget_set_size_request(button, 250, 44);
         let data = Box::into_raw(Box::new(ActionData {
             command,
             args,
@@ -653,6 +655,7 @@ mod linux {
     ) {
         let label_c = CString::new(label_text).unwrap_or_default();
         let button = gtk_button_new_with_label(label_c.as_ptr());
+        gtk_widget_set_size_request(button, 280, 52);
         let data = Box::into_raw(Box::new(NavigationButtonData { navigation, page }));
         connect(button, "clicked", on_navigation, data.cast());
         gtk_grid_attach(grid, button, row % 2, row / 2, 1, 1);
@@ -661,8 +664,9 @@ mod linux {
     unsafe fn add_back_button(grid: *mut Widget, navigation: *mut NavigationData) {
         let label = CString::new(crate::i18n::text("menu.back")).unwrap_or_default();
         let button = gtk_button_new_with_label(label.as_ptr());
+        gtk_widget_set_size_request(button, 280, 44);
         connect(button, "clicked", on_back, navigation.cast());
-        gtk_grid_attach(grid, button, 0, 99, 2, 1);
+        gtk_grid_attach(grid, button, 0, 8, 2, 1);
     }
     pub fn run() -> Result<(), String> {
         unsafe {
@@ -703,16 +707,23 @@ mod linux {
             let status = gtk_label_new(ready.as_ptr());
             gtk_label_set_xalign(status, 0.0);
             gtk_box_pack_start(root, status, 0, 0, 0);
+            // Los controles tienen su propio scroll. La salida conserva otro
+            // scroll debajo, para que una ventana pequeña no oculte acciones.
+            let controls_scroll = gtk_scrolled_window_new(null_mut(), null_mut());
+            gtk_scrolled_window_set_policy(controls_scroll, 2, 1);
+            let controls_box = gtk_box_new(1, 14);
+            gtk_container_add(controls_scroll, controls_box);
+            gtk_box_pack_start(root, controls_scroll, 1, 1, 0);
             let main_grid = gtk_grid_new();
-            gtk_grid_set_row_spacing(main_grid, 8);
-            gtk_grid_set_column_spacing(main_grid, 8);
-            gtk_box_pack_start(root, main_grid, 0, 0, 0);
+            gtk_grid_set_row_spacing(main_grid, 14);
+            gtk_grid_set_column_spacing(main_grid, 14);
+            gtk_box_pack_start(controls_box, main_grid, 0, 0, 0);
             let mut pages = [null_mut(); 6];
             for page in &mut pages {
                 *page = gtk_grid_new();
-                gtk_grid_set_row_spacing(*page, 8);
-                gtk_grid_set_column_spacing(*page, 8);
-                gtk_box_pack_start(root, *page, 0, 0, 0);
+                gtk_grid_set_row_spacing(*page, 14);
+                gtk_grid_set_column_spacing(*page, 14);
+                gtk_box_pack_start(controls_box, *page, 0, 0, 0);
             }
             let navigation = Box::into_raw(Box::new(NavigationData {
                 main: main_grid,
@@ -932,17 +943,24 @@ mod linux {
             let entry = gtk_entry_new();
             let placeholder = CString::new(crate::i18n::gui_text("package_placeholder")).unwrap();
             gtk_entry_set_placeholder_text(entry, placeholder.as_ptr());
-            gtk_box_pack_start(root, entry, 0, 0, 0);
             let search_label = CString::new(crate::i18n::gui_text("search")).unwrap();
             let search = gtk_button_new_with_label(search_label.as_ptr());
+            gtk_widget_set_size_request(search, 180, 44);
             let data = Box::into_raw(Box::new(SearchData {
                 entry,
                 buffer,
                 status,
             }));
             connect(search, "clicked", on_search, data.cast());
-            gtk_box_pack_start(root, search, 0, 0, 0);
+            let search_row = gtk_box_new(0, 12);
+            gtk_box_pack_start(search_row, entry, 1, 1, 0);
+            gtk_box_pack_start(search_row, search, 0, 0, 0);
+            gtk_box_pack_start(controls_box, search_row, 0, 0, 0);
             gtk_widget_show_all(window);
+            // show_all vuelve a mostrar también los hijos ocultos durante la
+            // construcción; restablecer la página inicial evita mezclar todos
+            // los submenús en la pantalla principal.
+            show_page(&*navigation, None);
             if std::env::var_os("LTOOLS_GUI_SMOKE").is_some() {
                 let delay = std::env::var("LTOOLS_GUI_SMOKE_HOLD_MS")
                     .ok()

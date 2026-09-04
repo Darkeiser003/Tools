@@ -49,6 +49,10 @@ if grep -Fq -- 'git clean' "$ROOT_DIR/clean-repository.sh"; then
     fail 'limpiador no debe delegar en git clean'
 fi
 grep -Fq -- 'No se borran fuentes' "$ROOT_DIR/clean-repository.sh" || fail 'limpiador sin protección de fuentes'
+grep -Fq 'gtk_widget_set_size_request' "$ROOT_DIR/rust/src/gui.rs" || fail 'GUI sin tamaño mínimo de controles'
+grep -Fq 'let controls_scroll = gtk_scrolled_window_new' "$ROOT_DIR/rust/src/gui.rs" || fail 'GUI sin scroll independiente de controles'
+grep -Fq 'gtk_box_pack_start(root, controls_scroll, 1, 1, 0)' "$ROOT_DIR/rust/src/gui.rs" || fail 'GUI sin área desplazable visible'
+grep -Fq 'show_page(&*navigation, None);' "$ROOT_DIR/rust/src/gui.rs" || fail 'GUI no restaura la página inicial tras mostrar la ventana'
 old_product='cachy'
 old_product+='os-tools'
 old_alias='chary'
