@@ -51,12 +51,15 @@ fn removal_command(manager: &str) -> Option<(&'static str, Vec<String>)> {
 pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
     let mut out = None;
     let mut package_only = false;
+    let mut full = false;
+    let mut view_report = false;
     for i in 0..args.len() {
         match args[i].as_str() {
             "--out" => out = args.get(i + 1).map(PathBuf::from),
             "--packages-only" => package_only = true,
+            "--full" => full = true,
+            "--view-report" => view_report = true,
             "--dry-run" | "--plan" => {}
-            "--full" => {}
             other if other.starts_with('-') => return Err(format!("opción desconocida: {other}")),
             _ => {}
         }
@@ -65,8 +68,15 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
         PathBuf::from(format!("rust-package-audit-{}", crate::common::timestamp()))
     });
     fs::create_dir_all(&out).map_err(|e| e.to_string())?;
-    let mut managers = File::create(out.join("package-managers.tsv")).map_err(|e| e.to_string())?;
-    writeln!(managers, "manager\tpath\tstatus").map_err(|e| e.to_string())?;
+    let mut inventory = File::create(out.join("inventory.tsv")).map_err(|e| e.to_string())?;
+    writeln!(inventory, "kind\tscope\tmanager\tdata\tpath\tbytes").map_err(|e| e.to_string())?;
+    let mut managers = if full {
+        let mut file = File::create(out.join("package-managers.tsv")).map_err(|e| e.to_string())?;
+        writeln!(file, "manager\tpath\tstatus").map_err(|e| e.to_string())?;
+        Some(file)
+    } else {
+        None
+    };
     let known = [
         "pacman",
         "paru",
@@ -93,75 +103,79 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
     ];
     for manager in known {
         if command_exists(manager) {
-            writeln!(
-                managers,
-                "{manager}\t{}\tinstalled",
-                command_output("sh", &["-c", &format!("command -v -- {manager}")])
-                    .unwrap_or_else(|| manager.into())
-            )
-            .map_err(|e| e.to_string())?;
+            let path = command_output("sh", &["-c", &format!("command -v -- {manager}")])
+                .unwrap_or_else(|| manager.into());
+            writeln!(inventory, "manager\tsystem\t{manager}\tinstalled\t{path}\t")
+                .map_err(|e| e.to_string())?;
+            if let Some(file) = managers.as_mut() {
+                writeln!(file, "{manager}\t{path}\tinstalled").map_err(|e| e.to_string())?;
+            }
         }
     }
-    collect_query(&out, "packages-pacman.tsv", "pacman", &["-Q"], "system");
-    collect_query(
-        &out,
-        "packages-pacman-foreign.tsv",
-        "pacman",
-        &["-Qm"],
-        "user/AUR",
-    );
-    collect_query(
-        &out,
-        "packages-pacman-orphans.tsv",
-        "pacman",
-        &["-Qdtq"],
-        "orphan",
-    );
-    collect_query(
-        &out,
-        "packages-pacman-explicit.tsv",
-        "pacman",
-        &["-Qqe"],
-        "explicit",
-    );
-    collect_query(
-        &out,
-        "packages-dpkg.tsv",
-        "dpkg-query",
-        &[
-            "-W",
-            "-f=${binary:Package}\t${Version}\t${Installed-Size}\\n",
-        ],
-        "system",
-    );
-    collect_query(
-        &out,
-        "packages-rpm.tsv",
-        "rpm",
-        &["-qa", "--qf", "%{NAME}\t%{VERSION}-%{RELEASE}\t%{SIZE}\\n"],
-        "system",
-    );
-    collect_query(
-        &out,
-        "packages-flatpak.tsv",
-        "flatpak",
-        &[
-            "list",
-            "--app",
-            "--columns=application,version,installation",
-        ],
-        "user/system",
-    );
-    collect_query(&out, "packages-snap.tsv", "snap", &["list"], "system");
-    collect_query(
-        &out,
-        "packages-brew.tsv",
-        "brew",
-        &["list", "--formula"],
-        "user",
-    );
-    collect_query(&out, "packages-nix.tsv", "nix-env", &["-q"], "user");
-    collect_artifacts(&out, &ctx.home);
+    let queries = [
+        ("packages-pacman.tsv", "pacman", vec!["-Q"], "system"),
+        (
+            "packages-pacman-foreign.tsv",
+            "pacman",
+            vec!["-Qm"],
+            "user/AUR",
+        ),
+        (
+            "packages-pacman-orphans.tsv",
+            "pacman",
+            vec!["-Qdtq"],
+            "orphan",
+        ),
+        (
+            "packages-pacman-explicit.tsv",
+            "pacman",
+            vec!["-Qqe"],
+            "explicit",
+        ),
+        (
+            "packages-dpkg.tsv",
+            "dpkg-query",
+            vec![
+                "-W",
+                "-f=${binary:Package}\t${Version}\t${Installed-Size}\\n",
+            ],
+            "system",
+        ),
+        (
+            "packages-rpm.tsv",
+            "rpm",
+            vec!["-qa", "--qf", "%{NAME}\t%{VERSION}-%{RELEASE}\t%{SIZE}\\n"],
+            "system",
+        ),
+        (
+            "packages-flatpak.tsv",
+            "flatpak",
+            vec![
+                "list",
+                "--app",
+                "--columns=application,version,installation",
+            ],
+            "user/system",
+        ),
+        ("packages-snap.tsv", "snap", vec!["list"], "system"),
+        (
+            "packages-brew.tsv",
+            "brew",
+            vec!["list", "--formula"],
+            "user",
+        ),
+        ("packages-nix.tsv", "nix-env", vec!["-q"], "user"),
+    ];
+    for (filename, program, query_args, scope) in &queries {
+        collect_query_rows(&mut inventory, program, query_args, scope);
+        if full {
+            collect_query(&out, filename, program, query_args, scope);
+        }
+    }
+    collect_artifact_rows(&mut inventory, &ctx.home);
+    if full {
+        collect_artifacts(&out, &ctx.home);
+    }
     let mut summary = File::create(out.join("summary.txt")).map_err(|e| e.to_string())?;
     writeln!(summary, "ltools-rs package inventory").map_err(|e| e.to_string())?;
     writeln!(
@@ -170,8 +184,28 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
         if package_only { "packages" } else { "full" }
     )
     .map_err(|e| e.to_string())?;
+    writeln!(
+        summary,
+        "Formato: {}",
+        if full {
+            "compacto + detallado"
+        } else {
+            "compacto"
+        }
+    )
+    .map_err(|e| e.to_string())?;
+    writeln!(
+        summary,
+        "Inventario principal: {}",
+        out.join("inventory.tsv").display()
+    )
+    .map_err(|e| e.to_string())?;
     writeln!(summary, "Informe: {}", out.display()).map_err(|e| e.to_string())?;
     println!("Informe de paquetes: {}", out.display());
+    println!(
+        "Inventario principal: {}",
+        out.join("inventory.tsv").display()
+    );
     if let Some(plan) = &ctx.plan {
         plan.record(
             "package-audit",
@@ -183,7 +217,20 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
         )
         .map_err(|e| e.to_string())?;
     }
+    if view_report {
+        crate::report::interactive(&out)?;
+    }
     Ok(())
+}
+
+fn collect_query_rows(inventory: &mut File, program: &str, args: &[&str], scope: &str) {
+    if !command_exists(program) {
+        return;
+    }
+    for line in query(program, args).lines() {
+        let data = line.replace(['\t', '\r', '\n'], " ");
+        let _ = writeln!(inventory, "package\t{scope}\t{program}\t{data}\t\t");
+    }
 }
 
 fn collect_query(out: &Path, name: &str, program: &str, args: &[&str], scope: &str) {
@@ -216,6 +263,68 @@ fn collect_artifacts(out: &Path, home: &Path) {
     ];
     for root in roots {
         collect_artifacts_dir(&root, &mut file, 0);
+    }
+}
+
+fn collect_artifact_rows(inventory: &mut File, home: &Path) {
+    let roots = [
+        PathBuf::from("/var/cache/pacman/pkg"),
+        PathBuf::from("/var/cache/apt/archives"),
+        PathBuf::from("/var/cache/dnf"),
+        home.join(".cache/paru"),
+        home.join(".cache/yay"),
+        home.join(".cache/pikaur"),
+    ];
+    for root in roots {
+        collect_artifact_rows_dir(&root, inventory, 0);
+    }
+}
+
+fn collect_artifact_rows_dir(path: &Path, inventory: &mut File, depth: usize) {
+    if depth > 6 {
+        return;
+    }
+    let entries = match fs::read_dir(path) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let child = entry.path();
+        let meta = match fs::symlink_metadata(&child) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if meta.file_type().is_symlink() {
+            continue;
+        }
+        if meta.is_dir() {
+            collect_artifact_rows_dir(&child, inventory, depth + 1);
+            continue;
+        }
+        let ext = child
+            .extension()
+            .and_then(|v| v.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let format = match ext.as_str() {
+            "pkg" | "zst" | "xz" | "gz" => "arch",
+            "deb" => "deb",
+            "rpm" => "rpm",
+            "apk" => "apk",
+            "txz" => "pkg",
+            _ => continue,
+        };
+        let scope = if child.starts_with("/var") {
+            "system"
+        } else {
+            "user"
+        };
+        let path_text = crate::common::clean(&child.display().to_string());
+        let _ = writeln!(
+            inventory,
+            "artifact\t{scope}\t{format}\t{format}\t{path_text}\t{}",
+            meta.len()
+        );
     }
 }
 
@@ -277,6 +386,7 @@ pub fn clean(ctx: &Context, args: &[String]) -> Result<(), String> {
     let mut orphans = false;
     let mut caches = false;
     let mut flatpak_unused = false;
+    let mut preview = false;
     let mut force = false;
     let mut cascade = false;
     let mut manager = None;
@@ -296,6 +406,7 @@ pub fn clean(ctx: &Context, args: &[String]) -> Result<(), String> {
             "--orphans" => orphans = true,
             "--package-caches" | "--pacman-cache" => caches = true,
             "--flatpak-unused" => flatpak_unused = true,
+            "--preview" => preview = true,
             "--force" => force = true,
             "--cascade" => cascade = true,
             "--manager" => {
@@ -311,6 +422,9 @@ pub fn clean(ctx: &Context, args: &[String]) -> Result<(), String> {
             other => return Err(format!("opción desconocida: {other}")),
         }
         i += 1;
+    }
+    if preview {
+        return preview_clean(ctx);
     }
     if orphans && command_exists("pacman") {
         packages.extend(query("pacman", &["-Qdtq"]).lines().map(str::to_string));
@@ -362,6 +476,52 @@ pub fn clean(ctx: &Context, args: &[String]) -> Result<(), String> {
     if flatpak_unused {
         run_flatpak_unused(ctx)?;
     }
+    Ok(())
+}
+
+/// Presenta las posibles fuentes de limpieza sin ejecutar ninguna operación.
+/// Es el contrato que usa la GUI: no abre un menú que dependa de stdin ni
+/// inicia gestores de paquetes con una acción implícita.
+fn preview_clean(ctx: &Context) -> Result<(), String> {
+    println!("=== Revisión segura de limpieza ===");
+    let managers = [
+        ("pacman", "/var/cache/pacman/pkg"),
+        ("apt-get", "/var/cache/apt/archives"),
+        ("dnf", "/var/cache/dnf"),
+        ("zypper", "/var/cache/zypp"),
+        ("apk", "/var/cache/apk"),
+        ("xbps-remove", "/var/cache/xbps"),
+        ("brew", "brew-cache"),
+        ("flatpak", "runtimes sin uso"),
+    ];
+    let mut found = false;
+    for (manager, target) in managers {
+        if command_exists(manager) {
+            found = true;
+            println!("  Detectado: {manager} · revisar {target}");
+        }
+    }
+    for name in ["paru", "yay", "pikaur", "trizen", "aura"] {
+        let path = ctx.home.join(format!(".cache/{name}"));
+        if path.is_dir() {
+            found = true;
+            println!("  Caché AUR: {} · {}", name, path.display());
+        }
+    }
+    if command_exists("pacman") {
+        let orphans = query("pacman", &["-Qdtq"]);
+        if !orphans.trim().is_empty() {
+            found = true;
+            println!(
+                "  Paquetes huérfanos detectados: {}",
+                orphans.lines().count()
+            );
+        }
+    }
+    if !found {
+        println!("No se detectaron fuentes de limpieza gestionables.");
+    }
+    println!("No se ha modificado ningún paquete, caché ni ruta.");
     Ok(())
 }
 

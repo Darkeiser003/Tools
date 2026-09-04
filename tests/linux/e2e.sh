@@ -98,6 +98,24 @@ printf 'y\n' | run_tool --dry-run prefix migrate --source "$SOURCE" --dest "$DRY
 ok 'bloqueos de seguridad y dry-run sin mutaciones'
 
 printf 'E2E: probando rollback...\n'
+printf 'E2E: comprobando rollback en dry-run...\n'
+run_tool --dry-run rollback --plan "$PLAN" >"$TMP_DIR/rollback-dry-run.out"
+grep -Fq 'Rollback simulado' "$TMP_DIR/rollback-dry-run.out" || die 'rollback --dry-run no informó simulación'
+[[ -e "$DEST" ]] || die 'rollback --dry-run modificó el destino'
+[[ -d "$SOURCE" ]] || die 'rollback --dry-run alteró el origen'
+ok 'rollback dry-run sin mutaciones'
+
+printf 'E2E: rechazando planes con formato inválido...\n'
+BAD_PLAN="$TMP_DIR/bad-plan.tsv"
+printf 'esto no es un plan de LTools\n' > "$BAD_PLAN"
+set +e
+run_tool --dry-run rollback --plan "$BAD_PLAN" >"$TMP_DIR/bad-plan.out" 2>&1
+BAD_PLAN_STATUS=$?
+set -e
+[[ "$BAD_PLAN_STATUS" -ne 0 ]] || die 'rollback aceptó un plan con formato inválido'
+grep -Fq 'formato de plan no reconocido' "$TMP_DIR/bad-plan.out" || die 'rollback no explicó el formato inválido'
+ok 'rollback rechaza planes manipulados o incompletos'
+
 printf 'y\n' | run_tool rollback --plan "$PLAN" >/dev/null
 [[ ! -e "$DEST" ]] || die 'rollback no retiró el destino creado'
 [[ -d "$SOURCE" ]] || die 'rollback alteró el origen'

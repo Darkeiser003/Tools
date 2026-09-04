@@ -1,20 +1,28 @@
+mod accounts;
+mod actions;
 mod audit;
 mod automation;
+mod boot;
 mod common;
 mod compat;
+mod diagnostics;
 mod games;
 mod git;
 #[cfg(any(target_os = "linux", windows))]
 mod gui;
 mod i18n;
+mod native;
 mod packages;
 mod platform;
 mod registry;
 mod release;
+mod report;
+mod shortcuts;
 mod signature;
 mod software;
 mod storage;
 mod system;
+mod theme;
 mod tools;
 #[cfg(not(windows))]
 mod wine;
@@ -71,8 +79,14 @@ fn interrupt_requested() -> bool {
 fn finish_after_interrupt() -> bool {
     if interrupt_requested() {
         println!(
-            "\nInterrupción recibida. Saliendo de {}.",
-            i18n::product_name()
+            "\n{}",
+            theme::current().paint(
+                theme::Role::Warning,
+                format!(
+                    "Interrupción recibida. Saliendo de {}.",
+                    i18n::product_name()
+                ),
+            )
         );
         true
     } else {
@@ -122,16 +136,23 @@ fn usage() {
     println!("  audit       {}", i18n::text("help.audit"));
     println!("  games       {}", i18n::games_help());
     println!("  packages    {}", i18n::text("help.packages"));
+    println!("  report      Leer un informe con salida directa, paginador o editor");
     println!("  software    {}", software::help());
     println!("  git         {}", git::help());
     println!("  automation  {}", i18n::automation_text("help"));
+    println!("  actions     {}", i18n::actions_text("help"));
     println!("  tools       {}", i18n::tools_text("help"));
     println!("  clean       {}", i18n::text("help.clean"));
     println!("  prefix      {}", i18n::prefix_help());
     println!("  defaults    {}", i18n::defaults_help());
     println!("  system      {}", i18n::system_help());
+    println!("  boot        {}", boot::help());
+    println!("  accounts    {}", i18n::accounts_label());
+    println!("  native      {}", i18n::native_label());
+    println!("              {}", native::help());
     println!("              {}", i18n::system_options());
     println!("  doctor      {}", i18n::text("help.doctor"));
+    println!("  diagnostics {}", diagnostics::help());
     println!("              doctor --install TOOL");
     println!("  rollback    {}", i18n::text("help.rollback"));
     println!("  storage     {}", i18n::storage_help());
@@ -141,7 +162,14 @@ fn usage() {
     println!("  release-checksums  Genera SHA256SUMS.txt para los artefactos publicables");
     println!("  release-signature  Firma o verifica SHA256SUMS.txt con Ed25519");
     println!();
-    println!("{}", i18n::text("help.common"));
+    println!(
+        "{}",
+        theme::current().paint(theme::Role::Info, i18n::text("help.common"))
+    );
+    println!(
+        "{}",
+        theme::current().paint(theme::Role::Muted, i18n::visual_options())
+    );
     println!("{}", i18n::text("help.clean.options"));
     println!("{}", i18n::prefix_options());
     let prefix_flags = i18n::prefix_flags();
@@ -175,12 +203,14 @@ fn execute_action(command: &str, ctx: &Context, args: &[String]) -> Result<(), S
         #[cfg(not(windows))]
         "wine-audit" => games::run(ctx, args),
         "packages" | "pkg-audit" | "package-audit" => packages::run(ctx, args),
+        "report" | "reports" => report::run(ctx, args),
         "software" | "package-search" | "package-install" | "install-package" => {
             software::run(ctx, args)
         }
         "git" | "git-tools" => git::run(ctx, args),
         "tools" | "quick-actions" => tools::menu(ctx),
         "automation" | "automations" | "import" => automation::run(ctx, args),
+        "actions" | "action-catalog" => actions::run(ctx, args),
         "menu-audit-inventory" => category_menu(ctx, MenuCategory::AuditInventory),
         "menu-storage" => category_menu(ctx, MenuCategory::Storage),
         "menu-services" => category_menu(ctx, MenuCategory::Services),
@@ -205,6 +235,10 @@ fn execute_action(command: &str, ctx: &Context, args: &[String]) -> Result<(), S
             Ok(())
         }
         "system" | "services" | "systemctl" => system::run(ctx, args),
+        "boot" | "bootloader" | "efi" => boot::run(ctx, args),
+        "accounts" | "users" | "user-management" => accounts::run(ctx, args),
+        "native" | "native-tools" => native::run(ctx, args),
+        "diagnostics" | "diag" | "health" => diagnostics::run(ctx, args),
         "storage" | "disks" | "partitions" => storage::run(ctx, args),
         "registry" | "records" => registry::run(ctx, args),
         "doctor" | "diagnose" => doctor_action(ctx, args),
@@ -229,6 +263,55 @@ pub(crate) fn clear_screen() {
     let _ = io::stdout().flush();
 }
 
+/// Pure queries should not create a state file on every invocation. Keep a
+/// plan for mutations, simulations, and explicit `--plan` requests.
+fn command_needs_plan(command: &str, args: &[String], dry_run: bool, explicit: bool) -> bool {
+    if dry_run || explicit {
+        return true;
+    }
+    let has_any = |values: &[&str]| args.iter().any(|arg| values.contains(&arg.as_str()));
+    match command {
+        "audit" | "games" | "packages" | "defaults" | "paths" | "report" | "reports"
+        | "diagnostics" | "diag" | "health" | "boot" | "bootloader" | "efi" => false,
+        "storage" | "disks" | "partitions" => {
+            args.is_empty()
+                || has_any(&[
+                    "menu",
+                    "mount",
+                    "unmount",
+                    "open-manager",
+                    "open-gparted",
+                    "format",
+                    "resize",
+                    "partition",
+                ])
+        }
+        "system" | "services" | "systemctl" => has_any(&[
+            "start",
+            "stop",
+            "restart",
+            "enable",
+            "disable",
+            "mask",
+            "unmask",
+            "kill",
+            "daemon-reload",
+        ]),
+        "software" | "package-search" | "package-install" | "install-package" => {
+            has_any(&["install", "upgrade", "remove", "uninstall"])
+        }
+        "git" | "git-tools" => has_any(&["clone", "fetch", "pull", "push", "login"]),
+        "automation" | "automations" | "import" => {
+            args.is_empty() || has_any(&["menu", "add", "remove", "run"])
+        }
+        "actions" | "action-catalog" => args.is_empty() || has_any(&["menu", "run"]),
+        "registry" | "records" => has_any(&["write", "apply", "import", "export"]),
+        // Cleaning and prefix management are mutation-capable by design.
+        "clean" | "prefix" | "wine" | "wine-audit" => true,
+        _ => true,
+    }
+}
+
 fn run_interactive_menu(base_args: &[String], dry_run: bool, plan_path: Option<PathBuf>) {
     let mut requested_plan_path = plan_path;
     let mut first_menu = true;
@@ -245,6 +328,7 @@ fn run_interactive_menu(base_args: &[String], dry_run: bool, plan_path: Option<P
         let mut action_args = base_args.to_vec();
         action_args.append(&mut args);
         let is_submenu = command == "tools"
+            || command == "actions"
             || command.starts_with("menu-")
             || (matches!(
                 command.as_str(),
@@ -273,8 +357,14 @@ fn run_interactive_menu(base_args: &[String], dry_run: bool, plan_path: Option<P
             continue;
         }
         match result {
-            Ok(()) => println!("Operación terminada correctamente."),
-            Err(error) => eprintln!("Error: {error}"),
+            Ok(()) => println!(
+                "{}",
+                theme::current().paint(theme::Role::Success, "Operación terminada correctamente.")
+            ),
+            Err(error) => eprintln!(
+                "{}",
+                theme::current().paint(theme::Role::Error, format!("Error: {error}"))
+            ),
         }
         println!("Plan: {}", ctx.plan_path.as_ref().unwrap().display());
         print!("Pulsa Enter para volver al menú, o q para salir: ");
@@ -293,8 +383,10 @@ fn run_interactive_menu(base_args: &[String], dry_run: bool, plan_path: Option<P
 }
 
 fn main() {
-    let raw: Vec<String> = env::args().skip(1).collect();
+    let raw_input: Vec<String> = env::args().skip(1).collect();
+    let raw = shortcuts::expand(&raw_input).unwrap_or(raw_input);
     apply_language(&raw);
+    apply_visual_options(&raw);
     install_interrupt_handler();
     if raw.iter().any(|a| a == "--version") {
         println!("ltools-rs {VERSION}");
@@ -340,12 +432,34 @@ fn main() {
         }
         return;
     }
+    // The GUI smoke harness can make child CLI actions deliberately slow so
+    // that tests prove the GUI event loop remains responsive. The delay is
+    // opt-in, restricted to a CLI child, and never affects real executions.
+    if cli_profile() && env::var_os("LTOOLS_GUI_SMOKE").is_some() {
+        if let Some(delay) = env::var("LTOOLS_GUI_SMOKE_ACTION_DELAY_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+        {
+            std::thread::sleep(std::time::Duration::from_millis(delay.min(60_000)));
+        }
+    }
     // Acepta tanto `comando --opciones` como `--opciones comando ...`.
     // El lanzador Bash usa la segunda forma para las opciones globales.
     let mut command_index = 0;
     while command_index < raw.len() {
         match raw[command_index].as_str() {
             "--dry-run" => command_index += 1,
+            "--theme" | "--color" => {
+                if command_index + 1 >= raw.len() {
+                    eprintln!("--theme/--color requiere un valor");
+                    std::process::exit(2);
+                }
+                command_index += 2;
+            }
+            "--no-color" => command_index += 1,
+            option if option.starts_with("--theme=") || option.starts_with("--color=") => {
+                command_index += 1
+            }
             "--lang" | "--language" => {
                 if command_index + 1 >= raw.len() {
                     eprintln!("--lang requiere un idioma");
@@ -379,6 +493,31 @@ fn main() {
     while i < args.len() {
         match args[i].as_str() {
             "--dry-run" => dry_run = true,
+            "--theme" => {
+                if let Some(value) = args.get(i + 1) {
+                    i += 1;
+                    theme::set(value);
+                } else {
+                    eprintln!("--theme requiere un tema");
+                    std::process::exit(2);
+                }
+            }
+            option if option.starts_with("--theme=") => {
+                theme::set(option.trim_start_matches("--theme="))
+            }
+            "--color" => {
+                if let Some(value) = args.get(i + 1) {
+                    i += 1;
+                    theme::set_color_mode(value);
+                } else {
+                    eprintln!("--color requiere auto, always o never");
+                    std::process::exit(2);
+                }
+            }
+            option if option.starts_with("--color=") => {
+                theme::set_color_mode(option.trim_start_matches("--color="))
+            }
+            "--no-color" => theme::set_color_mode("never"),
             "--lang" | "--language" => {
                 if let Some(value) = args.get(i + 1) {
                     i += 1;
@@ -407,7 +546,7 @@ fn main() {
     if command == "rollback" || command == "undo" {
         let plan = plan_path.or_else(|| value(&filtered, "--plan").map(PathBuf::from));
         if let Some(path) = plan {
-            if let Err(e) = common::restore_plan(&path) {
+            if let Err(e) = common::restore_plan(&path, dry_run) {
                 eprintln!("Rollback fallido: {e}");
                 std::process::exit(1);
             }
@@ -453,38 +592,52 @@ fn main() {
         command.as_str(),
         "doctor" | "diagnose" | "fuse" | "fuse-check"
     ) {
-        let plan = match Plan::create(plan_path, "rust-doctor") {
-            Ok(plan) => plan,
-            Err(error) => {
-                eprintln!("No se pudo crear el plan: {error}");
-                std::process::exit(1);
+        let wants_plan = dry_run
+            || plan_path.is_some()
+            || filtered.iter().any(|argument| argument == "--install");
+        let plan = if wants_plan {
+            match Plan::create(plan_path, "rust-doctor") {
+                Ok(plan) => Some(plan),
+                Err(error) => {
+                    eprintln!("No se pudo crear el plan: {error}");
+                    std::process::exit(1);
+                }
             }
+        } else {
+            None
         };
         let ctx = Context {
             home: home_dir(),
             dry_run,
-            plan_path: Some(plan.path.clone()),
-            plan: Some(plan),
+            plan_path: plan.as_ref().map(|value| value.path.clone()),
+            plan,
         };
         if let Err(error) = doctor_action(&ctx, &filtered) {
             eprintln!("Error: {error}");
             std::process::exit(1);
         }
-        println!("Plan: {}", ctx.plan_path.unwrap().display());
+        if let Some(plan_path) = ctx.plan_path {
+            println!("Plan: {}", plan_path.display());
+        }
         return;
     }
-    let plan = match Plan::create(plan_path, &format!("rust-{command}")) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("No se pudo crear el plan: {e}");
-            std::process::exit(1);
+    let wants_plan = command_needs_plan(&command, &filtered, dry_run, plan_path.is_some());
+    let plan = if wants_plan {
+        match Plan::create(plan_path, &format!("rust-{command}")) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                eprintln!("No se pudo crear el plan: {e}");
+                std::process::exit(1);
+            }
         }
+    } else {
+        None
     };
     let ctx = Context {
         home: home_dir(),
         dry_run,
-        plan_path: Some(plan.path.clone()),
-        plan: Some(plan.clone()),
+        plan_path: plan.as_ref().map(|value| value.path.clone()),
+        plan,
     };
     let result = execute_action(&command, &ctx, &filtered);
     if let Err(error) = result {
@@ -499,10 +652,36 @@ fn main() {
             && filtered
                 .windows(2)
                 .any(|window| window[0] == "--format" && window[1] == "json"));
-    if machine_output {
-        eprintln!("Plan: {}", ctx.plan_path.unwrap().display());
-    } else {
-        println!("Plan: {}", ctx.plan_path.unwrap().display());
+    let machine_output = machine_output
+        || (command == "actions" && filtered.iter().any(|argument| argument == "--format=json")
+            || command == "actions"
+                && filtered
+                    .windows(2)
+                    .any(|window| window[0] == "--format" && window[1] == "json"))
+        || (command == "automation"
+            && filtered.windows(2).any(|window| {
+                window[0] == "list" && (window[1] == "--format=json" || window[1] == "json")
+            }))
+        || (command == "automation"
+            && filtered.windows(3).any(|window| {
+                window[0] == "list" && window[1] == "--format" && window[2] == "json"
+            }))
+        || (matches!(command.as_str(), "diagnostics" | "diag" | "health")
+            && (filtered.iter().any(|argument| argument == "--json")
+                || filtered.iter().any(|argument| {
+                    argument
+                        .strip_prefix("--format=")
+                        .is_some_and(|value| matches!(value, "json" | "tsv"))
+                })
+                || filtered.windows(2).any(|window| {
+                    window[0] == "--format" && matches!(window[1].as_str(), "json" | "tsv")
+                })));
+    if let Some(plan_path) = ctx.plan_path {
+        if machine_output {
+            eprintln!("Plan: {}", plan_path.display());
+        } else {
+            println!("Plan: {}", plan_path.display());
+        }
     }
 }
 
@@ -528,7 +707,10 @@ fn menu_choice_windows() -> MenuSelection {
 }
 
 fn menu_choice_for_platform() -> MenuSelection {
-    println!("{} Rust {VERSION}", i18n::text("menu.title"));
+    println!(
+        "{} Rust {VERSION}",
+        theme::current().paint(theme::Role::Title, i18n::text("menu.title"))
+    );
     println!("  1) {}", i18n::category_text("audit_inventory"));
     println!("  2) {}", i18n::category_text("storage"));
     println!("  3) {}", i18n::category_text("services"));
@@ -581,8 +763,8 @@ fn category_menu(ctx: &Context, category: MenuCategory) -> Result<(), String> {
         clear_screen();
         println!(
             "{} · {} Rust {VERSION}\n",
-            i18n::text("menu.title"),
-            i18n::category_text(category.key())
+            theme::current().paint(theme::Role::Title, i18n::text("menu.title")),
+            theme::current().paint(theme::Role::Section, i18n::category_text(category.key()))
         );
         match category {
             MenuCategory::AuditInventory => {
@@ -599,6 +781,11 @@ fn category_menu(ctx: &Context, category: MenuCategory) -> Result<(), String> {
             MenuCategory::Services => {
                 println!("  1) {}", i18n::text("menu.system"));
                 println!("  2) {}", i18n::text("menu.doctor"));
+                println!("  3) {}", i18n::diagnostics_label());
+                println!("  4) {}", i18n::accounts_label());
+                println!("  5) Herramientas nativas detectadas");
+                println!("  6) {}", i18n::native_label());
+                println!("  7) Arranque, EFI y cargador del sistema");
             }
             MenuCategory::Defaults => {
                 println!("  1) {}", i18n::text("menu.defaults"));
@@ -608,6 +795,7 @@ fn category_menu(ctx: &Context, category: MenuCategory) -> Result<(), String> {
                 println!("  1) {}", software::menu_label());
                 println!("  2) Git");
                 println!("  3) {}", i18n::text("menu.clean"));
+                println!("  4) {}", i18n::actions_text("menu"));
             }
             MenuCategory::Import => {
                 println!("  1) {}", i18n::automation_text("menu"));
@@ -654,6 +842,11 @@ fn category_menu(ctx: &Context, category: MenuCategory) -> Result<(), String> {
             MenuCategory::Services => match answer.as_str() {
                 "1" => category_submenu(ctx, "system", vec!["menu".into()])?,
                 "2" => category_leaf(ctx, "doctor", Some(Vec::new())),
+                "3" => category_leaf(ctx, "diagnostics", Some(vec!["health".into()])),
+                "4" => category_submenu(ctx, "accounts", vec!["menu".into()])?,
+                "5" => category_leaf(ctx, "doctor", Some(Vec::new())),
+                "6" => category_submenu(ctx, "native", vec!["menu".into()])?,
+                "7" => category_submenu(ctx, "boot", vec!["menu".into()])?,
                 _ => category_invalid(),
             },
             MenuCategory::Defaults => match answer.as_str() {
@@ -665,6 +858,7 @@ fn category_menu(ctx: &Context, category: MenuCategory) -> Result<(), String> {
                 "1" => category_submenu(ctx, "tools", Vec::new())?,
                 "2" => category_submenu(ctx, "automation", vec!["menu".into()])?,
                 "3" => category_submenu(ctx, "clean", vec!["menu".into()])?,
+                "4" => category_submenu(ctx, "actions", vec!["menu".into()])?,
                 _ => category_invalid(),
             },
             MenuCategory::Import => match answer.as_str() {
@@ -701,7 +895,10 @@ impl MenuCategory {
 }
 
 fn category_invalid() -> bool {
-    println!("{}", i18n::text("menu.invalid"));
+    println!(
+        "{}",
+        theme::current().paint(theme::Role::Warning, i18n::text("menu.invalid"))
+    );
     true
 }
 
@@ -715,8 +912,14 @@ fn category_leaf(ctx: &Context, command: &str, args: Option<Vec<String>>) -> boo
         return false;
     };
     match execute_action(command, ctx, &args) {
-        Ok(()) => println!("Operación terminada correctamente."),
-        Err(error) => eprintln!("Error: {error}"),
+        Ok(()) => println!(
+            "{}",
+            theme::current().paint(theme::Role::Success, "Operación terminada correctamente.")
+        ),
+        Err(error) => eprintln!(
+            "{}",
+            theme::current().paint(theme::Role::Error, format!("Error: {error}"))
+        ),
     }
     if let Some(plan_path) = &ctx.plan_path {
         println!("Plan: {}", plan_path.display());
@@ -817,11 +1020,12 @@ fn menu_games() -> Option<Vec<String>> {
 fn menu_packages() -> Option<Vec<String>> {
     println!("\nInventario de paquetes y almacenes");
     let out = menu_input("Directorio de informe (vacío para el predeterminado): ")?;
-    if out.is_empty() {
-        Some(Vec::new())
+    let out = if out.is_empty() {
+        format!("rust-package-audit-{}", crate::common::timestamp())
     } else {
-        Some(vec!["--out".into(), out])
-    }
+        out
+    };
+    Some(vec!["--out".into(), out, "--view-report".into()])
 }
 
 fn apply_language(raw: &[String]) {
@@ -830,6 +1034,24 @@ fn apply_language(raw: &[String]) {
             i18n::set(&raw[index + 1]);
         } else if let Some(language) = value.strip_prefix("--lang=") {
             i18n::set(language);
+        }
+    }
+}
+
+fn apply_visual_options(raw: &[String]) {
+    for (index, value) in raw.iter().enumerate() {
+        if (value == "--theme" || value == "--color") && raw.get(index + 1).is_some() {
+            if value == "--theme" {
+                theme::set(&raw[index + 1]);
+            } else {
+                theme::set_color_mode(&raw[index + 1]);
+            }
+        } else if let Some(theme_id) = value.strip_prefix("--theme=") {
+            theme::set(theme_id);
+        } else if let Some(mode) = value.strip_prefix("--color=") {
+            theme::set_color_mode(mode);
+        } else if value == "--no-color" {
+            theme::set_color_mode("never");
         }
     }
 }
@@ -995,5 +1217,63 @@ fn print_heroic_paths(file: &std::path::Path) {
             || l.to_lowercase().contains("defaultsteampath")
     }) {
         println!("  {}", line.trim());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::command_needs_plan;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).into()).collect()
+    }
+
+    #[test]
+    fn pure_queries_do_not_create_state_plans() {
+        for command in ["audit", "packages", "defaults", "report"] {
+            assert!(!command_needs_plan(command, &[], false, false), "{command}");
+        }
+    }
+
+    #[test]
+    fn submenu_and_simulation_keep_the_transaction_boundary() {
+        assert!(command_needs_plan("storage", &[], false, false));
+        assert!(command_needs_plan(
+            "actions",
+            &args(&["menu"]),
+            false,
+            false
+        ));
+        assert!(command_needs_plan(
+            "automation",
+            &args(&["menu"]),
+            false,
+            false
+        ));
+        assert!(command_needs_plan("defaults", &[], true, false));
+        assert!(command_needs_plan("packages", &[], false, true));
+    }
+
+    #[test]
+    fn mutating_direct_actions_keep_a_plan() {
+        assert!(command_needs_plan(
+            "storage",
+            &args(&["mount", "/dev/sdb1"]),
+            false,
+            false
+        ));
+        assert!(command_needs_plan(
+            "system",
+            &args(&["service", "restart", "example.service"]),
+            false,
+            false
+        ));
+        assert!(command_needs_plan(
+            "software",
+            &args(&["install", "example"]),
+            false,
+            false
+        ));
+        assert!(command_needs_plan("git", &args(&["pull"]), false, false));
     }
 }

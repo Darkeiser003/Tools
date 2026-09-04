@@ -321,28 +321,78 @@ pub fn backup(path: &Path) -> io::Result<PathBuf> {
     Ok(backup)
 }
 
-pub fn restore_plan(path: &Path) -> io::Result<()> {
+pub fn restore_plan(path: &Path, dry_run: bool) -> io::Result<()> {
     if !path.is_file() {
         eprintln!("No existe el plan: {}", path.display());
         return Ok(());
     }
     println!("Plan de rollback: {}", path.display());
     println!("Solo se restaurarán copias o movimientos reversibles ejecutados.");
-    if !ask("¿Continuar con el rollback?") {
+    if dry_run {
+        println!(
+            "Modo dry-run: solo se mostrarán las restauraciones; no se modificará ningún archivo."
+        );
+    } else if !ask("¿Continuar con el rollback?") {
         println!("Rollback cancelado.");
         return Ok(());
     }
     let file = File::open(path)?;
+    let mut lines = BufReader::new(file).lines();
+    let header = lines
+        .next()
+        .transpose()?
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "plan vacío"))?;
+    if header != "# ltools-plan-v1" {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "formato de plan no reconocido",
+        ));
+    }
+    let module = lines.next().transpose()?.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "plan incompleto: falta el módulo",
+        )
+    })?;
+    if !module.starts_with("# module=") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "plan incompleto: módulo inválido",
+        ));
+    }
+    let created = lines.next().transpose()?.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "plan incompleto: falta la fecha",
+        )
+    })?;
+    if !created.starts_with("# created=") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "plan incompleto: fecha inválida",
+        ));
+    }
+    let columns = lines.next().transpose()?.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "plan incompleto: faltan columnas",
+        )
+    })?;
+    if columns != "operation\ttarget\tstatus\treversible\tdata1\tdata2" {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "plan incompleto: columnas no reconocidas",
+        ));
+    }
     let mut restored = 0;
     let mut skipped = 0;
-    let lines: Vec<String> = BufReader::new(file)
-        .lines()
-        .map_while(Result::ok)
-        .skip(4)
-        .collect();
+    let lines: Vec<String> = lines.collect::<io::Result<Vec<_>>>()?;
     for line in lines.into_iter().rev() {
         let fields: Vec<_> = line.split('\t').collect();
-        if fields.len() < 6 || fields[2] != "executed" || fields[3] != "yes" {
+        if fields.len() != 6 || fields[2] != "executed" || fields[3] != "yes" {
+            if fields.len() < 6 {
+                skipped += 1;
+            }
             continue;
         }
         let operation = fields[0];
@@ -351,6 +401,20 @@ pub fn restore_plan(path: &Path) -> io::Result<()> {
         match operation {
             "restore-file" => {
                 if data1.is_file() {
+                    if dry_run {
+                        println!(
+                            "Simulación: restauraría {} desde {}{}.",
+                            target.display(),
+                            data1.display(),
+                            if target.exists() {
+                                " (retirando antes el destino actual)"
+                            } else {
+                                ""
+                            }
+                        );
+                        restored += 1;
+                        continue;
+                    }
                     if target.exists() && !move_to_trash(&target, false)? {
                         skipped += 1;
                         continue;
@@ -367,6 +431,15 @@ pub fn restore_plan(path: &Path) -> io::Result<()> {
             }
             "trash-move" => {
                 if data1.exists() && !target.exists() {
+                    if dry_run {
+                        println!(
+                            "Simulación: recuperaría {} desde la papelera ({}).",
+                            target.display(),
+                            data1.display()
+                        );
+                        restored += 1;
+                        continue;
+                    }
                     if let Some(parent) = target.parent() {
                         fs::create_dir_all(parent)?;
                     }
@@ -376,6 +449,13 @@ pub fn restore_plan(path: &Path) -> io::Result<()> {
                 } else {
                     skipped += 1;
                 }
+            }
+            "remove-created" if dry_run && target.exists() => {
+                println!(
+                    "Simulación: retiraría el destino creado a la papelera: {}",
+                    target.display()
+                );
+                restored += 1;
             }
             "remove-created" if target.exists() && move_to_trash(&target, false)? => {
                 println!("Destino retirado a papelera: {}", target.display());
@@ -387,6 +467,10 @@ pub fn restore_plan(path: &Path) -> io::Result<()> {
             }
         }
     }
-    println!("Rollback terminado: {restored} restauradas, {skipped} omitidas/no reversibles.");
+    if dry_run {
+        println!("Rollback simulado: {restored} operaciones previstas, {skipped} omitidas/no reversibles.");
+    } else {
+        println!("Rollback terminado: {restored} restauradas, {skipped} omitidas/no reversibles.");
+    }
     Ok(())
 }

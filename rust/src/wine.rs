@@ -121,7 +121,7 @@ fn create(ctx: &Context, args: &[String]) -> Result<(), String> {
         .map(PathBuf::from)
         .or_else(|| crate::common::prompt_path("Ruta del nuevo prefijo: "))
         .ok_or("falta --dest")?;
-    let dest = absolute_path(&dest)?;
+    let dest = normalized_path(&absolute_path(&dest)?)?;
     validate_destination(&dest)?;
     let arch = value(args, "--arch").unwrap_or_else(|| "win64".into());
     println!("Se creará un prefijo {arch} en {}", dest.display());
@@ -170,7 +170,7 @@ fn migrate(ctx: &Context, args: &[String]) -> Result<(), String> {
         .map(PathBuf::from)
         .or_else(|| crate::common::prompt_path("Ruta del nuevo prefijo: "))
         .ok_or("falta --dest")?;
-    let dest = absolute_path(&dest)?;
+    let dest = normalized_path(&absolute_path(&dest)?)?;
     let source = canonical(&source).ok_or("el origen no existe")?;
     if !looks_like_prefix(&source) {
         return Err("el origen no parece un prefijo Wine".into());
@@ -197,7 +197,7 @@ fn migrate(ctx: &Context, args: &[String]) -> Result<(), String> {
         return Err("migración cancelada por posibles bloqueos".into());
     }
     validate_destination(&dest)?;
-    if dest.starts_with(&source) {
+    if dest == source || dest.starts_with(&source) {
         return Err("el destino está dentro del origen".into());
     }
     let items = selected_items(&source, args)?;
@@ -539,10 +539,56 @@ fn absolute_path(path: &Path) -> Result<PathBuf, String> {
         .map(|cwd| cwd.join(path))
         .map_err(|e| format!("no se pudo resolver la ruta {}: {e}", path.display()))
 }
+
+/// Normaliza `..`, rutas relativas y enlaces simbólicos de los directorios
+/// existentes antes de cualquier comprobación de seguridad.  Sin esto, una
+/// ruta como `/mnt/disco/../` puede esquivar una comparación textual con la
+/// raíz de montaje, y un padre simbólico puede redirigir la copia a otro
+/// lugar.
+fn normalized_path(path: &Path) -> Result<PathBuf, String> {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            component => normalized.push(component.as_os_str()),
+        }
+    }
+    let mut existing = normalized.clone();
+    let mut suffix = Vec::new();
+    while !existing.exists() {
+        let name = existing
+            .file_name()
+            .ok_or_else(|| format!("no se pudo resolver la ruta {}", path.display()))?
+            .to_os_string();
+        suffix.push(name);
+        if !existing.pop() {
+            return Err(format!("no se pudo resolver la ruta {}", path.display()));
+        }
+    }
+    let mut result = fs::canonicalize(&existing).map_err(|error| {
+        format!(
+            "no se pudo resolver el directorio padre de {}: {error}",
+            path.display()
+        )
+    })?;
+    for component in suffix.iter().rev() {
+        result.push(component);
+    }
+    Ok(result)
+}
 fn looks_like_prefix(path: &Path) -> bool {
     path.is_dir() && (path.join("system.reg").is_file() || path.join("drive_c").is_dir())
 }
 fn validate_destination(path: &Path) -> Result<(), String> {
+    if fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Err("el destino no puede ser un enlace simbólico".into());
+    }
     if critical_path(path) {
         return Err(format!("destino bloqueado: {}", path.display()));
     }
@@ -875,17 +921,12 @@ fn activate_shell(ctx: &Context, dest: &Path) -> Result<(), String> {
             continue;
         }
         let data = fs::read_to_string(&rc).map_err(|e| e.to_string())?;
-        let marker = env_file.display().to_string();
-        if data.contains(&marker) {
+        let output = replace_shell_block(&data, &env_file);
+        if output == data {
             println!("Ya estaba activado: {}", rc.display());
             continue;
         }
         let old = backup(&rc).map_err(|e| e.to_string())?;
-        let mut output = data;
-        output.push_str(&format!(
-            "\n# LTools: prefijo Wine gestionado\nsource '{}'\n",
-            marker.replace('\'', "'\\''")
-        ));
         fs::write(&rc, output).map_err(|e| e.to_string())?;
         if let Some(plan) = &ctx.plan {
             plan.record(
@@ -909,7 +950,7 @@ fn activate_shell(ctx: &Context, dest: &Path) -> Result<(), String> {
     };
     fs::write(
         &environment_file,
-        format!("# LTools\nWINEPREFIX={}\n", dest.display()),
+        format!("# LTools\nWINEPREFIX={}\n", environment_value(dest)),
     )
     .map_err(|e| e.to_string())?;
     if let Some(plan) = &ctx.plan {
@@ -940,6 +981,59 @@ fn activate_shell(ctx: &Context, dest: &Path) -> Result<(), String> {
         environment_file.display()
     );
     Ok(())
+}
+
+#[cfg(not(windows))]
+const SHELL_BLOCK_BEGIN: &str = "# >>> LTools Wine prefix >>>";
+#[cfg(not(windows))]
+const SHELL_BLOCK_END: &str = "# <<< LTools Wine prefix <<<";
+
+#[cfg(not(windows))]
+fn replace_shell_block(data: &str, env_file: &Path) -> String {
+    let marker = env_file.display().to_string().replace('\'', "'\\''");
+    let block = format!(
+        "{SHELL_BLOCK_BEGIN}\n# Gestionado por LTools; se actualiza al activar otro prefijo.\nsource '{marker}'\n{SHELL_BLOCK_END}\n"
+    );
+    if let Some(start) = data.find(SHELL_BLOCK_BEGIN) {
+        if let Some(relative_end) = data[start..].find(SHELL_BLOCK_END) {
+            let end = start + relative_end + SHELL_BLOCK_END.len();
+            return format!("{}{block}{}", &data[..start], &data[end..]);
+        }
+    }
+
+    // Compatibilidad con el bloque antiguo que solo tenía una marca y una
+    // línea `source`. Se reemplaza, en vez de dejar varios defaults activos.
+    let mut filtered = Vec::new();
+    let mut remove_source = false;
+    for line in data.lines() {
+        if line.contains("# LTools: prefijo Wine gestionado") {
+            remove_source = true;
+            continue;
+        }
+        if remove_source && line.trim_start().starts_with("source ") {
+            remove_source = false;
+            continue;
+        }
+        remove_source = false;
+        filtered.push(line);
+    }
+    let mut output = filtered.join("\n");
+    if !output.is_empty() {
+        output.push('\n');
+    }
+    output.push_str(&block);
+    output
+}
+
+#[cfg(not(windows))]
+fn environment_value(path: &Path) -> String {
+    format!(
+        "\"{}\"",
+        path.display()
+            .to_string()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+    )
 }
 
 fn update_heroic(ctx: &Context, dest: &Path) -> Result<(), String> {
@@ -1155,4 +1249,37 @@ fn replace_path_boundaries(data: &str, old: &str, new: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+#[cfg(all(test, not(windows)))]
+mod tests {
+    use super::{environment_value, normalized_path, replace_shell_block};
+    use std::path::Path;
+
+    #[test]
+    fn normaliza_parent_dirs_antes_de_validar_destinos() {
+        let path =
+            normalized_path(Path::new("/tmp/ltools/../ltools-target")).expect("/tmp debe existir");
+        assert_eq!(path, Path::new("/tmp/ltools-target"));
+    }
+
+    #[test]
+    fn reemplaza_el_bloque_de_shell_anterior_en_vez_de_acumular_defaults() {
+        let old = "export X=1\n# LTools: prefijo Wine gestionado\nsource '/tmp/old-prefix'\n";
+        let updated = replace_shell_block(old, Path::new("/tmp/default-prefix.sh"));
+        assert!(!updated.contains("/tmp/old-prefix"));
+        assert_eq!(
+            updated.matches("source '/tmp/default-prefix.sh'").count(),
+            1
+        );
+        assert_eq!(updated.matches("LTools Wine prefix").count(), 2);
+    }
+
+    #[test]
+    fn environment_d_entrecomilla_rutas_con_espacios() {
+        assert_eq!(
+            environment_value(Path::new("/mnt/Juegos Linux/wine")),
+            "\"/mnt/Juegos Linux/wine\""
+        );
+    }
 }

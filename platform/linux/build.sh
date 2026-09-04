@@ -67,6 +67,7 @@ TIMINGS_FILE=""
 NO_LOG=0
 WINDOWS_WINE_ARTIFACT_DIR=""
 WINDOWS_WINE_ARTIFACT=""
+WINDOWS_WINE_CLI_ARTIFACT=""
 WINDOWS_WINE_LOG=""
 SIGNING_REQUIRED=0
 SIGNING_PRIVATE_KEY_FILE=""
@@ -537,7 +538,9 @@ ok "binario generado: $BIN"
 if [[ "$WINDOWS_WINE" -eq 1 ]]; then
     step 'Compilando y probando Windows con Wine/Proton'
     WINDOWS_WINE_ARTIFACT_DIR="$OUTPUT_DIR/windows-wine"
+    WINDOWS_WINE_CARGO_TARGET_DIR="$ROOT_DIR/rust/target/windows-wine"
     WINDOWS_WINE_ARTIFACT="$WINDOWS_WINE_ARTIFACT_DIR/ltools-$VERSION-windows-${WINDOWS_TARGET%%-*}.exe"
+    WINDOWS_WINE_CLI_ARTIFACT="$WINDOWS_WINE_ARTIFACT_DIR/ltools-$VERSION-windows-${WINDOWS_TARGET%%-*}-cli.exe"
     WINDOWS_WINE_LOG="$WINDOWS_WINE_ARTIFACT_DIR/windows-wine-$BUILD_ID.log"
     wine_args=(
         --target "$WINDOWS_TARGET"
@@ -554,7 +557,11 @@ if [[ "$WINDOWS_WINE" -eq 1 ]]; then
     [[ -n "$WINDOWS_WINE_PREFIX" ]] && wine_args+=(--prefix "$WINDOWS_WINE_PREFIX")
     [[ "$WINDOWS_WINE_INSTALL_MONO" -eq 1 ]] && wine_args+=(--install-mono)
     [[ "$NO_LOG" -eq 0 ]] && wine_args+=(--log "$WINDOWS_WINE_LOG")
-    run_logged "$ROOT_DIR/tests/linux/windows-wine.sh" "${wine_args[@]}"
+    run_logged env "LTOOLS_WINDOWS_CARGO_TARGET_DIR=$WINDOWS_WINE_CARGO_TARGET_DIR" \
+        "$ROOT_DIR/tests/linux/windows-wine.sh" "${wine_args[@]}"
+    [[ -s "$WINDOWS_WINE_ARTIFACT" ]] || die 'la validación Windows no produjo el ejecutable principal'
+    [[ -s "$WINDOWS_WINE_CLI_ARTIFACT" ]] || die 'la validación Windows no produjo el ejecutable CLI'
+    [[ -x "$BIN" ]] || die 'la fase Windows alteró el target Linux; se esperaba conservar el binario Linux'
     ok 'compilación y pruebas Windows bajo Wine/Proton correctas'
 fi
 
@@ -754,6 +761,13 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
                 -o -name 'ltools-terminal.json' -o -name 'ltools-*.schema.json' \) -print0
         )
     fi
+    if [[ "$WINDOWS_WINE" -eq 1 && -d "$WINDOWS_WINE_ARTIFACT_DIR" ]]; then
+        while IFS= read -r -d '' file; do copy_to_release "$file"; done < <(
+            find "$WINDOWS_WINE_ARTIFACT_DIR" -maxdepth 1 -type f \
+                \( -name "ltools-$VERSION-windows-*.exe" \) -print0
+        )
+        ok 'perfiles Windows GUI y CLI bajo Wine publicados en release/'
+    fi
     for file in \
         "$ROOT_DIR/distribution/ltools-project.json" \
         "$ROOT_DIR/distribution/ltools-project.schema.json" \
@@ -797,6 +811,7 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
     release_e2e_args=(--release-dir "$RELEASE_DIR" --version "$VERSION" --signature-verifier "$BIN")
     [[ "$APPIMAGE" -eq 0 ]] && release_e2e_args+=(--no-appimage)
     [[ "$PACKAGE" -eq 0 ]] && release_e2e_args+=(--no-package)
+    [[ "$WINDOWS_WINE" -eq 1 ]] && release_e2e_args+=(--require-windows-executables)
     if [[ -r "$SIGNING_PUBLIC_KEY_FILE" ]]; then
         release_e2e_args+=(--signature-public-key-file "$SIGNING_PUBLIC_KEY_FILE")
     fi

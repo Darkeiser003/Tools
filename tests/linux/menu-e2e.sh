@@ -190,9 +190,12 @@ grep -Fq 'Informe:' "$TMP_DIR/main-games-full.out" || die 'la auditoría complet
 ok 'auditoría de juegos con escaneo completo y ruta modificada'
 
 run_menu main-packages "1\n3\n$PKG_OUT\nq\n" 'Inventario de paquetes y almacenes'
-assert_file "$PKG_OUT/package-managers.tsv"
-assert_file "$PKG_OUT/package-artifacts.tsv"
-ok 'inventario de gestores y formatos de paquetes'
+assert_file "$PKG_OUT/inventory.tsv"
+assert_file "$PKG_OUT/summary.txt"
+grep -Fq $'kind\tscope\tmanager\tdata\tpath\tbytes' "$PKG_OUT/inventory.tsv" || die 'el inventario compacto no generó su cabecera'
+grep -Fq 'Informe:' "$TMP_DIR/main-packages.out" || die 'el inventario no informó su ruta'
+grep -Fq 'Elige una opción' "$TMP_DIR/main-packages.out" || die 'el menú no ofreció leer el informe generado'
+ok 'inventario compacto de gestores, paquetes y artefactos'
 
 AUTO_SCRIPT="$TMP_DIR/automation.sh"
 printf '#!/usr/bin/env bash\nprintf automation-e2e-ok\n' > "$AUTO_SCRIPT"
@@ -208,7 +211,8 @@ ok 'Importar scripts: registrar, listar, ejecutar y retirar en configuración ai
 
 run_menu main-packages-empty "1\n3\n\n" 'Pulsa Enter para volver:'
 ok 'opción 8 conserva la ventana cuando la ruta queda vacía'
-run_menu main-storage "2\n1\n3\nq\n" 'Herramientas de almacenamiento Linux'
+run_menu main-storage "2\n1\n11\n\nq\n" 'Herramientas de almacenamiento Linux'
+run_menu main-storage-guided "2\n1\n12\n\nq\nq\n" 'Selección segura de almacenamiento'
 run_menu main-clean "2\n2\nq\n" 'Limpieza protegida'
 run_menu main-registry "4\n2\n1\nq\n" 'Registros y configuración Linux'
 run_menu main-tools "5\n1\nq\nq\n" 'Paquetes, almacenes y Git'
@@ -224,8 +228,12 @@ run_menu main-clean-empty "2\n2\n" 'LTools'
 run_menu main-prefix "1\n4\n" 'Prefijos detectados:'
 run_menu main-defaults "4\n1\n" 'Defaults efectivos'
 run_menu main-system "3\n1\nq\n" 'Servicios / Dependencias'
+run_menu main-accounts "3\n4\nq\n" 'Usuarios, grupos y sesiones Linux'
+run_menu main-native "3\n6\nq\n" 'Red, hardware, energía y seguridad Linux'
 run_menu main-services-doctor "3\n2\n" 'Diagnóstico'
+run_menu main-services-native-diagnostics "3\n3\n" 'Diagnóstico nativo del sistema'
 run_menu main-automation-category "5\nq\n" 'Automatización'
+run_menu main-guided-actions "5\n4\nq\nq\n" 'Acciones guiadas'
 run_menu main-import-category "6\nq\n" 'Importar scripts'
 run_menu main-help "h\n" 'Comandos:'
 run_menu main-quit "q\n" 'LTools'
@@ -291,8 +299,14 @@ ok 'rutas efectivas de Wine, winetricks, Proton, Steam y Heroic'
 
 PACKAGE_ONLY_OUT="$TMP_DIR/packages-only"
 run_bash packages --packages-only --out "$PACKAGE_ONLY_OUT" >/dev/null
-assert_file "$PACKAGE_ONLY_OUT/package-managers.tsv"
+assert_file "$PACKAGE_ONLY_OUT/inventory.tsv"
 ok 'inventario de paquetes en modo solo paquetes'
+REPORT_VIEW_OUTPUT="$($BIN report view --path "$PACKAGE_ONLY_OUT/summary.txt")"
+grep -Fq 'Inventario principal:' <<<"$REPORT_VIEW_OUTPUT" || die 'report view no leyó el resumen directamente'
+REPORT_MENU_OUTPUT="$(printf 'c\nq\n' | $BIN report menu --path "$PACKAGE_ONLY_OUT")"
+grep -Fq 'Informe:' <<<"$REPORT_MENU_OUTPUT" || die 'report menu no mostró los informes disponibles'
+grep -Fq 'Inventario principal:' <<<"$REPORT_MENU_OUTPUT" || die 'report menu no leyó el resumen seleccionado'
+ok 'lector integrado: resumen directo y menú de informe'
 
 PREFIX_INSPECT_OUTPUT="$TMP_DIR/prefix-inspect.out"
 run_bash prefix inspect "$PREFIX" >"$PREFIX_INSPECT_OUTPUT"
@@ -489,8 +503,15 @@ RUST_PACKAGES_OUTPUT="$TMP_DIR/rust-packages-menu.out"
 printf '1\n3\n%s\n' "$PKG_OUT/rust-menu" | timeout 60 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
     LTOOLS_NO_MOUNTS=1 "$BIN" menu >"$RUST_PACKAGES_OUTPUT" 2>&1
 grep -Fq 'Inventario de paquetes y almacenes' "$RUST_PACKAGES_OUTPUT" || die 'el menú Rust no abrió paquetes'
-assert_file "$PKG_OUT/rust-menu/package-managers.tsv"
-ok 'menú Rust ejecuta inventario de paquetes y almacenes'
+assert_file "$PKG_OUT/rust-menu/inventory.tsv"
+ok 'menú Rust ejecuta inventario compacto de paquetes y almacenes'
+
+PACKAGE_FULL_OUT="$TMP_DIR/packages-full"
+run_bash packages --full --packages-only --out "$PACKAGE_FULL_OUT" >/dev/null
+assert_file "$PACKAGE_FULL_OUT/inventory.tsv"
+assert_file "$PACKAGE_FULL_OUT/package-managers.tsv"
+assert_file "$PACKAGE_FULL_OUT/package-artifacts.tsv"
+ok 'inventario detallado opcional conserva los TSV separados'
 
 RUST_HELP_OUTPUT="$TMP_DIR/rust-help-menu.out"
 printf 'h\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \

@@ -25,9 +25,9 @@ pub fn descriptor_json() -> String {
         "ltools"
     };
     let features = if cfg!(windows) {
-        "\"audit\", \"games\", \"packages\", \"protected-cleanup\",\n    \"storage\", \"registry\", \"defaults\", \"system-control\",\n    \"rollback\", \"dry-run\", \"plans\", \"tsv-export\", \"json-export\""
+        "\"audit\", \"games\", \"packages\", \"protected-cleanup\",\n    \"storage\", \"registry\", \"defaults\", \"system-control\", \"native-diagnostics\", \"native-actions\",\n    \"rollback\", \"dry-run\", \"plans\", \"tsv-export\", \"json-export\""
     } else {
-        "\"audit\", \"games\", \"packages\", \"protected-cleanup\", \"wine-prefixes\",\n    \"storage\", \"registry\", \"defaults\", \"system-control\",\n    \"rollback\", \"dry-run\", \"plans\", \"tsv-export\", \"json-export\""
+        "\"audit\", \"games\", \"packages\", \"protected-cleanup\", \"wine-prefixes\",\n    \"storage\", \"registry\", \"defaults\", \"system-control\", \"native-diagnostics\", \"native-actions\",\n    \"rollback\", \"dry-run\", \"plans\", \"tsv-export\", \"json-export\""
     };
     format!(
         r#"{{
@@ -60,6 +60,21 @@ pub fn descriptor_json() -> String {
     "state_directory": "XDG_STATE_HOME/ltools",
     "no_auto_terminal": "LTOOLS_NO_AUTO_TERMINAL",
     "cli_profile": "LTOOLS_CLI"
+  }},
+  "ui_context": {{
+    "language": {{
+      "argument": "--lang",
+      "environment": ["LTOOLS_LANG", "LTERMINAL_LANGUAGE", "LTERMINAL_LANG", "WINSLIM_TERMINAL_LANGUAGE", "WINSLIM_TERMINAL_LANG"],
+      "fallback": "locale"
+    }},
+    "theme": {{
+      "argument": "--theme",
+      "environment": ["LTOOLS_THEME", "LTERMINAL_THEME", "WINSLIM_TERMINAL_THEME", "TERMINAL_THEME"],
+      "default": "ocean",
+      "values": ["ocean", "forest", "amber", "nordic", "matrix", "contrast", "slate", "plum", "teal", "crimson", "silver", "violet"],
+      "color_argument": "--color",
+      "color_values": ["auto", "always", "never"]
+    }}
   }},
   "distribution": {{
     "linux": {{
@@ -140,6 +155,29 @@ fn terminal_descriptor_json_for(platform: &str) -> String {
   "capability_request": ["--ltools-capabilities", "--format", "json"],
   "required_terminal_capability": "lterminal-startup-v1",
   "fallback": "explicit-only",
+  "ui_context": {{
+    "language": {{
+      "argument": "--lang",
+      "environment": ["LTOOLS_LANG", "LTERMINAL_LANGUAGE", "LTERMINAL_LANG", "WINSLIM_TERMINAL_LANGUAGE", "WINSLIM_TERMINAL_LANG"],
+      "fallback": "locale"
+    }},
+    "theme": {{
+      "argument": "--theme",
+      "environment": ["LTOOLS_THEME", "LTERMINAL_THEME", "WINSLIM_TERMINAL_THEME", "TERMINAL_THEME"],
+      "default": "ocean",
+      "values": ["ocean", "forest", "amber", "nordic", "matrix", "contrast", "slate", "plum", "teal", "crimson", "silver", "violet"],
+      "color_argument": "--color",
+      "color_values": ["auto", "always", "never"]
+    }}
+  }},
+  "action_catalog": {{
+    "schema": "ltools-actions-v1",
+    "command": "{}",
+    "args": ["actions", "list", "--format", "json"],
+    "shell": "none",
+    "target_policy": "explicit-only",
+    "safe_defaults": true
+  }},
   "actions": [
 {}
   ]
@@ -149,6 +187,7 @@ fn terminal_descriptor_json_for(platform: &str) -> String {
         platform,
         host_id,
         host_product,
+        command,
         command,
         terminal_actions_json(platform)
     )
@@ -179,6 +218,11 @@ fn terminal_actions_json(platform: &str) -> String {
         &["reg.exe"]
     } else {
         &[]
+    };
+    let native_requirements: &[&str] = if platform == "windows" {
+        &["powershell"]
+    } else {
+        &["ip"]
     };
     let mut actions = vec![
         action_json(
@@ -320,6 +364,24 @@ fn terminal_actions_json(platform: &str) -> String {
             true,
         ),
         action_json(
+            "native-diagnostics",
+            "Diagnóstico nativo del anfitrión",
+            "Salud del sistema",
+            "Sistema",
+            "Consulta salud, red, hardware y sesiones con herramientas nativas, sin modificar el sistema.",
+            command,
+            &["diagnostics", "health", "--format", "json"],
+            if platform == "windows" {
+                &["powershell"][..]
+            } else {
+                &["uname"][..]
+            },
+            false,
+            false,
+            "none",
+            true,
+        ),
+        action_json(
             "help",
             &format!("Mostrar ayuda de {product_name}"),
             "Ayuda",
@@ -432,6 +494,112 @@ fn terminal_actions_json(platform: &str) -> String {
             true,
         ),
     );
+    actions.push(action_json(
+        "native-network",
+        "Consultar red nativa",
+        "Red",
+        "Sistema",
+        "Consulta interfaces, rutas, DNS y puertos con las herramientas nativas de la plataforma.",
+        command,
+        &["native", "network", "status"],
+        native_requirements,
+        false,
+        false,
+        "none",
+        true,
+    ));
+    actions.push(action_json(
+        "native-hardware",
+        "Consultar hardware nativo",
+        "Hardware",
+        "Sistema",
+        "Consulta CPU, memoria y dispositivos con herramientas nativas, sin modificar el sistema.",
+        command,
+        &["native", "hardware", "status"],
+        native_requirements,
+        false,
+        false,
+        "none",
+        true,
+    ));
+    actions.push(action_json(
+        "native-power",
+        "Consultar energía",
+        "Energía",
+        "Sistema",
+        "Muestra el perfil de energía y los dispositivos de batería disponibles.",
+        command,
+        &["native", "power", "status"],
+        native_requirements,
+        false,
+        false,
+        "none",
+        true,
+    ));
+    actions.push(action_json(
+        "native-security",
+        "Consultar seguridad nativa",
+        "Seguridad",
+        "Sistema",
+        "Consulta el estado del firewall y las protecciones nativas sin realizar cambios.",
+        command,
+        &["native", "security", "status"],
+        native_requirements,
+        false,
+        false,
+        "none",
+        true,
+    ));
+    actions.push(action_json(
+        "boot-status",
+        if platform == "windows" {
+            "Consultar BCD, EFI y recuperación"
+        } else {
+            "Consultar GRUB, EFI y systemd-boot"
+        },
+        "Arranque",
+        "Sistema",
+        "Inspecciona el arranque nativo sin modificar GRUB, EFI, BCD ni la NVRAM.",
+        command,
+        &["boot", "status"],
+        if platform == "windows" {
+            &["bcdedit"][..]
+        } else {
+            &[][..]
+        },
+        false,
+        false,
+        "none",
+        true,
+    ));
+    actions.push(action_json(
+        "boot-plan",
+        "Preparar plan de arranque",
+        "Plan de arranque",
+        "Sistema",
+        "Explica el flujo protegido para revisar y aplicar cambios de arranque.",
+        command,
+        &["boot", "plan"],
+        &[],
+        false,
+        false,
+        "none",
+        true,
+    ));
+    actions.push(action_json(
+        "native-dns-flush",
+        "Vaciar caché DNS",
+        "Vaciar DNS",
+        "Sistema",
+        "Vacía la caché DNS nativa tras confirmación explícita.",
+        command,
+        &["native", "network", "flush-dns"],
+        native_requirements,
+        true,
+        false,
+        "required",
+        false,
+    ));
     actions.push(action_json(
         "package-search",
         "Buscar un paquete en stores disponibles",
@@ -580,7 +748,7 @@ fn action_json(
         format!("{} {}", command, args.join(" "))
     };
     format!(
-        "    {{\"id\":\"{}\",\"label\":\"{}\",\"shortLabel\":\"{}\",\"group\":\"{}\",\"description\":\"{}\",\"command\":\"{}\",\"executable\":\"{}\",\"args\":[{}],\"shell\":\"none\",\"workingDirectory\":\"current\",\"terminal\":true,\"interactive\":{},\"requiresAdmin\":{},\"confirmation\":\"{}\",\"safe\":{},\"supports\":[\"dry-run\"],\"requiresCommands\":[{}]}}",
+        "    {{\"id\":\"{}\",\"label\":\"{}\",\"shortLabel\":\"{}\",\"group\":\"{}\",\"description\":\"{}\",\"command\":\"{}\",\"executable\":\"{}\",\"args\":[{}],\"aliases\":{},\"shell\":\"none\",\"workingDirectory\":\"current\",\"terminal\":true,\"interactive\":{},\"requiresAdmin\":{},\"confirmation\":\"{}\",\"safe\":{},\"supports\":[\"dry-run\"],\"requiresCommands\":[{}]}}",
         json_escape(id),
         json_escape(label),
         json_escape(short_label),
@@ -589,6 +757,7 @@ fn action_json(
         json_escape(&command_line),
         json_escape(command),
         args_json,
+        crate::shortcuts::json(id),
         interactive,
         requires_admin,
         json_escape(confirmation),
@@ -664,7 +833,10 @@ mod tests {
         assert!(json.contains("\"requiresCommands\""));
         assert!(json.contains("\"workingDirectory\":\"current\""));
         assert!(json.contains("\"cli\": {"));
-
+        assert!(json.contains("\"ui_context\": {"));
+        assert!(json.contains("LTERMINAL_LANGUAGE"));
+        assert!(json.contains("LTERMINAL_THEME"));
+        assert!(json.contains("\"default\": \"ocean\""));
         // El catálogo de herramientas es específico de cada plataforma:
         // Linux expone auditoría/prefijos y Windows herramientas nativas.
         if cfg!(windows) {
@@ -710,6 +882,10 @@ mod tests {
         assert!(json.contains("LTerminal"));
         assert!(json.contains("WinSlim Terminal"));
         assert!(json.contains(crate::VERSION));
+        assert!(json.contains("\"action_catalog\": {"));
+        assert!(json.contains("ltools-actions-v1"));
+        assert!(json.contains("\"ui_context\": {"));
+        assert!(json.contains("\"color_values\": [\"auto\", \"always\", \"never\"]"));
         if cfg!(windows) {
             assert!(json.contains("\"executable\":\"ltools.exe\""));
             assert!(json.contains("\"platform\": \"windows\""));

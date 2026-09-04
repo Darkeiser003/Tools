@@ -16,7 +16,17 @@ pub fn timestamp() -> String {
 
 pub fn command_exists(name: &str) -> bool {
     std::env::var_os("PATH")
-        .map(|path| std::env::split_paths(&path).any(|dir| dir.join(name).is_file()))
+        .map(|path| {
+            std::env::split_paths(&path).any(|dir| {
+                let candidate = dir.join(name);
+                candidate.metadata().is_ok_and(|metadata| {
+                    metadata.is_file() && {
+                        use std::os::unix::fs::PermissionsExt;
+                        metadata.permissions().mode() & 0o111 != 0
+                    }
+                })
+            })
+        })
         .unwrap_or(false)
 }
 
@@ -97,11 +107,16 @@ pub fn is_mount_root(path: &Path) -> bool {
 }
 
 pub fn critical_path(path: &Path) -> bool {
-    let text = path.to_string_lossy();
+    // Las operaciones de limpieza reciben rutas del usuario. Comprobar la
+    // forma textual original permitiría que `..` o un enlace ocultasen una
+    // raíz protegida; para rutas existentes siempre comparamos su destino
+    // canónico.
+    let normalized = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let text = normalized.to_string_lossy();
     matches!(
         text.as_ref(),
         "/" | "/home" | "/mnt" | "/media" | "/opt" | "/usr" | "/var" | "/etc" | "/boot" | "/run"
-    ) || is_mount_root(path)
+    ) || is_mount_root(&normalized)
         || text.ends_with("/steamapps")
         || text.ends_with("/compatdata")
         || text.ends_with("/steamapps/common")
@@ -170,8 +185,32 @@ static HOST_TOOLS: &[super::HostTool] = &[
         "storage",
         "optional-graphical-disk-tool",
         false,
+        true,
+        "gparted",
+    ),
+    tool(
+        "udisksctl",
+        "storage",
+        "safe-user-mount-and-unmount",
         false,
-        "",
+        true,
+        "udisks2",
+    ),
+    tool(
+        "smartctl",
+        "storage",
+        "SMART-drive-health",
+        false,
+        true,
+        "smartmontools",
+    ),
+    tool(
+        "fsck",
+        "storage",
+        "read-only-filesystem-check",
+        false,
+        true,
+        "util-linux",
     ),
     tool(
         "sha256sum",
@@ -263,6 +302,168 @@ static HOST_TOOLS: &[super::HostTool] = &[
         "",
     ),
     tool(
+        "ip",
+        "network",
+        "network-addresses-and-routes",
+        false,
+        true,
+        "iproute2",
+    ),
+    tool(
+        "ss",
+        "network",
+        "listening-sockets",
+        false,
+        true,
+        "iproute2",
+    ),
+    tool(
+        "resolvectl",
+        "network",
+        "DNS-resolution-status",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "nmcli",
+        "network",
+        "NetworkManager-connection-status",
+        false,
+        true,
+        "networkmanager",
+    ),
+    tool(
+        "upower",
+        "power",
+        "battery-and-power-device-status",
+        false,
+        true,
+        "upower",
+    ),
+    tool(
+        "powerprofilesctl",
+        "power",
+        "power-profile-status",
+        false,
+        true,
+        "power-profiles-daemon",
+    ),
+    tool(
+        "firewall-cmd",
+        "security",
+        "firewalld-status",
+        false,
+        true,
+        "firewalld",
+    ),
+    tool("ufw", "security", "ufw-firewall-status", false, true, "ufw"),
+    tool(
+        "nft",
+        "security",
+        "nftables-firewall-status",
+        false,
+        true,
+        "nftables",
+    ),
+    tool(
+        "uname",
+        "hardware",
+        "kernel-and-architecture",
+        false,
+        true,
+        "coreutils",
+    ),
+    tool(
+        "lscpu",
+        "hardware",
+        "CPU-inventory",
+        false,
+        true,
+        "util-linux",
+    ),
+    tool(
+        "free",
+        "hardware",
+        "memory-inventory",
+        false,
+        true,
+        "procps-ng",
+    ),
+    tool(
+        "lspci",
+        "hardware",
+        "PCI-device-inventory",
+        false,
+        true,
+        "pciutils",
+    ),
+    tool(
+        "lsusb",
+        "hardware",
+        "USB-device-inventory",
+        false,
+        true,
+        "usbutils",
+    ),
+    tool("who", "users", "logged-in-users", false, true, "util-linux"),
+    tool(
+        "loginctl",
+        "users",
+        "user-session-inventory",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "systemd-inhibit",
+        "power",
+        "power-inhibitor-inventory",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "id",
+        "users",
+        "current-user-identity",
+        false,
+        true,
+        "coreutils",
+    ),
+    tool(
+        "getent",
+        "users",
+        "account-and-directory-service-lookup",
+        false,
+        true,
+        "glibc",
+    ),
+    tool(
+        "useradd",
+        "users",
+        "local-account-creation",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "usermod",
+        "users",
+        "local-account-modification",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "userdel",
+        "users",
+        "local-account-removal",
+        false,
+        false,
+        "",
+    ),
+    tool(
         "ps",
         "system",
         "process-inspection",
@@ -295,6 +496,22 @@ static HOST_TOOLS: &[super::HostTool] = &[
         "",
     ),
     tool(
+        "gdisk",
+        "storage",
+        "GPT-partition-inspection",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "blockdev",
+        "storage",
+        "block-device-information",
+        false,
+        true,
+        "util-linux",
+    ),
+    tool(
         "blkid",
         "storage",
         "filesystem-identification",
@@ -310,17 +527,110 @@ static HOST_TOOLS: &[super::HostTool] = &[
         false,
         "",
     ),
-    tool("btrfs", "storage", "btrfs-management", false, false, ""),
+    tool(
+        "btrfs",
+        "storage",
+        "btrfs-management",
+        false,
+        true,
+        "btrfs-progs",
+    ),
     tool(
         "cryptsetup",
         "storage",
         "encrypted-volume-management",
         false,
-        false,
-        "",
+        true,
+        "cryptsetup",
     ),
-    tool("lvs", "storage", "lvm-volume-inventory", false, false, ""),
-    tool("zpool", "storage", "zfs-pool-inventory", false, false, ""),
+    tool(
+        "pvs",
+        "storage",
+        "lvm-physical-volume-inventory",
+        false,
+        true,
+        "lvm2",
+    ),
+    tool(
+        "vgs",
+        "storage",
+        "lvm-volume-group-inventory",
+        false,
+        true,
+        "lvm2",
+    ),
+    tool(
+        "lvs",
+        "storage",
+        "lvm-volume-inventory",
+        false,
+        true,
+        "lvm2",
+    ),
+    tool(
+        "zpool",
+        "storage",
+        "zfs-pool-inventory",
+        false,
+        true,
+        "zfs-utils",
+    ),
+    tool(
+        "zfs",
+        "storage",
+        "zfs-dataset-inventory",
+        false,
+        true,
+        "zfs-utils",
+    ),
+    tool(
+        "mdadm",
+        "storage",
+        "software-raid-inventory",
+        false,
+        true,
+        "mdadm",
+    ),
+    tool(
+        "nvme",
+        "storage",
+        "NVMe-device-inventory",
+        false,
+        true,
+        "nvme-cli",
+    ),
+    tool(
+        "gnome-disks",
+        "storage",
+        "GNOME-disk-manager",
+        false,
+        true,
+        "gnome-disk-utility",
+    ),
+    tool(
+        "partitionmanager",
+        "storage",
+        "KDE-disk-manager",
+        false,
+        true,
+        "partitionmanager",
+    ),
+    tool(
+        "duf",
+        "storage",
+        "readable-space-report",
+        false,
+        true,
+        "duf",
+    ),
+    tool(
+        "ncdu",
+        "storage",
+        "interactive-space-report",
+        false,
+        true,
+        "ncdu",
+    ),
     tool(
         "docker",
         "containers",

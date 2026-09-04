@@ -38,6 +38,7 @@ admiten `--dry-run` y generan planes reversibles cuando corresponde.
 - [Búsqueda e instalación contextual](#búsqueda-e-instalación-contextual)
 - [Operaciones Git](#operaciones-git)
 - [Salud y gestión del sistema](#salud-y-gestión-del-sistema)
+- [Diagnóstico nativo](#diagnóstico-nativo)
 - [Discos, particiones y configuración nativa](#discos-particiones-y-configuración-nativa)
 - [Build y distribución](#build-y-distribución)
 - [Descarga desde GitHub y manifiesto de release](#descarga-desde-github-y-manifiesto-de-release)
@@ -84,6 +85,51 @@ admiten `--dry-run` y generan planes reversibles cuando corresponde.
   también en `capabilities --format json` para frontends.
 - Genera AppImage con fallback de extracción si FUSE no está disponible y un
   ZIP portable nativo para Windows.
+
+## Acciones guiadas y valores seguros
+
+Las funciones operativas no se limitan a mostrar inventarios. Cada módulo
+ofrece acciones concretas y reutilizables: consultar salud, inspeccionar,
+comprobar, montar o desmontar con confirmación, abrir el gestor nativo,
+gestionar servicios y procesos, revisar el journal, exportar informes,
+limpiar mediante planes y ejecutar automatizaciones registradas.
+
+La interfaz de botones y la CLI comparten un registro de acciones estable:
+
+```text
+ltools actions list
+ltools actions list --format json
+ltools --dry-run actions run storage.mount /dev/sdb1
+ltools actions run system.service-status sshd.service
+```
+
+Cada acción publica su categoría, objetivo, perfil (`safe-default` o
+`advanced`), si modifica el sistema, confirmación requerida y compatibilidad
+con `--dry-run` y planes. Los botones de consulta usan valores seguros; las
+acciones que requieren un objetivo nunca lo inventan. En Windows, `C:` está
+excluido de la selección guiada y solo puede introducirse manualmente en una
+acción avanzada. En Linux, `/`, `/boot` y `/home` no se usan como objetivos
+predeterminados. El particionado destructivo no se ejecuta desde una cadena
+oculta: se abre el gestor nativo para que el usuario revise cada paso.
+
+Este contrato (`ltools-actions-v1`) permite que LTerminal, WinSlim Terminal,
+la GUI y futuros scripts de WinSlim compartan botones y parámetros sin
+duplicar comandos de shell. Las acciones se compilan por plataforma: Linux no
+publica acciones Windows y Windows no publica acciones Linux.
+
+Los alias cortos se publican junto a cada acción para que el host pueda ofrecer
+comandos cómodos como tdisk status, tsvc list, tnet status, tboot status o
+tclean preview. Son metadatos declarativos, no shell: LTerminal debe usar
+siempre executable y args[] separados.
+
+### Arranque, firmware y recuperación
+
+boot status inspecciona únicamente el arranque nativo de la plataforma: GRUB,
+systemd-boot, EFI y Secure Boot en Linux; BCD, EFI y WinRE en Windows. boot
+plan explica el flujo protegido para una futura modificación, pero no escribe
+GRUB, BCD, NVRAM ni particiones. Cualquier aplicación futura deberá exigir
+destino explícito, copia exportada, diff, elevación, verificación y rollback.
+Wine no se considera una prueba válida de firmware o arranque.
 
 ## Requisitos
 
@@ -226,6 +272,7 @@ botones de una terminal sin depender de un script Bash:
 ```text
 ltools automation add --name informe --program /ruta/informe.sh --cwd /ruta/proyecto --arg --json
 ltools automation list
+ltools automation list --format json
 ltools automation run informe
 ltools automation remove informe
 ```
@@ -324,6 +371,7 @@ del lanzador, pero ya no selecciona una implementación alternativa:
 | `audit` | Discos, aplicaciones, archivos grandes y duplicados |
 | `games` | Juegos, runners, Wine, Proton, Steam, Lutris, Heroic y UMU |
 | `packages` | Gestores, paquetes instalados, AUR y archivos descargados |
+| `report` | Leer informes desde la propia CLI con salida, paginador o editor |
 | `clean` | Limpieza protegida de paquetes, caches y rutas |
 | `prefix` | Listar, inspeccionar, crear y migrar prefijos |
 | `defaults` | Rutas efectivas y defaults de las herramientas |
@@ -448,35 +496,110 @@ corresponde; las consultas no modifican nada. En el menú se encuentran en
 «Gestionar servicios, procesos y journal», junto con filtros interactivos,
 dependencias y exportación TSV/JSON.
 
+## Diagnóstico nativo
+
+La acción `diagnostics` es de solo lectura: consulta la salud del sistema, la
+red, el hardware y los usuarios/sesiones usando únicamente las herramientas
+nativas de la plataforma. Si alguna herramienta opcional no existe, aparece
+como no disponible; no instala nada automáticamente ni cambia servicios,
+procesos, discos o configuración.
+
+```bash
+./ltools.sh diagnostics health
+./ltools.sh diagnostics network
+./ltools.sh diagnostics hardware
+./ltools.sh diagnostics users
+./ltools.sh diagnostics health --format json
+./ltools.sh diagnostics network --format tsv
+```
+
+En Linux puede utilizar `ip`, `ss`, `resolvectl`, `lsblk`, `lscpu`, `free`,
+`lspci`, `lsusb`, `who` y `loginctl`. En Windows utiliza PowerShell, CIM/WMI,
+`query` y cmdlets nativos de red, discos, memoria y vídeo. La salida JSON usa
+el esquema `ltools-diagnostics-v1`, por lo que LTerminal, WinSlim Terminal u
+otro frontend puede mostrar cada comprobación y su disponibilidad sin
+interpretar texto humano.
+
+## Herramientas nativas generales
+
+Además del diagnóstico, `native` reúne acciones concretas de red, hardware,
+energía y seguridad. Linux usa `ip`, `resolvectl`, `lscpu`, `free`,
+`powerprofilesctl`, `upower`, `firewalld`, `ufw` o `nftables` cuando están
+disponibles; Windows usa PowerShell, CIM, `ipconfig`, `powercfg`, Firewall y
+Defender. Las consultas no cambian el estado.
+
+```bash
+./ltools.sh native menu
+./ltools.sh native network status
+./ltools.sh native hardware status
+./ltools.sh native power status
+./ltools.sh native security status
+./ltools.sh --dry-run native network flush-dns
+```
+
+`network flush-dns` es la única acción mutable de este bloque por ahora:
+requiere confirmación y admite `--dry-run`. En Windows se usa
+`ltools.exe native network flush-dns`. Si falta una herramienta opcional, se
+informa y, cuando el catálogo conoce un paquete seguro, se ofrece instalar
+solo esa dependencia desde el gestor existente; LTools no instala Wine,
+juegos, virtualización ni una colección de terceros.
+
+Las operaciones se publican como `native.network-status`,
+`native.hardware-status`, `native.power-status`, `native.security-status` y
+`native.dns-flush` en `ltools actions list --format json`, para que una GUI o
+una terminal cree botones sin duplicar la lógica.
+
 ## Discos, particiones y configuración nativa
 
-El menú muestra estas funciones solo con los nombres y herramientas de la
-plataforma actual. En Linux:
+El menú muestra acciones adaptadas a la plataforma actual. En Linux, el
+submenú permite consultar y gestionar el flujo habitual:
 
 ```bash
 ./ltools.sh storage status
 ./ltools.sh storage partitions
+./ltools.sh storage mounts
+./ltools.sh storage inspect /dev/sda1
+./ltools.sh storage mount /dev/sdb1
+./ltools.sh storage unmount /mnt/datos
+./ltools.sh storage health /dev/sda
+./ltools.sh storage check /dev/sda1
+./ltools.sh storage usage
+./ltools.sh storage filesystems
+./ltools.sh storage volume-stack
+./ltools.sh storage blockdev /dev/sda
 ./ltools.sh storage tools
 ./ltools.sh registry status
 ./ltools.sh registry paths
 ```
 
-`storage partitions` usa `lsblk` como inventario base y añade `parted -l` si
-está disponible; `gparted` se identifica como opción gráfica, pero LTools no
-lo abre ni modifica particiones automáticamente. Si falta una herramienta
-imprescindible, el módulo informa de la alternativa o permite una instalación
-puntual confirmada mediante `doctor --install`.
+`status`, `partitions`, `mounts`, `inspect`, `health` y `check` son consultas;
+la comprobación usa `fsck -N` y nunca repara. `mount` y `unmount` piden
+confirmación, validan el objetivo y se anotan en el plan. `open-gparted` abre
+el gestor gráfico instalado, pero LTools no genera órdenes destructivas de
+particionado. Si falta una herramienta opcional, se ofrece su instalación
+puntual mediante `doctor --install`.
 
 En Windows, el mismo comando usa PowerShell y las herramientas nativas:
 
 ```powershell
 .\ltools.exe storage status
 .\ltools.exe storage partitions
+.\ltools.exe storage mounts
+.\ltools.exe storage inspect C:
+.\ltools.exe storage health C:
+.\ltools.exe storage open-disk-management
+.\ltools.exe storage open-diskpart
 .\ltools.exe storage tools
 .\ltools.exe registry status
 .\ltools.exe registry query --key HKCU\Software
 .\ltools.exe registry export --key HKCU\Software --out C:\Temp\ltools.reg
 ```
+
+En Windows, `health` y `check` ejecutan `Repair-Volume -Scan` sin reparar.
+`open-disk-management` y `open-diskpart` delegan las operaciones de
+particionado al Administrador de discos o DiskPart nativos, después de pedir
+confirmación; LTools no ejecuta scripts destructivos por su cuenta. Todas las
+acciones admiten `--dry-run` para revisar el plan sin cambiar el sistema.
 
 Las consultas del Registro son de solo lectura. `export` crea un respaldo
 `.reg`; no importa claves ni cambia el Registro. LTools no usa `systemctl`,
@@ -550,12 +673,31 @@ fijada accidentalmente a pacman. Antes de retirar un paquete se comprueban
 dependencias y, si existen, se ofrece cancelar o resolverlas mediante el
 gestor correspondiente.
 
+Por defecto genera únicamente `summary.txt` e `inventory.tsv`, que reúnen la
+información esencial en un informe compacto. Si se necesita compatibilidad con
+flujos que esperan un fichero por gestor, `--full` conserva además los TSV
+detallados y `package-artifacts.tsv`.
+
+Desde el menú de inventario se ofrece leer el informe inmediatamente. También
+se puede abrir de forma explícita:
+
+```bash
+./ltools.sh report view --path "$HOME/Informes/ltools-packages/summary.txt"
+./ltools.sh report menu --path "$HOME/Informes/ltools-packages"
+./ltools.sh packages --out "$HOME/Informes/ltools-packages" --view-report
+```
+
+El lector usa salida directa por defecto, `PAGER`/`less`/`more` como paginador
+y `VISUAL`/`EDITOR` o `nano`/`vi` para editar cuando el usuario lo solicita.
+El editor nunca se abre automáticamente.
+
 Ejemplos seguros:
 
 ```bash
 ./ltools.sh packages --out "$HOME/Informes/ltools-packages"
 ./ltools.sh clean --dry-run --package-caches --plan /tmp/ltools-clean.tsv
 ./ltools.sh clean --dry-run --path "$HOME/.cache/paru" --plan /tmp/ltools-cache.tsv
+./ltools.sh --dry-run rollback --plan /tmp/ltools-cache.tsv
 ./ltools.sh rollback --plan /tmp/ltools-cache.tsv
 ```
 
@@ -573,7 +715,7 @@ mantiene un catálogo propio y continúa si una store no responde.
 
 ```bash
 ./ltools.sh software stores
-./ltools.sh software search firefox --format json
+./ltools.sh software search firefox --format json --limit 50
 ./ltools.sh --dry-run software install firefox --candidate 2 --yes
 ```
 
@@ -586,6 +728,12 @@ varios paquetes en lote ni resuelve dependencias a ciegas.
 
 El formato JSON usa el esquema `ltools-package-search-v1`, pensado para que
 una acción rápida pueda presentar candidatos sin interpretar texto humano.
+`--limit` admite entre 1 y 1000 resultados (por defecto, 100), evitando que
+una store ruidosa bloquee la interfaz.
+
+En la GUI, **Instalar** abre este flujo en una pantalla propia: la búsqueda no
+ocupa espacio permanentemente en el menú principal y los resultados aparecen
+en el panel inferior redimensionable.
 
 ### Operaciones Git
 
@@ -626,8 +774,8 @@ binarios Windows mediante Wine salvo que se active explícitamente
 `dist/` es staging local: contiene logs, tiempos, informes y salidas de trabajo.
 `release/` es la carpeta canónica de publicación: el builder copia allí los
 artefactos finales sin mezclar código Linux y Windows. Tras ejecutar ambos
-builders, contiene los AppImage Linux, los `.exe` y ZIP Windows, los perfiles
-CLI, los descriptores JSON, sus esquemas y `ltools-release.json`.
+builders, contiene los dos AppImage Linux, los dos `.exe` y ZIP Windows, los
+perfiles CLI, los descriptores JSON, sus esquemas y `ltools-release.json`.
 
 Validación Windows opcional desde la misma build Linux:
 
@@ -639,10 +787,18 @@ Validación Windows opcional desde la misma build Linux:
 Esta etapa compila `x86_64-pc-windows-gnu`, comprueba que el runner puede abrir
 una consola Windows y ejecuta la misma superficie verificable del ejecutable:
 versión, ayuda, capacidades JSON, rutas por defecto y menú. Usa un prefijo
-temporal aislado, registra tiempos y salida en el log principal y deja una
-copia de validación en `dist/windows-wine/`. El `.exe` generado allí sirve para
-probar la build; la release oficial Windows sigue siendo la producida por
-`windows/build.ps1` con MSVC.
+temporal aislado, registra tiempos y salida en el log principal, y genera en
+`dist/windows-wine/` los dos perfiles (`.exe` normal y `-cli.exe`). Cuando se
+ejecuta desde el builder raíz, ambos perfiles se copian también a `release/` y
+la E2E exige que estén presentes y cubiertos por el manifiesto y sus hashes.
+El target de Cargo de esta etapa está aislado en
+`rust/target/windows-wine`; por ello `--clean --windows-wine` no puede borrar
+el binario Linux que todavía necesita el empaquetado. Se puede cambiar de
+forma explícita con `LTOOLS_WINDOWS_CARGO_TARGET_DIR`, aunque no es necesario
+para el uso normal.
+Estos `.exe` GNU están validados bajo Wine; la release oficial Windows para
+distribuir a usuarios Windows sigue siendo la producida por `windows/build.ps1`
+con MSVC.
 
 En una ejecución interactiva sin argumentos, el builder pregunta si también se
 quiere activar esta etapa. `--windows-wine-prefix` permite usar un prefijo
@@ -692,9 +848,10 @@ defaults y el menú, y elimina el prefijo temporal al terminar. También acepta
 `--runner RUTA`, `--prefix RUTA`, `--output DIR`, `--keep-prefix`,
 `--no-tests`, `--fast`, `--offline`, `--jobs N` y `--install-mono`. Wine Mono no
 se instala por defecto porque LTools no usa .NET; esa opción solo prepara el
-prefijo para probar software Windows que sí lo necesite. Este flujo es una
-validación desde Linux; la release oficial continúa compilándose con el builder
-nativo Windows.
+prefijo para probar software Windows que sí lo necesite. El ejecutable se
+construye en `rust/target/windows-wine` por defecto, para no interferir con
+otros targets locales. Este flujo es una validación desde Linux; la release
+oficial continúa compilándose con el builder nativo Windows.
 
 ### Descarga desde GitHub y manifiesto de release
 
@@ -813,10 +970,12 @@ Rust es el único backend de LTools para Linux, AppImage y Windows. Los scripts
 `.sh` restantes son lanzadores, builders o harnesses de prueba; no se invocan
 como implementación funcional ni se empaquetan en el tarball/AppImage.
 
-## Idiomas
+## Idiomas y temas
 
-El idioma se obtiene de `LTOOLS_LANG`, `LC_ALL`, `LC_MESSAGES` o `LANG` y se
-puede forzar en una ejecución:
+El idioma se obtiene, por orden, de `LTOOLS_LANG`, de las variables que puede
+proporcionar una terminal anfitriona (`LTERMINAL_LANGUAGE`, `LTERMINAL_LANG`,
+`WINSLIM_TERMINAL_LANGUAGE`, `WINSLIM_TERMINAL_LANG`) y de
+`LC_ALL`, `LC_MESSAGES` o `LANG`. También se puede forzar en una ejecución:
 
 ```bash
 LTOOLS_LANG=en ./ltools.sh --help
@@ -828,6 +987,29 @@ Los códigos soportados son `es`, `en`, `de`, `fr`, `pt`, `it`, `ca`, `nl` y
 `pl`. `auto` usa el locale del entorno y, si no hay traducción, se usa español.
 Los tests comprueban normalización como `en_US.UTF-8` y `pt-BR`, además de todos
 los catálogos disponibles.
+
+La CLI comparte el contexto visual con la terminal sin depender de ella. La
+precedencia es: argumentos explícitos, variables `LTOOLS_*`, variables del
+host y valores autónomos. Ejemplos:
+
+```bash
+LTERMINAL_LANGUAGE=en LTERMINAL_THEME=matrix ./ltools-cli.sh menu
+./ltools.sh --lang de --theme nordic --color always menu
+./ltools.sh --theme contrast --no-color audit --format json
+```
+
+Los temas disponibles son `ocean`, `forest`, `amber`, `nordic`, `matrix`,
+`contrast`, `slate`, `plum`, `teal`, `crimson`, `silver` y `violet`. También se
+aceptan alias compatibles con LTerminal como `greenPhosphor`, `highContrast` y
+`techCyan`. `--color auto` solo usa ANSI cuando la salida es una terminal;
+`always` y `never` permiten automatizar o depurar ese comportamiento. Las
+salidas JSON y TSV nunca incluyen secuencias ANSI.
+
+La GUI autónoma usa por defecto la paleta oscura `ocean` y no hereda por
+accidente el tema de una terminal. Puede personalizarse explícitamente con
+`LTOOLS_GUI_THEME=forest`. La integración declarativa para hosts documenta el
+mismo contrato en `ui_context`; LTerminal o WinSlim Terminal solo tienen que
+exportar esas variables al abrir la acción.
 
 ## Logs, planes y rollback
 
@@ -841,8 +1023,11 @@ dist/appimage-smoke.log
 
 El log registra configuración, comandos, códigos de salida y duración. Las
 operaciones modificadoras aceptan `--plan FICHERO`; el plan describe acciones
-ejecutadas y permite lanzar `rollback --plan FICHERO`. `--dry-run` no crea
-destinos ni modifica datos.
+ejecutadas y permite lanzar `rollback --plan FICHERO`. `rollback --dry-run`
+valida el plan y muestra las restauraciones previstas sin mover, copiar ni
+retirar nada. Las consultas puras no crean planes de estado salvo que se
+solicite explícitamente `--plan` o `--dry-run`; así los inventarios no llenan
+la carpeta de planes vacíos.
 
 Los logs, informes, planes, targets, staging y artefactos de distribución son
 locales y están excluidos por `.gitignore`. Para inspeccionar qué residuos

@@ -3,7 +3,7 @@
   "$id": "https://ltools.dev/schema/ltools-capabilities-v1.json",
   "title": "LTools capabilities",
   "type": "object",
-  "required": ["schema", "application", "version", "platform", "entrypoints", "features", "terminal_integration", "actions", "distribution", "host_tools", "external_integrations"],
+  "required": ["schema", "application", "version", "platform", "entrypoints", "features", "terminal_integration", "actions", "distribution", "host_tools", "external_integrations", "ui_context"],
   "properties": {
     "schema": { "const": "ltools-capabilities-v1" },
     "application": { "enum": ["LTools", "WinSlim-Tools"] },
@@ -36,6 +36,7 @@
           "command": { "type": "string" },
           "executable": { "enum": ["ltools", "ltools.exe"] },
           "args": { "type": "array", "items": { "type": "string" } },
+          "aliases": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
           "shell": { "const": "none" },
           "workingDirectory": { "enum": ["current", "none"] },
           "terminal": { "const": true },
@@ -77,6 +78,39 @@
         "optional": { "type": "boolean" },
         "standalone_releases_require_it": { "type": "boolean" }
       }
+    },
+    "ui_context": { "$ref": "#/$defs/ui_context" }
+  },
+  "$defs": {
+    "ui_context": {
+      "type": "object",
+      "required": ["language", "theme"],
+      "properties": {
+        "language": {
+          "type": "object",
+          "required": ["argument", "environment", "fallback"],
+          "properties": {
+            "argument": { "const": "--lang" },
+            "environment": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+            "fallback": { "const": "locale" }
+          },
+          "additionalProperties": false
+        },
+        "theme": {
+          "type": "object",
+          "required": ["argument", "environment", "default", "values", "color_argument", "color_values"],
+          "properties": {
+            "argument": { "const": "--theme" },
+            "environment": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+            "default": { "const": "ocean" },
+            "values": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } },
+            "color_argument": { "const": "--color" },
+            "color_values": { "const": ["auto", "always", "never"] }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

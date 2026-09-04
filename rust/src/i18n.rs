@@ -44,11 +44,32 @@ pub fn set(value: &str) {
 pub fn current() -> &'static str {
     let value = env::var("LTOOLS_LANG")
         .ok()
+        .or_else(|| env::var("LTERMINAL_LANGUAGE").ok())
+        .or_else(|| env::var("LTERMINAL_LANG").ok())
+        .or_else(|| env::var("WINSLIM_TERMINAL_LANGUAGE").ok())
+        .or_else(|| env::var("WINSLIM_TERMINAL_LANG").ok())
         .or_else(|| env::var("LC_ALL").ok())
         .or_else(|| env::var("LC_MESSAGES").ok())
         .or_else(|| env::var("LANG").ok())
         .unwrap_or_else(|| "es".into());
     normalize(&value)
+}
+
+/// Opciones de presentación comunes a CLI y hosts de terminal. Los valores
+/// son deliberadamente legibles para que también puedan aparecer en la ayuda
+/// de LTerminal o WinSlim Terminal.
+pub fn visual_options() -> &'static str {
+    match current() {
+        "en" => "UI: --lang LANG, --theme THEME, --color auto|always|never, --no-color; themes: ocean, forest, amber, nordic, matrix, contrast, slate, plum, teal, crimson, silver, violet; JSON/TSV never include ANSI",
+        "de" => "UI: --lang SPRACHE, --theme THEMA, --color auto|always|never, --no-color; Themen: ocean, forest, amber, nordic, matrix, contrast, slate, plum, teal, crimson, silver, violet; JSON/TSV enthalten nie ANSI",
+        "fr" => "UI : --lang LANGUE, --theme THÈME, --color auto|always|never, --no-color ; thèmes : ocean, forest, amber, nordic, matrix, contrast, slate, plum, teal, crimson, silver, violet ; JSON/TSV sans ANSI",
+        "pt" => "UI: --lang IDIOMA, --theme TEMA, --color auto|always|never, --no-color; temas: ocean, forest, amber, nordic, matrix, contrast, slate, plum, teal, crimson, silver, violet; JSON/TSV nunca incluem ANSI",
+        "it" => "UI: --lang LINGUA, --theme TEMA, --color auto|always|never, --no-color; temi: ocean, forest, amber, nordic, matrix, contrast, slate, plum, teal, crimson, silver, violet; JSON/TSV senza ANSI",
+        "ca" => "UI: --lang IDIOMA, --theme TEMA, --color auto|always|never, --no-color; temes: ocean, forest, amber, nordic, matrix, contrast, slate, plum, teal, crimson, silver, violet; JSON/TSV sense ANSI",
+        "nl" => "UI: --lang TAAL, --theme THEMA, --color auto|always|never, --no-color; thema's: ocean, forest, amber, nordic, matrix, contrast, slate, plum, teal, crimson, silver, violet; JSON/TSV bevatten nooit ANSI",
+        "pl" => "UI: --lang JĘZYK, --theme MOTYW, --color auto|always|never, --no-color; motywy: ocean, forest, amber, nordic, matrix, contrast, slate, plum, teal, crimson, silver, violet; JSON/TSV bez ANSI",
+        _ => "Interfaz: --lang IDIOMA, --theme TEMA, --color auto|always|never, --no-color; temas: ocean, forest, amber, nordic, matrix, contrast, slate, plum, teal, crimson, silver, violet; JSON/TSV nunca incluyen ANSI",
+    }
 }
 
 /// Etiquetas cuyo significado cambia por plataforma. En Windows el
@@ -202,6 +223,76 @@ pub fn system_options() -> &'static str {
     }
 }
 
+pub fn diagnostics_label() -> &'static str {
+    match current() {
+        "en" => "Native host diagnostics",
+        "de" => "Native Host-Diagnose",
+        "fr" => "Diagnostic natif de l’hôte",
+        "pt" => "Diagnóstico nativo do sistema",
+        "it" => "Diagnostica nativa del sistema",
+        "ca" => "Diagnòstic natiu del sistema",
+        "nl" => "Native hostdiagnose",
+        "pl" => "Natywna diagnostyka systemu",
+        _ => "Diagnóstico nativo del sistema",
+    }
+}
+
+pub fn diagnostics_help() -> &'static str {
+    match current() {
+        "en" => "Native read-only host diagnostics: health, network, hardware and users; --format human|tsv|json",
+        "de" => "Native schreibgeschützte Host-Diagnose: Gesundheit, Netzwerk, Hardware und Benutzer; --format human|tsv|json",
+        "fr" => "Diagnostic natif en lecture seule : santé, réseau, matériel et utilisateurs ; --format human|tsv|json",
+        "pt" => "Diagnóstico nativo só de leitura: estado, rede, hardware e utilizadores; --format human|tsv|json",
+        "it" => "Diagnostica nativa in sola lettura: stato, rete, hardware e utenti; --format human|tsv|json",
+        "ca" => "Diagnòstic natiu només de lectura: salut, xarxa, maquinari i usuaris; --format human|tsv|json",
+        "nl" => "Native alleen-lezen hostdiagnose: gezondheid, netwerk, hardware en gebruikers; --format human|tsv|json",
+        "pl" => "Natywna diagnostyka tylko do odczytu: stan, sieć, sprzęt i użytkownicy; --format human|tsv|json",
+        _ => "Diagnóstico nativo de solo lectura: salud, red, hardware y usuarios; --format human|tsv|json",
+    }
+}
+
+pub fn diagnostics_available() -> &'static str {
+    match current() {
+        "en" => "available",
+        "de" => "verfügbar",
+        "fr" => "disponible",
+        "pt" => "disponível",
+        "it" => "disponibile",
+        "ca" => "disponible",
+        "nl" => "beschikbaar",
+        "pl" => "dostępne",
+        _ => "disponible",
+    }
+}
+
+pub fn diagnostics_unavailable() -> &'static str {
+    match current() {
+        "en" => "unavailable",
+        "de" => "nicht verfügbar",
+        "fr" => "indisponible",
+        "pt" => "indisponível",
+        "it" => "non disponibile",
+        "ca" => "no disponible",
+        "nl" => "niet beschikbaar",
+        "pl" => "niedostępne",
+        _ => "no disponible",
+    }
+}
+
+pub fn diagnostics_no_output() -> &'static str {
+    match current() {
+        "en" => "No output was returned.",
+        "de" => "Keine Ausgabe erhalten.",
+        "fr" => "Aucune sortie reçue.",
+        "pt" => "Não foi obtida qualquer saída.",
+        "it" => "Nessun output ricevuto.",
+        "ca" => "No s’ha rebut cap sortida.",
+        "nl" => "Geen uitvoer ontvangen.",
+        "pl" => "Nie otrzymano żadnego wyjścia.",
+        _ => "No se obtuvo salida.",
+    }
+}
+
 pub fn storage_label() -> &'static str {
     #[cfg(windows)]
     {
@@ -230,6 +321,34 @@ pub fn storage_label() -> &'static str {
             "pl" => "Zarządzaj dyskami i partycjami Linux",
             _ => "Gestionar discos y particiones Linux",
         }
+    }
+}
+
+pub fn accounts_label() -> &'static str {
+    match current() {
+        "en" => "Users, groups and sessions",
+        "de" => "Benutzer, Gruppen und Sitzungen",
+        "fr" => "Utilisateurs, groupes et sessions",
+        "pt" => "Utilizadores, grupos e sessões",
+        "it" => "Utenti, gruppi e sessioni",
+        "ca" => "Usuaris, grups i sessions",
+        "nl" => "Gebruikers, groepen en sessies",
+        "pl" => "Użytkownicy, grupy i sesje",
+        _ => "Usuarios, grupos y sesiones",
+    }
+}
+
+pub fn native_label() -> &'static str {
+    match current() {
+        "en" => "Native network, hardware, power and security tools",
+        "de" => "Native Werkzeuge für Netzwerk, Hardware, Energie und Sicherheit",
+        "fr" => "Outils natifs réseau, matériel, énergie et sécurité",
+        "pt" => "Ferramentas nativas de rede, hardware, energia e segurança",
+        "it" => "Strumenti nativi per rete, hardware, energia e sicurezza",
+        "ca" => "Eines natives de xarxa, maquinari, energia i seguretat",
+        "nl" => "Native netwerk-, hardware-, energie- en beveiligingshulpmiddelen",
+        "pl" => "Natywne narzędzia sieci, sprzętu, energii i bezpieczeństwa",
+        _ => "Herramientas nativas de red, hardware, energía y seguridad",
     }
 }
 
@@ -295,6 +414,122 @@ pub fn storage_help() -> &'static str {
     }
 }
 
+/// Acciones cortas del gestor de discos. Se usan tanto en la GUI como en
+/// cualquier frontend que reutilice el catálogo de LTools.
+pub fn storage_action_text(key: &str) -> &'static str {
+    match (current(), key) {
+        ("en", "status") => "Space and mounts overview",
+        ("en", "partitions") => "Disks and partitions",
+        ("en", "mounts") => "Active mounts",
+        ("en", "tools") => "Detected storage tools",
+        ("en", "manager") => "Open native partition manager",
+        ("en", "clean") => "Review cleanup",
+        ("de", "status") => "Übersicht über Speicher und Mounts",
+        ("de", "partitions") => "Datenträger und Partitionen",
+        ("de", "mounts") => "Aktive Mounts",
+        ("de", "tools") => "Erkannte Speicherwerkzeuge",
+        ("de", "manager") => "Nativen Partitionsmanager öffnen",
+        ("de", "clean") => "Bereinigung prüfen",
+        ("fr", "status") => "Vue d’ensemble de l’espace et des montages",
+        ("fr", "partitions") => "Disques et partitions",
+        ("fr", "mounts") => "Montages actifs",
+        ("fr", "tools") => "Outils de stockage détectés",
+        ("fr", "manager") => "Ouvrir le gestionnaire natif",
+        ("fr", "clean") => "Vérifier le nettoyage",
+        ("pt", "status") => "Resumo de espaço e montagens",
+        ("pt", "partitions") => "Discos e partições",
+        ("pt", "mounts") => "Montagens ativas",
+        ("pt", "tools") => "Ferramentas de armazenamento detetadas",
+        ("pt", "manager") => "Abrir gestor nativo de partições",
+        ("pt", "clean") => "Rever limpeza",
+        ("it", "status") => "Riepilogo spazio e mount",
+        ("it", "partitions") => "Dischi e partizioni",
+        ("it", "mounts") => "Mount attivi",
+        ("it", "tools") => "Strumenti di archiviazione rilevati",
+        ("it", "manager") => "Apri il gestore nativo delle partizioni",
+        ("it", "clean") => "Controlla pulizia",
+        ("ca", "status") => "Resum d’espai i muntatges",
+        ("ca", "partitions") => "Discs i particions",
+        ("ca", "mounts") => "Muntatges actius",
+        ("ca", "tools") => "Eines d’emmagatzematge detectades",
+        ("ca", "manager") => "Obrir el gestor natiu de particions",
+        ("ca", "clean") => "Revisar la neteja",
+        ("nl", "status") => "Overzicht van ruimte en mounts",
+        ("nl", "partitions") => "Schijven en partities",
+        ("nl", "mounts") => "Actieve mounts",
+        ("nl", "tools") => "Gedetecteerde opslagtools",
+        ("nl", "manager") => "Native partitiebeheerder openen",
+        ("nl", "clean") => "Opschoning controleren",
+        ("pl", "status") => "Przegląd miejsca i montowań",
+        ("pl", "partitions") => "Dyski i partycje",
+        ("pl", "mounts") => "Aktywne montowania",
+        ("pl", "tools") => "Wykryte narzędzia pamięci masowej",
+        ("pl", "manager") => "Otwórz natywny menedżer partycji",
+        ("pl", "clean") => "Sprawdź czyszczenie",
+        (_, "status") => "Resumen de espacio y montajes",
+        (_, "partitions") => "Discos y particiones",
+        (_, "mounts") => "Montajes activos",
+        (_, "tools") => "Herramientas detectadas",
+        (_, "manager") => "Abrir gestor nativo de particiones",
+        (_, "clean") => "Revisar limpieza",
+        _ => "",
+    }
+}
+
+/// Textos del registro de acciones. Los identificadores de acción son
+/// estables y no se traducen; estas etiquetas sí pueden mostrarse en botones
+/// y menús de cualquier frontend.
+pub fn actions_text(key: &str) -> &'static str {
+    match (current(), key) {
+        ("en", "title") => "=== Guided system actions ===",
+        ("en", "help") => "Reusable safe-default actions for CLI, GUI and terminal hosts",
+        ("en", "menu") => "Guided actions",
+        ("en", "list") => "Show action details",
+        ("en", "hint") => "Run an ID with: actions run ID [TARGET]. Empty target input returns.",
+        ("de", "title") => "=== Geführte Systemaktionen ===",
+        ("de", "help") => "Wiederverwendbare sichere Aktionen für CLI, GUI und Terminalhosts",
+        ("de", "menu") => "Geführte Aktionen",
+        ("de", "list") => "Aktionsdetails anzeigen",
+        ("de", "hint") => "ID ausführen mit: actions run ID [ZIEL]. Leeres Ziel geht zurück.",
+        ("fr", "title") => "=== Actions système guidées ===",
+        ("fr", "help") => "Actions sûres réutilisables pour CLI, GUI et terminaux",
+        ("fr", "menu") => "Actions guidées",
+        ("fr", "list") => "Afficher les détails des actions",
+        ("fr", "hint") => "Exécuter un ID avec : actions run ID [CIBLE]. Entrée vide pour revenir.",
+        ("pt", "title") => "=== Ações guiadas do sistema ===",
+        ("pt", "help") => "Ações seguras reutilizáveis para CLI, GUI e terminais",
+        ("pt", "menu") => "Ações guiadas",
+        ("pt", "list") => "Mostrar detalhes das ações",
+        ("pt", "hint") => "Executar um ID com: actions run ID [ALVO]. Enter vazio para voltar.",
+        ("it", "title") => "=== Azioni di sistema guidate ===",
+        ("it", "help") => "Azioni sicure riutilizzabili per CLI, GUI e terminali",
+        ("it", "menu") => "Azioni guidate",
+        ("it", "list") => "Mostra dettagli azioni",
+        ("it", "hint") => "Esegui un ID con: actions run ID [OBIETTIVO]. Invio vuoto per tornare.",
+        ("ca", "title") => "=== Accions guiades del sistema ===",
+        ("ca", "help") => "Accions segures reutilitzables per a CLI, GUI i terminals",
+        ("ca", "menu") => "Accions guiades",
+        ("ca", "list") => "Mostrar detalls de les accions",
+        ("ca", "hint") => "Executa un ID amb: actions run ID [OBJECTIU]. Enter buit per tornar.",
+        ("nl", "title") => "=== Begeleide systeemacties ===",
+        ("nl", "help") => "Herbruikbare veilige acties voor CLI, GUI en terminalhosts",
+        ("nl", "menu") => "Begeleide acties",
+        ("nl", "list") => "Actiedetails tonen",
+        ("nl", "hint") => "Voer een ID uit met: actions run ID [DOEL]. Leeg doel gaat terug.",
+        ("pl", "title") => "=== Prowadzone działania systemu ===",
+        ("pl", "help") => "Bezpieczne działania wielokrotnego użytku dla CLI, GUI i terminali",
+        ("pl", "menu") => "Prowadzone działania",
+        ("pl", "list") => "Pokaż szczegóły działania",
+        ("pl", "hint") => "Uruchom ID przez: actions run ID [CEL]. Puste pole wraca.",
+        (_, "title") => "=== Acciones guiadas del sistema ===",
+        (_, "help") => "Acciones seguras reutilizables para CLI, GUI y terminales",
+        (_, "menu") => "Acciones guiadas",
+        (_, "list") => "Mostrar detalles de las acciones",
+        (_, "hint") => "Ejecuta un ID con: actions run ID [OBJETIVO]. Enter vacío para volver.",
+        _ => "",
+    }
+}
+
 pub fn registry_help() -> &'static str {
     #[cfg(windows)]
     {
@@ -353,6 +588,24 @@ pub fn prefix_flags() -> &'static str {
 /// cruzada en los módulos gráficos.
 #[cfg(any(target_os = "linux", windows))]
 pub fn gui_text(key: &str) -> &'static str {
+    if key == "diagnostics" {
+        return diagnostics_label();
+    }
+    if key == "native" {
+        return native_label();
+    }
+    if key == "accounts" {
+        return accounts_label();
+    }
+    if key == "system_services" {
+        return text("menu.system.services");
+    }
+    if key == "system_processes" {
+        return text("menu.system.processes");
+    }
+    if key == "system_journal" {
+        return text("menu.system.journal");
+    }
     match (current(), key) {
         ("en", "title") => "LTools",
         ("en", "subtitle") => "Safe system tools and quick actions",
@@ -373,6 +626,8 @@ pub fn gui_text(key: &str) -> &'static str {
         ("en", "search") => "Search package",
         ("en", "enter_package") => "Enter a package name first",
         ("en", "close") => "Close",
+        ("en", "confirm_storage_manager") => "Open the native storage manager? It can modify partitions and data.",
+        ("en", "cancelled") => "Cancelled",
         ("de", "title") => "LTools",
         ("de", "subtitle") => "Sichere Systemwerkzeuge und Schnellaktionen",
         ("de", "ready") => "Bereit",
@@ -392,6 +647,8 @@ pub fn gui_text(key: &str) -> &'static str {
         ("de", "search") => "Paket suchen",
         ("de", "enter_package") => "Zuerst einen Paketnamen eingeben",
         ("de", "close") => "Schließen",
+        ("de", "confirm_storage_manager") => "Den nativen Datenträgerverwalter öffnen? Er kann Partitionen und Daten ändern.",
+        ("de", "cancelled") => "Abgebrochen",
         ("fr", "title") => "LTools",
         ("fr", "subtitle") => "Outils système sûrs et actions rapides",
         ("fr", "ready") => "Prêt",
@@ -411,6 +668,8 @@ pub fn gui_text(key: &str) -> &'static str {
         ("fr", "search") => "Rechercher un paquet",
         ("fr", "enter_package") => "Saisissez d’abord un nom de paquet",
         ("fr", "close") => "Fermer",
+        ("fr", "confirm_storage_manager") => "Ouvrir le gestionnaire de stockage natif ? Il peut modifier les partitions et les données.",
+        ("fr", "cancelled") => "Annulé",
         ("pt", "title") => "LTools",
         ("pt", "subtitle") => "Ferramentas de sistema seguras e ações rápidas",
         ("pt", "ready") => "Pronto",
@@ -430,6 +689,8 @@ pub fn gui_text(key: &str) -> &'static str {
         ("pt", "search") => "Pesquisar pacote",
         ("pt", "enter_package") => "Introduza primeiro um nome de pacote",
         ("pt", "close") => "Fechar",
+        ("pt", "confirm_storage_manager") => "Abrir o gestor de armazenamento nativo? Pode alterar partições e dados.",
+        ("pt", "cancelled") => "Cancelado",
         (_, "title") => "LTools",
         (_, "subtitle") => "Herramientas seguras del sistema y acciones rápidas",
         (_, "ready") => "Listo",
@@ -458,6 +719,8 @@ pub fn gui_text(key: &str) -> &'static str {
         (_, "search") => "Buscar paquete",
         (_, "enter_package") => "Introduce primero un nombre de paquete",
         (_, "close") => "Cerrar",
+        (_, "confirm_storage_manager") => "¿Abrir el gestor nativo de almacenamiento? Puede modificar particiones y datos.",
+        (_, "cancelled") => "Cancelado",
         _ => "",
     }
 }

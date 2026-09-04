@@ -58,10 +58,52 @@ try {
         $preview = (($germanHelp -split "`r?`n") | Select-Object -First 60) -join [Environment]::NewLine
         throw "Las traducciones alemanas del help Windows no se aplicaron completamente.`nSalida capturada:`n$preview"
     }
+    $themedHelp = Run @('--theme', 'matrix', '--color', 'never', '--help')
+    if (-not [regex]::IsMatch([string]$themedHelp, 'matrix') -or
+        [regex]::IsMatch([string]$themedHelp, "`e\[")) {
+        throw 'La CLI Windows no acepta el tema explícito o contaminó la ayuda con ANSI.'
+    }
+    $terminalLanguage = Invoke-NativeProcess -FileName $Binary -Arguments @('--help') -EnvironmentOverrides @{ LTOOLS_LANG = $null; LTERMINAL_LANGUAGE = 'en' }
+    $terminalHelp = [string]$terminalLanguage.Stdout + [string]$terminalLanguage.Stderr
+    if ($terminalLanguage.ExitCode -ne 0 -or -not [regex]::IsMatch($terminalHelp, 'Usage: ltools')) {
+        throw (Format-NativeProcessFailure $terminalLanguage 'El idioma heredado de la terminal no se aplicó en Windows')
+    }
     Run @('doctor')
     Run @('defaults')
     Run @('storage', 'tools')
     Run @('registry', 'status')
+    # Las acciones nativas Windows se prueban directamente, no solo mediante
+    # el catálogo: así un cambio en PowerShell, DiskPart o la detección de
+    # capacidades no puede dejar una opción del menú rota sin cobertura.
+    Run @('native', 'network', 'status')
+    Run @('native', 'hardware', 'status')
+    Run @('native', 'power', 'status')
+    Run @('native', 'power', 'plans')
+    Run @('native', 'security', 'status')
+    $dnsDryRun = Run @('--dry-run', 'native', 'network', 'flush-dns')
+    if ($dnsDryRun -notmatch 'ipconfig /flushdns') {
+        throw 'El dry-run Windows de vaciado DNS no generó el comando nativo esperado.'
+    }
+    $bootStatus = Run @('boot', 'status')
+    if ($bootStatus -notmatch 'Arranque Windows') { throw 'El estado de arranque Windows no respondió.' }
+    $bootPlan = Run @('--dry-run', 'boot', 'plan')
+    if ($bootPlan -notmatch 'No se modificarán|dry-run') { throw 'El plan de arranque Windows no confirmó solo lectura.' }
+    $diagnosticsOutput = Run @('diagnostics', 'health', '--format', 'json')
+    $diagnosticsJson = $diagnosticsOutput | ConvertFrom-Json
+    if ($diagnosticsJson.schema -ne 'ltools-diagnostics-v1' -or
+        $diagnosticsJson.platform -ne 'windows' -or
+        $diagnosticsJson.probes.Count -lt 3) {
+        throw 'El diagnóstico nativo Windows no devolvió el contrato esperado.'
+    }
+    foreach ($diagnosticAction in @('network', 'hardware', 'users')) {
+        $actionOutput = Run @('diagnostics', $diagnosticAction, '--format', 'json')
+        $actionJson = $actionOutput | ConvertFrom-Json
+        if ($actionJson.schema -ne 'ltools-diagnostics-v1' -or
+            $actionJson.platform -ne 'windows' -or
+            $actionJson.probes.Count -lt 1) {
+            throw "El diagnóstico Windows $diagnosticAction no devolvió resultados válidos."
+        }
+    }
     if ($CliBinary -and (Test-Path -LiteralPath $CliBinary)) {
         $cliResult = Invoke-NativeProcess -FileName $CliBinary -TimeoutSeconds 15
         $cliOutput = [string]$cliResult.Stdout + [string]$cliResult.Stderr

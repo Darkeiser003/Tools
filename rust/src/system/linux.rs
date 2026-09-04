@@ -501,22 +501,21 @@ fn service(ctx: &Context, args: &[String], user: bool) -> Result<(), String> {
     } else {
         run_with_sudo("systemctl", &command_args, false).map_err(|e| e.to_string())?
     };
-    if ok {
-        if let Some(p) = &ctx.plan {
-            p.record(
-                "service-change",
-                Path::new(unit),
-                "executed",
-                false,
-                operation,
-                scope,
-            )
-            .map_err(|e| e.to_string())?;
-        } else {
-            return Err(format!(
-                "systemctl no pudo ejecutar {operation} sobre {unit}"
-            ));
-        }
+    if let Some(p) = &ctx.plan {
+        p.record(
+            "service-change",
+            Path::new(unit),
+            if ok { "executed" } else { "failed" },
+            false,
+            operation,
+            scope,
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    if !ok {
+        return Err(format!(
+            "systemctl no pudo ejecutar {operation} sobre {unit}"
+        ));
     }
     Ok(())
 }

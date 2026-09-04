@@ -151,10 +151,15 @@ pub fn run_with_privilege(program: &str, args: &[String], dry_run: bool) -> io::
 }
 
 pub fn critical_path(path: &Path) -> bool {
-    let normalized = path.to_string_lossy().replace('\\', "/").to_lowercase();
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let normalized = canonical
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_lowercase();
     let trimmed = normalized.trim_end_matches('/');
     trimmed.is_empty()
         || normalized.ends_with(":/")
+        || trimmed.ends_with(':')
         || [
             "/windows",
             "/program files",
@@ -222,6 +227,118 @@ static HOST_TOOLS: &[super::HostTool] = &[
     tool("taskkill", "system", "process-control", false, false, ""),
     tool("wevtutil", "system", "Windows-event-log", false, false, ""),
     tool(
+        "ipconfig",
+        "network",
+        "network-configuration-fallback",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "route",
+        "network",
+        "network-route-fallback",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "netstat",
+        "network",
+        "listening-sockets-fallback",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "powercfg",
+        "power",
+        "power-plan-management",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "query",
+        "users",
+        "logged-in-user-sessions",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "lusrmgr.msc",
+        "users",
+        "local-account-manager",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "Get-LocalUser",
+        "users",
+        "local-account-inventory",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "Get-LocalGroup",
+        "users",
+        "local-group-inventory",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "Get-NetIPConfiguration",
+        "network",
+        "network-addresses-and-routes",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "Get-NetRoute",
+        "network",
+        "network-routes",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "Get-DnsClientServerAddress",
+        "network",
+        "DNS-server-inventory",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "Get-NetTCPConnection",
+        "network",
+        "listening-sockets",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "Get-NetFirewallProfile",
+        "security",
+        "firewall-profile-status",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "Get-MpComputerStatus",
+        "security",
+        "Microsoft-Defender-status",
+        false,
+        false,
+        "",
+    ),
+    tool(
         "reg.exe",
         "registry",
         "Windows-registry-query-and-export",
@@ -245,6 +362,14 @@ static HOST_TOOLS: &[super::HostTool] = &[
         false,
         "",
     ),
+    tool(
+        "diskmgmt.msc",
+        "storage",
+        "native-graphical-disk-manager",
+        false,
+        false,
+        "",
+    ),
     tool("Get-Disk", "storage", "disk-inventory", false, false, ""),
     tool(
         "Get-Partition",
@@ -258,6 +383,30 @@ static HOST_TOOLS: &[super::HostTool] = &[
         "Get-Volume",
         "storage",
         "volume-inventory",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "Get-StoragePool",
+        "storage",
+        "storage-pool-inventory",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "Get-VirtualDisk",
+        "storage",
+        "virtual-disk-inventory",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "Get-BitLockerVolume",
+        "storage",
+        "bitlocker-status",
         false,
         false,
         "",

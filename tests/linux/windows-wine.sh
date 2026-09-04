@@ -10,6 +10,10 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 TARGET="${LTOOLS_WINDOWS_TARGET:-x86_64-pc-windows-gnu}"
 RUNNER="${LTOOLS_WINE_RUNNER:-}"
+# Este builder puede ejecutarse desde el builder Linux, que también usa
+# rust/target. Mantener un target propio evita que --clean borre el binario
+# Linux que todavía necesita el empaquetado de la release.
+WINDOWS_CARGO_TARGET_DIR="${LTOOLS_WINDOWS_CARGO_TARGET_DIR:-$ROOT_DIR/rust/target/windows-wine}"
 PREFIX=""
 LOG_PATH=""
 ARTIFACT_DIR=""
@@ -82,6 +86,9 @@ while (($#)); do
 done
 
 [[ "$TARGET" =~ ^[A-Za-z0-9_\.-]+$ ]] || die "target Rust inválido: $TARGET"
+WINDOWS_CARGO_TARGET_DIR="$(realpath -m -- "$WINDOWS_CARGO_TARGET_DIR")"
+mkdir -p -- "$WINDOWS_CARGO_TARGET_DIR"
+export CARGO_TARGET_DIR="$WINDOWS_CARGO_TARGET_DIR"
 
 find_runner() {
     if [[ -n "$RUNNER" ]]; then
@@ -206,7 +213,7 @@ if [[ "$DO_BUILD" -eq 1 ]]; then
         tee -a "$LOG_PATH"
 fi
 
-WINEXE="$ROOT_DIR/rust/target/$TARGET/release/ltools.exe"
+WINEXE="$CARGO_TARGET_DIR/$TARGET/release/ltools.exe"
 [[ -f "$WINEXE" ]] || die "no existe el ejecutable Windows: $WINEXE"
 
 RUNNER_NAME="$(basename -- "$RUNNER")"
@@ -278,8 +285,14 @@ package_windows_artifact() {
     mkdir -p -- "$ARTIFACT_DIR"
     local package_arch="${TARGET%%-*}"
     local artifact="$ARTIFACT_DIR/ltools-$VERSION-windows-$package_arch.exe"
+    local cli_artifact="$ARTIFACT_DIR/ltools-$VERSION-windows-$package_arch-cli.exe"
     local metadata="$ARTIFACT_DIR/ltools-$VERSION-windows-$package_arch-wine.json"
     cp -a -- "$WINEXE" "$artifact"
+    # El perfil CLI comparte el backend Rust, pero su nombre de distribución
+    # permite a Windows/WinSlim Terminal seleccionarlo sin depender de un
+    # wrapper Bash o de una variable de entorno. Es el mismo modelo que usa
+    # el builder nativo Windows.
+    cp -a -- "$WINEXE" "$cli_artifact"
     cat > "$metadata" <<EOF
 {
   "application": "WinSlim-Tools",
@@ -287,12 +300,13 @@ package_windows_artifact() {
   "platform": "windows",
   "architecture": "$package_arch",
   "artifact": "$(basename -- "$artifact")",
+  "cli_artifact": "$(basename -- "$cli_artifact")",
   "validation": "wine-proton",
   "runner": "$(basename -- "$RUNNER")",
   "target": "$TARGET"
 }
 EOF
-    ok "artefacto Windows bajo Wine copiado: $artifact"
+    ok "artefactos Windows bajo Wine copiados: $artifact y $cli_artifact"
 }
 
 run_windows_timeout() {
@@ -321,7 +335,9 @@ if [[ "$RUN_TESTS" -eq 0 ]]; then
 else
     install_mono_if_needed
 
-    if ! run_probe 2>&1 | tee -a "$LOG_PATH" | grep -Fq 'LTOOLS_WINE_OK'; then
+    probe_output="$(run_probe 2>&1)" || die "el runner no pudo iniciar una consola Windows; revisa $LOG_PATH"
+    printf '%s\n' "$probe_output" | tee -a "$LOG_PATH" >/dev/null
+    if ! grep -Fq 'LTOOLS_WINE_OK' <<<"$probe_output"; then
         die "el runner no pudo iniciar una consola Windows; revisa $LOG_PATH"
     fi
     ok 'runner Windows inicia una consola aislada'
@@ -337,7 +353,8 @@ else
     run_case 'help' --help
     CAPABILITIES="$(run_windows_timeout capabilities --format json 2>>"$LOG_PATH")" ||
         die 'capabilities --format json falló'
-    printf '%s\n' "$CAPABILITIES" | tee -a "$LOG_PATH" | grep -Fq '"platform": "windows"' ||
+    printf '%s\n' "$CAPABILITIES" | tee -a "$LOG_PATH" >/dev/null
+    grep -Fq '"platform": "windows"' <<<"$CAPABILITIES" ||
         die 'el JSON Windows no declara la plataforma correcta'
     if command -v jq >/dev/null 2>&1; then
         printf '%s\n' "$CAPABILITIES" | jq -e '
@@ -360,7 +377,11 @@ else
     ok 'descriptor declarativo WinSlim Terminal'
     ok 'contrato JSON Windows'
     run_case 'defaults' defaults
-    if ! printf 'q\n' | run_windows_timeout menu 2>&1 | tee -a "$LOG_PATH" | grep -Fq 'Elige una opción'; then
+    menu_output="$(printf 'q\n' | run_windows_timeout menu 2>&1)" || {
+        die 'el menú Windows no se abrió correctamente'
+    }
+    printf '%s\n' "$menu_output" | tee -a "$LOG_PATH" >/dev/null
+    if ! grep -Fq 'Elige una opción' <<<"$menu_output"; then
         die 'el menú Windows no se abrió correctamente'
     fi
     ok 'menú Windows abre y sale con q'

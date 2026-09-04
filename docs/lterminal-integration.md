@@ -71,6 +71,32 @@ dividir ni reinterpretar como una cadena de shell. Cada acción declara si es
 segura, si es interactiva, si requiere privilegios y qué comandos anfitriones
 necesita.
 
+Para no mantener otro catálogo paralelo, el descriptor expone también
+`action_catalog`. La terminal puede ejecutar `executable` con `args[]`:
+
+```text
+ltools actions list --format json
+```
+
+El resultado usa `ltools-actions-v1` y contiene acciones específicas de la
+plataforma, perfiles `safe-default`/`advanced`, objetivos explícitos y la
+política de seguridad. La GUI y los menús CLI utilizan las mismas operaciones
+del backend; los botones de selección no rellenan objetivos sensibles por su
+cuenta. En Windows `C:` queda fuera de la selección predeterminada y en Linux
+`/`, `/boot` y `/home` no se proponen como objetivos automáticos.
+
+El catálogo incluye además las acciones nativas generales:
+`native.network-status`, `native.hardware-status`, `native.power-status`,
+`native.security-status` y `native.dns-flush`. Las cuatro primeras son
+consultas; `native.dns-flush` es mutable y conserva la confirmación del
+backend, incluso al ejecutarse desde un botón. Los frontends pueden mostrar
+un resumen propio, pero deben conservar la salida completa en el panel de
+terminal y no inventar objetivos ni comandos.
+
+El catálogo también puede publicar aliases, como tdisk status, tsvc list,
+tnet status o tboot status. Son nombres declarativos para la interfaz; el host
+debe seguir ejecutando executable con args[] separados y con shell: none.
+
 El catálogo también declara acciones de software y Git. `package-search` abre
 la búsqueda contextual y puede pedir un nombre; `package-install` vuelve a
 buscar, presenta los candidatos por gestor/versión y exige confirmación.
@@ -79,6 +105,19 @@ buscar, presenta los candidatos por gestor/versión y exige confirmación.
 requieren confirmación. La salida estructurada de búsqueda usa
 `ltools-package-search-v1`; el descriptor de terminal sigue siendo opcional y
 no sustituye al contrato JSON de capacidades.
+
+El descriptor incluye `ui_context` para transmitir las preferencias visuales
+del host sin acoplarlo a la implementación de LTools. El idioma acepta
+`LTERMINAL_LANGUAGE` o `LTERMINAL_LANG` y el tema acepta `LTERMINAL_THEME`;
+WinSlim Terminal dispone de los alias `WINSLIM_TERMINAL_LANGUAGE`,
+`WINSLIM_TERMINAL_LANG` y `WINSLIM_TERMINAL_THEME`. Las variables propias
+`LTOOLS_LANG` y `LTOOLS_THEME` tienen precedencia cuando se proporcionan de
+forma explícita.
+
+La CLI admite también `--lang`, `--theme`, `--color auto|always|never` y
+`--no-color`. El host debe transmitirlos como argumentos separados o mediante
+el entorno, nunca concatenarlos en una cadena de shell. La GUI independiente
+usa la paleta oscura `ocean` y solo cambia con `LTOOLS_GUI_THEME`.
 
 La integración generada identifica automáticamente:
 

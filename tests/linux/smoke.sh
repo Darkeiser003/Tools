@@ -63,8 +63,18 @@ done
 ok 'menú principal Linux con categorías generales y sin WinSlim'
 if command -v xvfb-run >/dev/null 2>&1; then
     if timeout 10 xvfb-run -a true >/dev/null 2>&1; then
-        GUI_OUTPUT="$(timeout 20 xvfb-run -a env GDK_BACKEND=x11 LTOOLS_GUI_SMOKE=1 LTOOLS_GUI_REQUIRED=1 HOME="$TMP_DIR/gui-home" XDG_STATE_HOME="$TMP_DIR/gui-state" "$BIN" 2>&1)" ||
+        set +e
+        GUI_OUTPUT="$(timeout 30 xvfb-run -a env GDK_BACKEND=x11 \
+            LTOOLS_GUI_SMOKE=1 LTOOLS_GUI_REQUIRED=1 LTOOLS_DISABLE_GUI=0 \
+            LTOOLS_TERMINAL=auto \
+            HOME="$TMP_DIR/gui-home" XDG_STATE_HOME="$TMP_DIR/gui-state" \
+            "$BIN" 2>&1)"
+        GUI_STATUS=$?
+        set -e
+        if [[ "$GUI_STATUS" -ne 0 ]]; then
+            printf 'Salida de la GUI Rust (código %s):\n%s\n' "$GUI_STATUS" "$GUI_OUTPUT" >&2
             die 'la GUI Rust no pudo abrir y cerrar una ventana de prueba'
+        fi
         ok 'GUI Rust Linux abre y cierra una ventana aislada'
     else
         skip 'GUI Rust Linux: xvfb-run está instalado, pero Xvfb no puede crear un display aislado'
@@ -85,11 +95,23 @@ if command -v jq >/dev/null 2>&1; then
     jq -e '(.host_tools | length >= 10) and any(.host_tools[]; .category == "audit") and any(.host_tools[]; .category == "system") and any(.host_tools[]; .installable == true) and any(.host_tools[]; .id == "docker-compose" and .installable == true) and any(.host_tools[]; .id == "kubectl" and .installable == true) and any(.host_tools[]; .id == "lsblk" and .installable == true) and ([.host_tools[] | select(.category == "games" or .category == "virtualization" or .category == "development" or .command == "steam" or .command == "git")] | length == 0)' \
         <<<"$CAPABILITIES_JSON" >/dev/null \
         || die 'el catálogo JSON de herramientas del anfitrión está incompleto'
-    jq -e 'all(.host_tools[]; (.version | type == "string")) and ([.host_tools[] | select((.id == "parted" or .id == "gparted" or .id == "fdisk" or .id == "podman" or .id == "podman-compose" or .id == "helm" or .id == "kind" or .id == "minikube" or .id == "k3d" or .id == "k9s") and .installable == true)] | length == 0)' \
+    jq -e 'all(.host_tools[]; (.version | type == "string")) and ([.host_tools[] | select((.id == "parted" or .id == "fdisk" or .id == "podman" or .id == "podman-compose" or .id == "helm" or .id == "kind" or .id == "minikube" or .id == "k3d" or .id == "k9s") and .installable == true)] | length == 0)' \
         <<<"$CAPABILITIES_JSON" >/dev/null \
         || die 'el catálogo JSON no respeta versiones e instalador único por capacidad'
 fi
 ok 'contrato JSON de capacidades e integración; catálogo nativo con instaladores únicos'
+
+ACTIONS_JSON="$($BIN actions list --format json)"
+if command -v jq >/dev/null 2>&1; then
+    jq -e '.schema == "ltools-actions-v1" and .platform == "linux" and .safety.target_selection == "explicit-only" and (.actions | length >= 30) and any(.actions[]; .id == "storage.mount" and .targetPolicy == "explicit-only" and .mutating == true) and any(.actions[]; .id == "accounts.add" and .targetPolicy == "explicit-only" and .mutating == true and .confirmation != "none") and any(.actions[]; .id == "native.dns-flush" and .mutating == true and .confirmation != "none") and any(.actions[]; .id == "boot.status" and (.aliases | index("tboot status") != null) and .mutating == false) and all(.actions[]; (.command | IN("audit","packages","games","storage","system","accounts","native","defaults","clean","diagnostics","automation","boot")))' \
+        <<<"$ACTIONS_JSON" >/dev/null || die 'el registro de acciones Linux no declara políticas o acciones válidas'
+else
+    grep -Fq 'ltools-actions-v1' <<<"$ACTIONS_JSON" || die 'el registro de acciones Linux no se pudo generar'
+    grep -Fq 'explicit-only' <<<"$ACTIONS_JSON" || die 'las acciones sensibles no exigen objetivo explícito'
+fi
+ACTION_DRY_RUN="$($BIN --dry-run actions run storage.mount /dev/synthetic-ltools)"
+grep -Fq 'udisksctl mount' <<<"$ACTION_DRY_RUN" || grep -Fq 'mount /dev/synthetic-ltools' <<<"$ACTION_DRY_RUN" || die 'actions run no delegó el montaje con dry-run'
+ok 'registro de acciones guiadas, política de objetivo explícito y dry-run'
 
 INSTALL_STUB_DIR="$TMP_DIR/install-stub"
 INSTALL_OUTPUT="$TMP_DIR/install-output.log"
@@ -118,8 +140,10 @@ grep -Fq '"exclusive_host_family": "lterminal"' <<<"$TERMINAL_JSON" ||
     die 'el descriptor de terminal no limita su integración a LTerminal'
 grep -Fq 'WinSlim Terminal' <<<"$TERMINAL_JSON" ||
     die 'el descriptor de terminal no declara WinSlim Terminal'
+grep -Fq '"action_catalog"' <<<"$TERMINAL_JSON" ||
+    die 'el descriptor de terminal no enlaza el catálogo de acciones'
 if command -v jq >/dev/null 2>&1; then
-    jq -e '(.actions | length >= 20) and any(.actions[]; .id == "package-search") and any(.actions[]; .id == "package-install") and any(.actions[]; .id == "git-pull") and all(.actions[]; .id and .executable and (.args | type == "array") and .terminal == true and .shell == "none" and (.supports | index("dry-run") != null))' \
+    jq -e '(.action_catalog.schema == "ltools-actions-v1") and (.action_catalog.shell == "none") and (.actions | length >= 20) and any(.actions[]; .id == "package-search") and any(.actions[]; .id == "package-install") and any(.actions[]; .id == "git-pull") and all(.actions[]; .id and .executable and (.args | type == "array") and .terminal == true and .shell == "none" and (.supports | index("dry-run") != null))' \
         <<<"$TERMINAL_JSON" >/dev/null || die 'las acciones declarativas no tienen el contrato esperado'
 fi
 ok 'descriptor JSON específico para terminales'
@@ -140,6 +164,16 @@ for language in "${!LANGUAGE_MARKERS[@]}"; do
     fi
 done
 ok 'todos los idiomas en el backend Rust'
+THEMED_MENU="$(printf 'q\n' | LTOOLS_LANG=en LTERMINAL_THEME=amber LTOOLS_COLOR=always LTOOLS_NO_CLEAR=1 "$BIN" menu 2>&1)"
+grep -Fq $'\033[' <<<"$THEMED_MENU" || die 'la CLI no aplica color ANSI al tema recibido de la terminal'
+grep -Fq 'Usage:' <<<"$(LTERMINAL_LANG=en LTOOLS_NO_CLEAR=1 "$BIN" --help)" ||
+    die 'la CLI no recibe el idioma alternativo de la terminal'
+MACHINE_WITH_THEME="$(LTOOLS_THEME=matrix LTOOLS_COLOR=always "$BIN" capabilities --format json)"
+if command -v jq >/dev/null 2>&1; then
+    jq empty <<<"$MACHINE_WITH_THEME" >/dev/null || die 'el tema no debe contaminar la salida JSON con ANSI'
+fi
+! grep -Fq $'\033[' <<<"$MACHINE_WITH_THEME" || die 'la salida JSON contiene secuencias ANSI'
+ok 'contexto CLI de idioma/tema heredado y salida máquina limpia'
 DOCTOR_OUTPUT="$(HOME="$TMP_DIR/home" XDG_STATE_HOME="$TMP_DIR/state" "$BIN" doctor)"
 grep -Fq 'LTools host diagnostics' <<<"$DOCTOR_OUTPUT" || die 'doctor no funciona como operación de solo lectura'
 grep -Fq '[audit]' <<<"$DOCTOR_OUTPUT" || die 'doctor no agrupa herramientas de auditoría'
@@ -148,7 +182,18 @@ grep -Fq '[prefix]' <<<"$DOCTOR_OUTPUT" || die 'doctor no agrupa herramientas de
 if grep -Fq '[packages]' <<<"$DOCTOR_OUTPUT"; then
     die 'doctor volvió a mezclar gestores de paquetes como dependencias'
 fi
+if find "$TMP_DIR/state" -type f -name '*.tsv' -print -quit 2>/dev/null | grep -q .; then
+    die 'doctor de solo lectura creó un plan innecesario'
+fi
 ok 'doctor Rust sin crear planes ni modificar el estado'
+
+QUERY_OUT="$TMP_DIR/query-report"
+QUERY_STATE="$TMP_DIR/query-state"
+HOME="$TMP_DIR/home-query" XDG_STATE_HOME="$QUERY_STATE" "$BIN" packages --packages-only --out "$QUERY_OUT" >/dev/null
+if find "$QUERY_STATE" -type f -name '*.tsv' -print -quit 2>/dev/null | grep -q .; then
+    die 'el inventario de paquetes creó un plan innecesario'
+fi
+ok 'consultas directas no generan planes de estado innecesarios'
 
 mkdir -p "$TMP_DIR/root/demo-prefix/drive_c"
 printf 'synthetic-prefix\n' > "$TMP_DIR/root/demo-prefix/system.reg"
@@ -160,9 +205,68 @@ grep -Fq 'demo-prefix' <<<"$LIST_OUTPUT" || die 'el listado no detectó el prefi
 ok 'listado aislado de un prefijo sintético'
 STORAGE_OUTPUT="$("$BIN" storage tools)"
 grep -Fq 'Herramientas de almacenamiento' <<<"$STORAGE_OUTPUT" || die 'storage no responde'
+STORAGE_MOUNTS="$("$BIN" storage mounts)"
+grep -Fq 'Montajes activos' <<<"$STORAGE_MOUNTS" || die 'storage mounts no responde'
+STORAGE_PARTITIONS="$("$BIN" storage partitions)"
+grep -Fq 'Discos y particiones Linux' <<<"$STORAGE_PARTITIONS" || die 'storage partitions no responde'
+STORAGE_DRY_RUN="$("$BIN" --dry-run storage mount /dev/synthetic-ltools)"
+grep -Fq 'udisksctl mount' <<<"$STORAGE_DRY_RUN" || grep -Fq 'mount /dev/synthetic-ltools' <<<"$STORAGE_DRY_RUN" || die 'storage mount no genera plan dry-run'
+if "$BIN" storage inspect '/dev/synthetic;invalid' >"$TMP_DIR/storage-invalid.out" 2>&1; then
+    die 'storage aceptó un dispositivo inválido'
+fi
+grep -Fq 'dispositivo' "$TMP_DIR/storage-invalid.out" || die 'storage no explicó el objetivo inválido'
+ok 'gestor de discos: montajes, particiones, simulación y validación'
+STORAGE_USAGE="$($BIN storage usage)"
+grep -Fq 'Uso de espacio' <<<"$STORAGE_USAGE" || die 'storage usage no responde'
+STORAGE_FILESYSTEMS="$($BIN storage filesystems)"
+grep -Fq 'Sistemas de archivos' <<<"$STORAGE_FILESYSTEMS" || die 'storage filesystems no responde'
+STORAGE_STACK="$($BIN storage volume-stack)"
+grep -Fq 'Capas de almacenamiento' <<<"$STORAGE_STACK" || die 'storage volume-stack no responde'
+ok 'consultas avanzadas de almacenamiento y capas nativas'
+ACCOUNT_OUTPUT="$($BIN accounts identity)"
+grep -Fq 'uid=' <<<"$ACCOUNT_OUTPUT" || die 'accounts identity no responde'
+ACCOUNT_ACTIONS="$($BIN --dry-run actions run accounts.add ltools-e2e-user)"
+grep -Fq 'Acción: accounts.add' <<<"$ACCOUNT_ACTIONS" || die 'accounts.add no se publica en el catálogo'
 REGISTRY_OUTPUT="$("$BIN" registry status)"
 grep -Fq 'Registros y configuración Linux' <<<"$REGISTRY_OUTPUT" || die 'registry Linux no responde'
 ok 'módulos Linux de almacenamiento y configuración'
+
+# Ejecuta cada acción nativa directamente. El menú E2E comprueba la navegación,
+# pero estas comprobaciones garantizan además que cada subacción devuelve un
+# estado estable aunque una utilidad opcional esté ausente, enmascarada o
+# requiera privilegios para mostrar parte de su información.
+NATIVE_NETWORK="$($BIN native network status 2>&1)" || die 'native network status terminó con error'
+grep -Fq 'Red Linux' <<<"$NATIVE_NETWORK" || die 'native network status no mostró su sección Linux'
+NATIVE_HARDWARE="$($BIN native hardware status 2>&1)" || die 'native hardware status terminó con error'
+grep -Fq 'Hardware Linux' <<<"$NATIVE_HARDWARE" || die 'native hardware status no mostró su sección Linux'
+NATIVE_POWER="$($BIN native power status 2>&1)" || die 'native power status terminó con error por una dependencia opcional'
+grep -Fq 'Energía Linux' <<<"$NATIVE_POWER" || die 'native power status no mostró su sección Linux'
+NATIVE_SECURITY="$($BIN native security status 2>&1)" || die 'native security status terminó con error por permisos o herramienta opcional'
+grep -Fq 'Firewall Linux' <<<"$NATIVE_SECURITY" || die 'native security status no mostró su sección Linux'
+NATIVE_DNS_DRY_RUN="$($BIN --dry-run native network flush-dns 2>&1)" || die 'native network flush-dns dry-run terminó con error'
+grep -Fq 'resolvectl flush-caches' <<<"$NATIVE_DNS_DRY_RUN" || die 'native network flush-dns no generó el plan esperado'
+ok 'acciones nativas Linux directas: red, hardware, energía, seguridad y DNS'
+BOOT_STATUS="$($BIN boot status 2>&1)" || die 'boot status Linux terminó con error'
+grep -Fq 'Arranque Linux' <<<"$BOOT_STATUS" || die 'boot status Linux no mostró su sección nativa'
+BOOT_ALIAS="$($BIN tboot status 2>&1)" || die 'alias tboot status terminó con error'
+grep -Fq 'Arranque Linux' <<<"$BOOT_ALIAS" || die 'tboot no se tradujo al módulo boot Linux'
+BOOT_PLAN="$($BIN --dry-run boot plan 2>&1)" || die 'boot plan Linux terminó con error'
+grep -Fq 'No se modificarán' <<<"$BOOT_PLAN" || die 'boot plan Linux no confirmó su modo de solo lectura'
+ok 'arranque Linux: estado, alias y plan sin modificaciones'
+
+DIAGNOSTICS_JSON="$($BIN diagnostics health --format json)"
+if command -v jq >/dev/null 2>&1; then
+    jq -e '.schema == "ltools-diagnostics-v1" and .platform == "linux" and (.probes | length >= 3) and all(.probes[]; .key and (.available | type == "boolean") and (.output | type == "string"))' \
+        <<<"$DIAGNOSTICS_JSON" >/dev/null || die 'diagnostics no generó un JSON válido o incompleto'
+else
+    grep -Fq 'ltools-diagnostics-v1' <<<"$DIAGNOSTICS_JSON" || die 'diagnostics no generó su esquema JSON'
+fi
+DIAGNOSTICS_TSV="$($BIN diagnostics network --format tsv)"
+grep -Fq $'key\tcommand\tavailable\toutput' <<<"$DIAGNOSTICS_TSV" || die 'diagnostics no generó cabecera TSV'
+for diagnostic_action in health network hardware users; do
+    "$BIN" diagnostics "$diagnostic_action" >/dev/null || die "diagnostics $diagnostic_action terminó con error"
+done
+ok 'diagnóstico nativo Linux en salud, red, hardware, usuarios y formatos JSON/TSV'
 
 RELEASE_FIXTURE_DIR="$TMP_DIR/release-assets"
 mkdir -p "$RELEASE_FIXTURE_DIR"
@@ -183,6 +287,11 @@ ok 'manifiesto GitHub de release con tamaño y SHA-256'
 
 if [[ -n "$APPIMAGE_PATH" ]]; then
     [[ -x "$APPIMAGE_PATH" ]] || die "AppImage no ejecutable: $APPIMAGE_PATH"
+    case "$APPIMAGE_PATH" in
+        *-cli.AppImage)
+            die '--appimage debe apuntar al AppImage GUI; el perfil CLI se detecta automáticamente como vecino'
+            ;;
+    esac
     DIRECT_LOG="${LOG_PATH:-$TMP_DIR/appimage-direct.log}"
     mkdir -p "$(dirname -- "$DIRECT_LOG")"
     : > "$DIRECT_LOG"
@@ -206,14 +315,127 @@ if [[ -n "$APPIMAGE_PATH" ]]; then
 
     if command -v xvfb-run >/dev/null 2>&1; then
         if timeout 10 xvfb-run -a true >/dev/null 2>&1; then
+            set +e
             APPIMAGE_GUI_OUTPUT="$(timeout 30 xvfb-run -a env GDK_BACKEND=x11 \
-                LTOOLS_GUI_SMOKE=1 LTOOLS_GUI_REQUIRED=1 \
+                LTOOLS_GUI_SMOKE=1 LTOOLS_GUI_REQUIRED=1 LTOOLS_DISABLE_GUI=0 \
+                LTOOLS_TERMINAL=auto \
                 HOME="$TMP_DIR/appimage-gui-home" XDG_STATE_HOME="$TMP_DIR/appimage-gui-state" \
-                APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" 2>&1)" ||
+                APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" 2>&1)"
+            APPIMAGE_GUI_STATUS=$?
+            set -e
+            if [[ "$APPIMAGE_GUI_STATUS" -ne 0 ]]; then
+                printf 'Salida del AppImage GUI (código %s):\n%s\n' "$APPIMAGE_GUI_STATUS" "$APPIMAGE_GUI_OUTPUT" >&2
                 die 'el AppImage normal no pudo abrir y cerrar su GUI sin argumentos'
+            fi
             grep -Fq 'LTools se cerró correctamente' <<<"$APPIMAGE_GUI_OUTPUT" ||
                 die 'el AppImage normal no confirmó el cierre limpio de la GUI'
             ok 'AppImage normal abre y cierra su GUI sin argumentos'
+
+            set +e
+            RESPONSIVE_GUI_OUTPUT="$(timeout 30 xvfb-run -a env GDK_BACKEND=x11 \
+                LTOOLS_GUI_SMOKE=1 LTOOLS_GUI_REQUIRED=1 LTOOLS_DISABLE_GUI=0 \
+                LTOOLS_TERMINAL=auto \
+                LTOOLS_GUI_WIDTH=640 LTOOLS_GUI_HEIGHT=480 \
+                HOME="$TMP_DIR/appimage-gui-small-home" XDG_STATE_HOME="$TMP_DIR/appimage-gui-small-state" \
+                APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" 2>&1)"
+            RESPONSIVE_GUI_STATUS=$?
+            set -e
+            if [[ "$RESPONSIVE_GUI_STATUS" -ne 0 ]]; then
+                printf 'Salida de la GUI pequeña (código %s):\n%s\n' "$RESPONSIVE_GUI_STATUS" "$RESPONSIVE_GUI_OUTPUT" >&2
+                die 'la GUI no pudo abrirse en una ventana pequeña de prueba'
+            fi
+            grep -Fq 'LTools se cerró correctamente' <<<"$RESPONSIVE_GUI_OUTPUT" ||
+                die 'la GUI pequeña no confirmó un cierre limpio'
+            ok 'GUI responsiva validada en 640x480 sin clipping horizontal'
+
+            if command -v xdotool >/dev/null 2>&1; then
+                RESPONSIVE_ACTION_LOG="$TMP_DIR/gui-responsive-action-output.log"
+                RESPONSIVE_STARTED=$SECONDS
+                set +e
+                APPIMAGE_PATH="$APPIMAGE_PATH" timeout 45 xvfb-run -a bash -c '
+                    set -Eeuo pipefail
+                    export LTOOLS_GUI_SMOKE=1
+                    export LTOOLS_GUI_REQUIRED=1
+                    # The AppImage normally integrates with the host terminal
+                    # when it is launched without arguments.  A GUI smoke
+                    # must be independent from that host preference: select
+                    # the autonomous GUI path explicitly.  Do not set
+                    # LTOOLS_NO_AUTO_TERMINAL here: in the AppRun contract
+                    # that flag intentionally means “run the CLI menu”.
+                    export LTOOLS_DISABLE_GUI=0
+                    export LTOOLS_TERMINAL=auto
+                    # Keep the window alive while the synthetic child action
+                    # is running.  The test closes it through the window
+                    # manager afterwards; a synchronous callback would not
+                    # process that close event until the 5-second child
+                    # finishes.
+                    export LTOOLS_GUI_SMOKE_HOLD_MS=10000
+                    export LTOOLS_GUI_SMOKE_ACTION_DELAY_MS=5000
+                    export LTOOLS_GUI_WIDTH=640
+                    export LTOOLS_GUI_HEIGHT=480
+                    export HOME="$HOME/gui-responsive-action-home"
+                    export XDG_STATE_HOME="$HOME/gui-responsive-action-state"
+                    export LTOOLS_GUI_SMOKE_ACTION_MARKER="$HOME/gui-responsive-action.clicked"
+                    mkdir -p "$HOME" "$XDG_STATE_HOME"
+                    rm -f "$LTOOLS_GUI_SMOKE_ACTION_MARKER"
+                    APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" >"$HOME/gui-responsive-action.log" 2>&1 &
+                    app_pid=$!
+                    window=''
+                    # AppImages may need several seconds to extract before
+                    # creating the GTK window.  A one-second probe made the
+                    # old test report a false failure on slower disks.
+                    for _ in $(seq 1 300); do
+                        # GTK crea una ventana auxiliar 10x10 con el nombre
+                        # «ltools». Seleccionar únicamente el título visible
+                        # evita enviar los clics al helper del toolkit.
+                        window="$(xdotool search --name "^LTools [0-9]" 2>/dev/null | head -n1 || true)"
+                        [[ -n "$window" ]] && break
+                        sleep 0.1
+                    done
+                    if [[ -z "$window" ]]; then
+                        printf "No se encontró la ventana LTools tras 30 s.\\n"
+                        printf "Ventanas detectadas:\\n"
+                        xdotool search --name ".*" 2>/dev/null | while read -r id; do
+                            printf "  %s: " "$id"
+                            xdotool getwindowname "$id" 2>/dev/null || true
+                        done
+                        printf "Procesos LTools/AppRun:\\n"
+                        ps -ef | grep -E "ltools|AppRun" | grep -v grep || true
+                        printf "Log del AppImage:\\n"
+                        sed -n "1,160p" "$HOME/gui-responsive-action.log" 2>/dev/null || true
+                        kill "$app_pid" 2>/dev/null || true
+                        exit 21
+                    fi
+                    xdotool mousemove --window "$window" 320 127 click 1
+                    sleep 0.2
+                    xdotool mousemove --window "$window" 320 127 click 1
+                    for _ in $(seq 1 40); do
+                        [[ -f "$LTOOLS_GUI_SMOKE_ACTION_MARKER" ]] && break
+                        sleep 0.05
+                    done
+                    [[ -f "$LTOOLS_GUI_SMOKE_ACTION_MARKER" ]] || exit 22
+                    sleep 0.2
+                    action_started_ms=$(date +%s%3N)
+                    xdotool windowclose "$window"
+                    wait "$app_pid"
+                    cat "$HOME/gui-responsive-action.log"
+                    action_elapsed_ms=$(( $(date +%s%3N) - action_started_ms ))
+                    printf "GUI_ACTION_ELAPSED_MS=%s\n" "$action_elapsed_ms"
+                    (( action_elapsed_ms < 3000 )) || exit 23
+                ' >"$RESPONSIVE_ACTION_LOG" 2>&1
+                RESPONSIVE_ACTION_STATUS=$?
+                set -e
+                RESPONSIVE_ACTION_OUTPUT="$(cat "$RESPONSIVE_ACTION_LOG")"
+                if (( RESPONSIVE_ACTION_STATUS != 0 )); then
+                    printf 'Salida de la prueba de acción GUI:\n%s\n' "$RESPONSIVE_ACTION_OUTPUT" >&2
+                    die "la GUI no pudo procesar una acción lenta en segundo plano (código $RESPONSIVE_ACTION_STATUS)"
+                fi
+                grep -Fq 'LTools se cerró correctamente' <<<"$RESPONSIVE_ACTION_OUTPUT" ||
+                    die 'la GUI no confirmó el cierre durante la prueba de acción lenta'
+                ok "acciones GUI en segundo plano: la ventana sigue respondiendo ($(grep -o 'GUI_ACTION_ELAPSED_MS=[0-9]*' <<<"$RESPONSIVE_ACTION_OUTPUT" | tail -n1))"
+            else
+                skip 'GUI responsiva durante acción: xdotool no está disponible'
+            fi
         else
             skip 'GUI AppImage: Xvfb no puede crear un display aislado'
         fi

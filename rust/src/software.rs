@@ -41,6 +41,7 @@ struct InstallRequest {
     candidate_number: Option<usize>,
     yes: bool,
     format: String,
+    limit: usize,
 }
 
 #[derive(Debug)]
@@ -182,11 +183,11 @@ const MANAGERS: &[Manager] = &[
 pub fn help() -> &'static str {
     #[cfg(windows)]
     {
-        "software search NAME [--manager M] [--format text|json] | software install NAME [--candidate N] [--yes] [--dry-run]"
+        "software search NAME [--manager M] [--format text|json] [--limit N] | software install NAME [--candidate N] [--yes] [--limit N] [--dry-run]"
     }
     #[cfg(not(windows))]
     {
-        "software search NAME [--manager M] [--format text|json] | software install NAME [--candidate N] [--yes] [--dry-run]"
+        "software search NAME [--manager M] [--format text|json] [--limit N] | software install NAME [--candidate N] [--yes] [--limit N] [--dry-run]"
     }
 }
 
@@ -221,8 +222,8 @@ fn list_managers() -> Result<(), String> {
 }
 
 fn search_command(args: &[String]) -> Result<(), String> {
-    let (query, manager_filter, format) = parse_search_args(args)?;
-    let report = search(&query, manager_filter.as_deref());
+    let (query, manager_filter, format, limit) = parse_search_args(args)?;
+    let report = search(&query, manager_filter.as_deref(), limit);
     if format == "json" {
         println!("{}", report_json(&query, &report));
     } else {
@@ -236,7 +237,11 @@ fn search_command(args: &[String]) -> Result<(), String> {
 
 fn install_command(ctx: &Context, args: &[String]) -> Result<(), String> {
     let request = parse_install_args(args)?;
-    let report = search(&request.query, request.manager_filter.as_deref());
+    let report = search(
+        &request.query,
+        request.manager_filter.as_deref(),
+        request.limit,
+    );
     if request.format == "json" {
         println!("{}", report_json(&request.query, &report));
     } else {
@@ -335,7 +340,7 @@ fn record(ctx: &Context, candidate: &Candidate, status: &str, args: &[String]) {
     }
 }
 
-fn search(query: &str, manager_filter: Option<&str>) -> SearchReport {
+fn search(query: &str, manager_filter: Option<&str>, limit: usize) -> SearchReport {
     let mut report = SearchReport::default();
     for manager in MANAGERS {
         if manager_filter.is_some_and(|filter| filter != manager.id)
@@ -373,6 +378,7 @@ fn search(query: &str, manager_filter: Option<&str>) -> SearchReport {
             && left.package_id == right.package_id
             && left.version == right.version
     });
+    report.candidates.truncate(limit);
     report
 }
 
@@ -578,10 +584,11 @@ fn json_escape(value: &str) -> String {
         .collect()
 }
 
-fn parse_search_args(args: &[String]) -> Result<(String, Option<String>, String), String> {
+fn parse_search_args(args: &[String]) -> Result<(String, Option<String>, String, usize), String> {
     let mut query = None;
     let mut manager = None;
     let mut format = "text".to_string();
+    let mut limit = 100_usize;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -604,6 +611,14 @@ fn parse_search_args(args: &[String]) -> Result<(String, Option<String>, String)
                 format = normalize_format(option.trim_start_matches("--format="))?;
                 index += 1;
             }
+            "--limit" => {
+                limit = parse_limit(args.get(index + 1).ok_or("--limit requiere un número")?)?;
+                index += 2;
+            }
+            option if option.starts_with("--limit=") => {
+                limit = parse_limit(option.trim_start_matches("--limit="))?;
+                index += 1;
+            }
             value if !value.starts_with('-') && query.is_none() => {
                 query = Some(value.to_string());
                 index += 1;
@@ -616,7 +631,17 @@ fn parse_search_args(args: &[String]) -> Result<(String, Option<String>, String)
         .filter(|value| !value.trim().is_empty())
         .ok_or("falta el nombre del paquete")?;
     validate_query(&query)?;
-    Ok((query, manager, format))
+    Ok((query, manager, format, limit))
+}
+
+fn parse_limit(value: &str) -> Result<usize, String> {
+    let limit = value
+        .parse::<usize>()
+        .map_err(|_| "--limit no es válido".to_string())?;
+    if !(1..=1000).contains(&limit) {
+        return Err("--limit debe estar entre 1 y 1000".into());
+    }
+    Ok(limit)
 }
 
 fn parse_install_args(args: &[String]) -> Result<InstallRequest, String> {
@@ -654,13 +679,14 @@ fn parse_install_args(args: &[String]) -> Result<InstallRequest, String> {
             }
         }
     }
-    let (query, manager, format) = parse_search_args(&search_args)?;
+    let (query, manager, format, limit) = parse_search_args(&search_args)?;
     Ok(InstallRequest {
         query,
         manager_filter: manager,
         candidate_number: candidate,
         yes,
         format,
+        limit,
     })
 }
 
@@ -797,5 +823,13 @@ mod tests {
     #[test]
     fn json_escape_handles_quotes_and_newlines() {
         assert_eq!(json_escape("a\"b\nc"), "a\\\"b\\nc");
+    }
+
+    #[test]
+    fn search_limit_is_bounded_and_parsed() {
+        let args = vec!["tool".into(), "--limit=25".into()];
+        assert_eq!(parse_search_args(&args).unwrap().3, 25);
+        assert!(parse_limit("0").is_err());
+        assert!(parse_limit("1001").is_err());
     }
 }

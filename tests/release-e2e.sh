@@ -7,6 +7,7 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 RELEASE_DIR="$ROOT_DIR/release"
 VERSION=""
 REQUIRE_WINDOWS=0
+REQUIRE_WINDOWS_EXECUTABLES=0
 REQUIRE_APPIMAGE=1
 REQUIRE_PACKAGE=1
 SIGNATURE_PUBLIC_KEY_FILE=""
@@ -22,6 +23,8 @@ Uso: $0 [opciones]
   --release-dir DIR   Carpeta publicable; por defecto: ./release.
   --version VERSION   Versión esperada; por defecto se lee de Cargo.toml.
   --require-windows   Exige EXE, EXE-CLI y ZIP Windows además de Linux.
+  --require-windows-executables
+                      Exige los dos EXE Windows; útil para validación GNU/Wine.
   --no-appimage       No exige los dos perfiles AppImage Linux.
   --no-package        No exige el tarball runtime Linux.
   --signature-public-key-file FICHERO
@@ -37,6 +40,7 @@ while (($#)); do
         --release-dir) (($# >= 2)) || die '--release-dir necesita una ruta'; RELEASE_DIR="$2"; shift ;;
         --version) (($# >= 2)) || die '--version necesita un valor'; VERSION="$2"; shift ;;
         --require-windows) REQUIRE_WINDOWS=1 ;;
+        --require-windows-executables) REQUIRE_WINDOWS_EXECUTABLES=1 ;;
         --no-appimage) REQUIRE_APPIMAGE=0 ;;
         --no-package) REQUIRE_PACKAGE=0 ;;
         --signature-public-key-file) (($# >= 2)) || die '--signature-public-key-file necesita una ruta'; SIGNATURE_PUBLIC_KEY_FILE="$2"; shift ;;
@@ -111,6 +115,15 @@ if (( REQUIRE_WINDOWS )); then
     ok 'artefactos Windows principal, CLI y ZIP presentes'
 fi
 
+if (( REQUIRE_WINDOWS_EXECUTABLES )); then
+    for artifact in \
+        "ltools-$VERSION-windows-x86_64.exe" \
+        "ltools-$VERSION-windows-x86_64-cli.exe"; do
+        [[ -s "$RELEASE_DIR/$artifact" ]] || die "falta el ejecutable Windows $artifact"
+    done
+    ok 'ejecutables Windows principal y CLI presentes'
+fi
+
 while IFS= read -r -d '' file; do
     name="$(basename -- "$file")"
     case "$name" in
@@ -160,7 +173,7 @@ if [[ -e "$checksums" ]]; then
     fi
 fi
 
-if (( REQUIRE_WINDOWS )); then
+if (( REQUIRE_WINDOWS || REQUIRE_WINDOWS_EXECUTABLES )); then
     jq -e '([.artifacts[].platform] | index("linux")) != null and
            ([.artifacts[].platform] | index("windows")) != null' "$manifest" >/dev/null \
         || die 'el manifiesto final no contiene ambas plataformas'

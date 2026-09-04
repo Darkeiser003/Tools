@@ -119,8 +119,28 @@ fn save(entries: &[Automation]) -> Result<(), String> {
             args
         ));
     }
-    fs::write(&path, content)
-        .map_err(|error| format!("no se pudo guardar {}: {error}", path.display()))
+    // Escribir primero en el mismo directorio evita dejar un TSV truncado si
+    // el proceso se interrumpe durante la actualización del registro.
+    let temporary = path.with_file_name(format!(
+        ".automations.tsv.tmp-{}-{}",
+        std::process::id(),
+        crate::common::timestamp()
+    ));
+    if let Err(error) = fs::write(&temporary, content) {
+        let _ = fs::remove_file(&temporary);
+        return Err(format!("no se pudo guardar {}: {error}", path.display()));
+    }
+    #[cfg(windows)]
+    if path.exists() {
+        fs::remove_file(&path).map_err(|error| {
+            let _ = fs::remove_file(&temporary);
+            format!("no se pudo reemplazar {}: {error}", path.display())
+        })?;
+    }
+    fs::rename(&temporary, &path).map_err(|error| {
+        let _ = fs::remove_file(&temporary);
+        format!("no se pudo activar {}: {error}", path.display())
+    })
 }
 
 fn split_arguments(input: &str) -> Result<Vec<String>, String> {
@@ -170,11 +190,21 @@ fn input(prompt: &str) -> Option<String> {
 }
 
 fn validate(entry: &Automation) -> Result<(), String> {
-    if entry.name.is_empty() || entry.name.contains(['\t', '\n', '\r']) {
-        return Err("el nombre no puede estar vacío ni contener saltos de línea".into());
+    if entry.name.is_empty() || entry.name.chars().any(char::is_control) {
+        return Err("el nombre no puede estar vacío ni contener caracteres de control".into());
     }
     if entry.program.trim().is_empty() {
         return Err("el programa o script no puede estar vacío".into());
+    }
+    if entry.program.chars().any(char::is_control) {
+        return Err("el programa o script contiene caracteres de control".into());
+    }
+    let program_path = Path::new(&entry.program);
+    let looks_like_path = program_path.is_absolute()
+        || entry.program.starts_with('.')
+        || entry.program.contains(['/', '\\']);
+    if looks_like_path && !program_path.is_file() {
+        return Err(format!("el programa o script no existe: {}", entry.program));
     }
     if let Some(directory) = &entry.working_directory {
         if !Path::new(directory).is_dir() {
@@ -184,8 +214,54 @@ fn validate(entry: &Automation) -> Result<(), String> {
     Ok(())
 }
 
-fn list() -> Result<(), String> {
+fn json_escape(value: &str) -> String {
+    value
+        .chars()
+        .flat_map(|character| match character {
+            '"' => "\\\"".chars().collect::<Vec<_>>(),
+            '\\' => "\\\\".chars().collect(),
+            '\n' => "\\n".chars().collect(),
+            '\r' => "\\r".chars().collect(),
+            '\t' => "\\t".chars().collect(),
+            c if c.is_control() => "?".chars().collect(),
+            c => vec![c],
+        })
+        .collect()
+}
+
+fn list(format: &str) -> Result<(), String> {
     let entries = load()?;
+    if format == "json" {
+        let values = entries
+            .iter()
+            .map(|entry| {
+                let args = entry
+                    .args
+                    .iter()
+                    .map(|arg| format!("\"{}\"", json_escape(arg)))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!(
+                    "{{\"name\":\"{}\",\"program\":\"{}\",\"working_directory\":{},\"args\":[{}]}}",
+                    json_escape(&entry.name),
+                    json_escape(&entry.program),
+                    entry
+                        .working_directory
+                        .as_deref()
+                        .map(|directory| format!("\"{}\"", json_escape(directory)))
+                        .unwrap_or_else(|| "null".into()),
+                    args
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        println!(
+            "{{\"schema\":\"ltools-automation-v1\",\"registry\":\"{}\",\"entries\":[{}]}}",
+            json_escape(&registry_path().display().to_string()),
+            values
+        );
+        return Ok(());
+    }
     println!("{}", crate::i18n::automation_text("list_title"));
     if entries.is_empty() {
         println!("{}", crate::i18n::automation_text("none"));
@@ -364,7 +440,7 @@ fn interactive_menu(ctx: &Context) -> Result<(), String> {
         match answer.to_ascii_lowercase().as_str() {
             "" | "q" | "quit" | "salir" => return Ok(()),
             "1" => {
-                list()?;
+                list("text")?;
                 let _ = input(crate::i18n::tools_text("pause"));
             }
             "2" => {
@@ -435,7 +511,28 @@ fn interactive_menu(ctx: &Context) -> Result<(), String> {
 pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str).unwrap_or("menu") {
         "menu" => interactive_menu(ctx),
-        "list" => list(),
+        "list" => {
+            let format = match args.get(1).map(String::as_str) {
+                None => "text",
+                Some("--format") => match args.get(2).map(String::as_str) {
+                    Some("text") => "text",
+                    Some("json") => "json",
+                    None => return Err("--format requiere un valor".into()),
+                    Some(other) => return Err(format!("formato no soportado: {other}")),
+                },
+                Some(option) if option.starts_with("--format=") => {
+                    match option.trim_start_matches("--format=") {
+                        "text" => "text",
+                        "json" => "json",
+                        other => return Err(format!("formato no soportado: {other}")),
+                    }
+                }
+                Some(other) => {
+                    return Err(format!("opción desconocida para automation list: {other}"))
+                }
+            };
+            list(format)
+        }
         "add" | "register" => {
             let mut name = None;
             let mut program = None;
@@ -498,7 +595,7 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_line, split_arguments, Automation};
+    use super::{json_escape, parse_line, split_arguments, Automation};
 
     #[test]
     fn parses_arguments_with_quotes() {
@@ -521,5 +618,21 @@ mod tests {
                 args: vec!["--name".into(), "dos".into()]
             }
         );
+    }
+
+    #[test]
+    fn json_escape_preserves_automation_boundaries() {
+        assert_eq!(json_escape("a\"b\nc"), "a\\\"b\\nc");
+    }
+
+    #[test]
+    fn rejects_path_like_programs_that_do_not_exist() {
+        let entry = Automation {
+            name: "demo".into(),
+            program: "/tmp/ltools-script-that-does-not-exist".into(),
+            working_directory: None,
+            args: Vec::new(),
+        };
+        assert!(super::validate(&entry).is_err());
     }
 }
