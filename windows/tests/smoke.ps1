@@ -80,6 +80,18 @@ try {
     Run @('native', 'power', 'status')
     Run @('native', 'power', 'plans')
     Run @('native', 'security', 'status')
+    $nativeTools = Run @('native', 'tools')
+    foreach ($toolName in @('ssh', 'scp', 'sftp', 'adb', 'docker', 'kubectl')) {
+        if ($nativeTools -notmatch [regex]::Escape($toolName)) {
+            throw "El inventario Windows de herramientas nativas no mostró $toolName."
+        }
+    }
+    $diskGuide = Run @('storage', 'guide')
+    foreach ($guideMarker in @('list disk', 'select disk', 'detail disk', 'clean all', 'C:')) {
+        if ($diskGuide -notmatch [regex]::Escape($guideMarker)) {
+            throw "La guía DiskPart Windows no contiene el paso protegido esperado: $guideMarker"
+        }
+    }
     $dnsDryRun = Run @('--dry-run', 'native', 'network', 'flush-dns')
     if ($dnsDryRun -notmatch 'ipconfig /flushdns') {
         throw 'El dry-run Windows de vaciado DNS no generó el comando nativo esperado.'
@@ -127,10 +139,14 @@ try {
         $legacyCapabilityJson.platform -ne 'windows') {
         throw 'El alias de capacidades usado por AppRun/terminales no funciona en Windows.'
     }
-    if ($capabilityJson.host_tools.Count -lt 6 -or
+    if ($capabilityJson.host_tools.Count -lt 12 -or
         -not ($capabilityJson.host_tools | Where-Object { $_.category -eq 'system' }) -or
         -not ($capabilityJson.host_tools | Where-Object { $_.command -eq 'sc.exe' })) {
         throw 'El catálogo Windows de herramientas del anfitrión está incompleto.'
+    }
+    foreach ($toolId in @('ssh', 'scp', 'sftp', 'adb', 'docker', 'docker-compose', 'kubectl')) {
+        $tool = @($capabilityJson.host_tools | Where-Object { $_.id -eq $toolId })
+        if ($tool.Count -ne 1) { throw "Windows no declara exactamente una herramienta $toolId." }
     }
     if ($capabilityJson.host_tools | Where-Object { $_.category -in @('games', 'virtualization', 'development') }) {
         throw 'El catálogo Windows incluye una categoría fuera de alcance.'

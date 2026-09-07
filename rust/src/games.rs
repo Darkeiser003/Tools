@@ -20,9 +20,14 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
 
 #[cfg(not(windows))]
 fn run_linux(ctx: &Context, args: &[String]) -> Result<(), String> {
+    let managed_output = value(args, "--out").is_none();
     let out = value(args, "--out")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(format!("rust-games-{}", crate::common::timestamp())));
+        .unwrap_or_else(|| crate::common::default_report_dir(&ctx.home, "games"));
+    if managed_output {
+        crate::common::reset_default_report_dir(&out)
+            .map_err(|e| format!("no se pudo preparar el informe: {e}"))?;
+    }
     let mut audit_args = args.to_vec();
     if value(args, "--out").is_none() {
         audit_args.extend(["--out".into(), out.display().to_string()]);
@@ -136,12 +141,14 @@ const WINDOWS_LAUNCHERS: &[WindowsLauncher] = &[
 
 #[cfg(windows)]
 fn run_windows(ctx: &Context, args: &[String]) -> Result<(), String> {
-    let out = value(args, "--out").map(PathBuf::from).unwrap_or_else(|| {
-        PathBuf::from(format!(
-            "ltools-windows-games-{}",
-            crate::common::timestamp()
-        ))
-    });
+    let managed_output = value(args, "--out").is_none();
+    let out = value(args, "--out")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| crate::common::default_report_dir(&ctx.home, "games"));
+    if managed_output {
+        crate::common::reset_default_report_dir(&out)
+            .map_err(|e| format!("no se pudo preparar el informe: {e}"))?;
+    }
     fs::create_dir_all(&out).map_err(|e| format!("no se pudo crear el informe: {e}"))?;
     let roots = windows_search_roots(ctx, args);
     let mut locations =

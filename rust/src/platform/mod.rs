@@ -21,6 +21,32 @@ pub struct HostTool {
     pub install_package: &'static str,
 }
 
+/// Normaliza la primera línea de versión antes de publicarla en JSON. Algunas
+/// utilidades detectan que stdout no es un TTY de forma incompleta y emiten
+/// secuencias ANSI; esos bytes son válidos en una terminal, pero invalidan el
+/// contrato JSON y ensucian la salida de la GUI.
+pub(super) fn sanitize_version(value: &str) -> String {
+    let mut clean = String::with_capacity(value.len());
+    let mut escape = false;
+    for character in value.chars() {
+        if escape {
+            if character == '\u{7}' || character.is_ascii_alphabetic() {
+                escape = false;
+            }
+            continue;
+        }
+        if character == '\u{1b}' {
+            escape = true;
+            continue;
+        }
+        if character.is_control() {
+            continue;
+        }
+        clean.push(character);
+    }
+    clean.trim().chars().take(240).collect()
+}
+
 #[cfg(unix)]
 mod linux;
 #[cfg(windows)]
@@ -89,4 +115,24 @@ pub fn winslim_root() -> Option<PathBuf> {
 #[allow(dead_code)]
 pub fn winslim_available() -> bool {
     winslim_root().is_some()
+}
+
+/// Localiza el lanzador NSudo únicamente en la superficie WinSlim o en el
+/// PATH del propio Windows. No se busca en Linux ni se descarga nada aquí.
+#[allow(dead_code)]
+pub fn nsudo_path() -> Option<PathBuf> {
+    current::nsudo_path()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_version;
+
+    #[test]
+    fn sanitize_version_removes_ansi_and_control_bytes() {
+        assert_eq!(
+            sanitize_version("btop version: \x1b[1m1.4.7\x1b[0m\n"),
+            "btop version: 1.4.7"
+        );
+    }
 }

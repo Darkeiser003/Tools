@@ -9,6 +9,7 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
     match action {
         "status" | "disks" | "overview" => status(),
         "partitions" | "partition" => partitions(ctx),
+        "guide" | "diskpart-guide" | "partition-guide" => diskpart_guide(),
         "mounts" | "mountpoints" => mounts(),
         "usage" | "space" => usage(),
         "pools" | "storage-pools" => storage_pools(),
@@ -58,6 +59,17 @@ fn partitions(ctx: &Context) -> Result<(), String> {
     } else if !ensure_tool(ctx, "diskpart")? {
         println!("DiskPart no detectado; las consultas PowerShell siguen disponibles.");
     }
+    Ok(())
+}
+
+fn diskpart_guide() -> Result<(), String> {
+    println!("=== Guía de DiskPart y Administración de discos ===");
+    println!("Consulta segura: list disk, list partition, list volume, detail disk, detail partition y detail volume.");
+    println!("Selección explícita: select disk N, select partition N y select volume N.");
+    println!("Operaciones avanzadas: online/offline, assign/remove, attributes, rescan, extend, shrink, format, create, delete, convert y uniqueid.");
+    println!("MUY PELIGROSAS: clean, clean all, delete partition override y format. Nunca se generan ni ejecutan automáticamente.");
+    println!("C: está excluida del selector seguro. Para cualquier cambio se abre DiskPart o Administración de discos y se exige revisar el objetivo y confirmar en la herramienta nativa.");
+    println!("Flujo recomendado: listar -> seleccionar por número -> detail -> comprobar tamaño/etiqueta/estado -> aplicar en la herramienta nativa -> verificar de nuevo.");
     Ok(())
 }
 
@@ -214,6 +226,7 @@ fn menu(ctx: &Context) -> Result<(), String> {
         println!(" 11) Uso de espacio por volumen");
         println!(" 12) Espacios de almacenamiento y discos virtuales");
         println!(" 13) Estado de BitLocker");
+        println!(" 14) Guía completa y protecciones de DiskPart");
         println!("  q) Volver");
         let answer =
             crate::menu_input("Elige una opción (Enter para volver): ").unwrap_or_default();
@@ -231,6 +244,7 @@ fn menu(ctx: &Context) -> Result<(), String> {
             "11" => usage()?,
             "12" => storage_pools()?,
             "13" => bitlocker()?,
+            "14" => diskpart_guide()?,
             "q" | "Q" | "" => return Ok(()),
             _ => println!("Opción no válida."),
         }

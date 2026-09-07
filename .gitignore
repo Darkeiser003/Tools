@@ -77,6 +77,8 @@ env/
 reports/
 **/reports/
 rust-audit-*/
+rust-games-*/
+rust-package-audit-*/
 test-results/
 .test-results/
 .tmp/

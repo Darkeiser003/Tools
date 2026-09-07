@@ -75,6 +75,22 @@ for json in \
     [[ -s "$RELEASE_DIR/$json" ]] || die "falta $json"
     jq empty "$RELEASE_DIR/$json" >/dev/null || die "$json no es JSON válido"
 done
+for json in ltools-capabilities-windows.json ltools-terminal-windows.json; do
+    if [[ -e "$RELEASE_DIR/$json" ]]; then
+        jq empty "$RELEASE_DIR/$json" >/dev/null || die "$json no es JSON válido"
+    fi
+done
+if (( REQUIRE_WINDOWS_EXECUTABLES )); then
+    [[ -s "$RELEASE_DIR/ltools-capabilities-windows.json" ]] || die 'falta el descriptor de capacidades Windows'
+    [[ -s "$RELEASE_DIR/ltools-terminal-windows.json" ]] || die 'falta el descriptor de terminal Windows'
+    jq -e '.platform == "windows" and .application == "WinSlim-Tools"' \
+        "$RELEASE_DIR/ltools-capabilities-windows.json" >/dev/null \
+        || die 'el descriptor de capacidades Windows no declara la plataforma correcta'
+    jq -e '.platform == "windows" and .host.product == "WinSlim Terminal"' \
+        "$RELEASE_DIR/ltools-terminal-windows.json" >/dev/null \
+        || die 'el descriptor de terminal Windows no declara WinSlim Terminal'
+    ok 'descriptores Windows separados presentes y coherentes'
+fi
 for schema in \
     ltools-terminal.schema.json \
     ltools-project.schema.json \

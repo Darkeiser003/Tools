@@ -376,11 +376,8 @@ fn windows_export(ctx: &Context, args: &[String]) -> Result<(), String> {
     let path = windows_option(args, "--out")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| {
-            ctx.home.join("Documents/LTools/reports").join(format!(
-                "windows-services-{}.{}",
-                crate::common::timestamp(),
-                format
-            ))
+            crate::common::default_report_dir(ctx.home.as_path(), "system")
+                .join(format!("windows-services.{format}"))
         });
     let rows = windows_service_rows()?;
     let contents = if format == "tsv" {

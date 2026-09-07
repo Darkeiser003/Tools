@@ -191,10 +191,6 @@ pub fn help() -> &'static str {
     }
 }
 
-pub fn menu_label() -> &'static str {
-    crate::i18n::tools_text("menu")
-}
-
 pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
     let operation = args.first().map(String::as_str).unwrap_or("search");
     match operation {

@@ -71,7 +71,7 @@ pub fn host_tool_version(tool: &super::HostTool) -> Option<String> {
         output
             .lines()
             .find(|line| !line.trim().is_empty())
-            .map(|line| line.trim().chars().take(240).collect())
+            .map(super::sanitize_version)
     })
 }
 
@@ -82,13 +82,79 @@ pub fn run_with_privilege(program: &str, args: &[String], dry_run: bool) -> io::
     if geteuid() == 0 {
         return run_command(program, args, false);
     }
+    // La GUI no tiene un TTY donde `sudo` pueda mostrar su prompt. En ese
+    // caso se usa el agente gráfico de polkit; el CLI conserva sudo porque
+    // sí dispone de un terminal interactivo para pedir la contraseña.
+    let graphical_frontend = std::env::var_os("LTOOLS_FRONTEND")
+        .is_some_and(|value| value == "gui")
+        && (std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some());
+    if graphical_frontend {
+        // Algunas sesiones (por ejemplo Hyprland) tienen `sudo` autorizado
+        // sin contraseña pero no exponen un agente Polkit compatible con
+        // `pkexec`. Probar primero el modo no interactivo evita que una
+        // instalación confirmada por la GUI quede bloqueada en una
+        // autorización gráfica que nunca llega a mostrar un diálogo.
+        if sudo_available_without_prompt() {
+            eprintln!("LTools: usando sudo autorizado sin prompt para esta acción gráfica.");
+            let result = run_command("sudo", &build_privileged_args(program, args), false);
+            if matches!(result, Ok(false)) {
+                eprintln!(
+                    "sudo no pudo ejecutar la acción. Comprueba la política sudo y los permisos del usuario."
+                );
+            }
+            return result;
+        }
+        if command_exists("pkexec") {
+            let mut pkexec_args = vec![program.to_string()];
+            pkexec_args.extend_from_slice(args);
+            eprintln!("LTools: solicitando autorización gráfica mediante polkit.");
+            let result = run_command("pkexec", &pkexec_args, false);
+            if matches!(result, Ok(false)) {
+                eprintln!(
+                    "La autorización gráfica fue rechazada o no hay un agente polkit activo. "
+                );
+                eprintln!(
+                    "Abre la acción desde una sesión gráfica con polkit/pkexec, o ejecútala desde la CLI con sudo."
+                );
+            }
+            return result;
+        }
+        eprintln!(
+            "No se encontró pkexec; la acción requiere autorización gráfica mediante polkit."
+        );
+        eprintln!("Puedes intentar instalarlo con: doctor --install pkexec");
+        return Ok(false);
+    }
     if command_exists("sudo") {
         let mut sudo_args = vec![program.to_string()];
         sudo_args.extend_from_slice(args);
-        return run_command("sudo", &sudo_args, false);
+        let result = run_command("sudo", &sudo_args, false);
+        if matches!(result, Ok(false)) {
+            eprintln!(
+                "sudo no ejecutó la operación. Comprueba la contraseña, la política sudo y los permisos del usuario."
+            );
+        }
+        return result;
     }
     eprintln!("Se necesita sudo para esta operación.");
     Ok(false)
+}
+
+fn sudo_available_without_prompt() -> bool {
+    command_exists("sudo")
+        && Command::new("sudo")
+            .args(["-n", "-v"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+}
+
+fn build_privileged_args(program: &str, args: &[String]) -> Vec<String> {
+    let mut privileged_args = vec![program.to_string()];
+    privileged_args.extend_from_slice(args);
+    privileged_args
 }
 
 pub fn is_mount_root(path: &Path) -> bool {
@@ -177,8 +243,8 @@ static HOST_TOOLS: &[super::HostTool] = &[
         "storage",
         "partition-table-inspection",
         false,
-        false,
-        "",
+        true,
+        "parted",
     ),
     tool(
         "gparted",
@@ -187,6 +253,22 @@ static HOST_TOOLS: &[super::HostTool] = &[
         false,
         true,
         "gparted",
+    ),
+    tool(
+        "xhost",
+        "storage",
+        "graphical-display-authorization-for-gparted",
+        false,
+        true,
+        "xorg-xhost",
+    ),
+    tool(
+        "pkexec",
+        "services",
+        "graphical-polkit-authorization",
+        false,
+        true,
+        "polkit",
     ),
     tool(
         "udisksctl",
@@ -332,6 +414,56 @@ static HOST_TOOLS: &[super::HostTool] = &[
         false,
         true,
         "networkmanager",
+    ),
+    tool(
+        "ssh",
+        "remote",
+        "secure-remote-shell-client",
+        false,
+        true,
+        "openssh",
+    ),
+    tool(
+        "scp",
+        "remote",
+        "secure-remote-copy-client",
+        false,
+        true,
+        "openssh",
+    ),
+    tool(
+        "sftp",
+        "remote",
+        "secure-file-transfer-client",
+        false,
+        true,
+        "openssh",
+    ),
+    tool(
+        "ssh-keygen",
+        "remote",
+        "SSH-key-generation",
+        false,
+        true,
+        "openssh",
+    ),
+    tool(
+        "ssh-copy-id",
+        "remote",
+        "SSH-public-key-installation",
+        false,
+        true,
+        "openssh",
+    ),
+    tool("git", "git", "Git-version-control", false, true, "git"),
+    tool("gh", "git", "GitHub-CLI", false, true, "github-cli"),
+    tool(
+        "adb",
+        "mobile",
+        "Android-device-bridge",
+        false,
+        true,
+        "android-tools",
     ),
     tool(
         "upower",
@@ -520,14 +652,6 @@ static HOST_TOOLS: &[super::HostTool] = &[
         "",
     ),
     tool(
-        "udisksctl",
-        "storage",
-        "desktop-disk-control",
-        false,
-        false,
-        "",
-    ),
-    tool(
         "btrfs",
         "storage",
         "btrfs-management",
@@ -636,8 +760,8 @@ static HOST_TOOLS: &[super::HostTool] = &[
         "containers",
         "docker-engine-detected",
         false,
-        false,
-        "",
+        true,
+        "docker",
     ),
     tool(
         "docker-compose",
@@ -652,16 +776,16 @@ static HOST_TOOLS: &[super::HostTool] = &[
         "containers",
         "alternative-container-engine",
         false,
-        false,
-        "",
+        true,
+        "podman",
     ),
     tool(
         "podman-compose",
         "containers",
         "alternative-compose",
         false,
-        false,
-        "",
+        true,
+        "podman-compose",
     ),
     tool(
         "nerdctl",
@@ -676,16 +800,16 @@ static HOST_TOOLS: &[super::HostTool] = &[
         "containers",
         "container-runtime",
         false,
-        false,
-        "",
+        true,
+        "containerd",
     ),
     tool(
         "crictl",
         "containers",
         "kubernetes-container-runtime-client",
         false,
-        false,
-        "",
+        true,
+        "cri-tools",
     ),
     tool(
         "kubectl",
@@ -700,56 +824,56 @@ static HOST_TOOLS: &[super::HostTool] = &[
         "kubernetes",
         "kubernetes-cluster-bootstrap",
         false,
-        false,
-        "",
+        true,
+        "kubeadm",
     ),
     tool(
         "kubelet",
         "kubernetes",
         "kubernetes-node-agent",
         false,
-        false,
-        "",
+        true,
+        "kubelet",
     ),
     tool(
         "helm",
         "kubernetes",
         "kubernetes-package-manager",
         false,
-        false,
-        "",
+        true,
+        "helm",
     ),
     tool(
         "kind",
         "kubernetes",
         "kubernetes-local-clusters",
         false,
-        false,
-        "",
+        true,
+        "kind",
     ),
     tool(
         "minikube",
         "kubernetes",
         "kubernetes-local-clusters",
         false,
-        false,
-        "",
+        true,
+        "minikube",
     ),
     tool(
         "k3d",
         "kubernetes",
         "kubernetes-local-clusters",
         false,
-        false,
-        "",
+        true,
+        "k3d",
     ),
     tool(
         "k9s",
         "kubernetes",
         "kubernetes-terminal-client",
         false,
-        false,
-        "",
+        true,
+        "k9s",
     ),
     tool(
         "pacman",
@@ -864,20 +988,768 @@ static HOST_TOOLS: &[super::HostTool] = &[
         "",
     ),
     tool(
-        "flatpak",
-        "package-manager",
-        "flatpak-package-manager",
-        false,
-        false,
-        "",
-    ),
-    tool(
         "snap",
         "package-manager",
         "snap-package-manager",
         false,
         false,
         "",
+    ),
+    // Utilidades opcionales: se catalogan para detección e instalación
+    // explícita, pero ninguna consulta las instala por sorpresa.
+    tool(
+        "curl",
+        "utilities",
+        "HTTP-and-API-client",
+        false,
+        true,
+        "curl",
+    ),
+    tool(
+        "wget",
+        "utilities",
+        "HTTP-download-client",
+        false,
+        true,
+        "wget",
+    ),
+    tool(
+        "file",
+        "utilities",
+        "file-type-detection",
+        false,
+        true,
+        "file",
+    ),
+    tool(
+        "tree",
+        "utilities",
+        "directory-tree-viewer",
+        false,
+        true,
+        "tree",
+    ),
+    tool(
+        "htop",
+        "utilities",
+        "interactive-process-viewer",
+        false,
+        true,
+        "htop",
+    ),
+    tool("btop", "utilities", "resource-monitor", false, true, "btop"),
+    tool(
+        "lsof",
+        "utilities",
+        "open-files-and-ports",
+        false,
+        true,
+        "lsof",
+    ),
+    tool(
+        "strace",
+        "utilities",
+        "system-call-tracing",
+        false,
+        true,
+        "strace",
+    ),
+    tool(
+        "tcpdump",
+        "utilities",
+        "packet-capture",
+        false,
+        true,
+        "tcpdump",
+    ),
+    tool("dig", "utilities", "DNS-query-client", false, true, "bind"),
+    tool(
+        "nslookup",
+        "utilities",
+        "DNS-query-client",
+        false,
+        true,
+        "bind",
+    ),
+    tool(
+        "nmap",
+        "utilities",
+        "network-discovery",
+        false,
+        true,
+        "nmap",
+    ),
+    tool(
+        "openssl",
+        "utilities",
+        "TLS-and-cryptography",
+        false,
+        true,
+        "openssl",
+    ),
+    tool("gpg", "utilities", "OpenPGP-signing", false, true, "gnupg"),
+    tool(
+        "7z",
+        "utilities",
+        "archive-management",
+        false,
+        true,
+        "p7zip",
+    ),
+    tool("unzip", "utilities", "ZIP-extraction", false, true, "unzip"),
+    tool("zip", "utilities", "ZIP-creation", false, true, "zip"),
+    tool(
+        "zstd",
+        "utilities",
+        "Zstandard-compression",
+        false,
+        true,
+        "zstd",
+    ),
+    tool(
+        "tmux",
+        "utilities",
+        "terminal-multiplexer",
+        false,
+        true,
+        "tmux",
+    ),
+    tool(
+        "python3",
+        "utilities",
+        "Python-automation-runtime",
+        false,
+        true,
+        "python",
+    ),
+    tool(
+        "make",
+        "development",
+        "build-automation",
+        false,
+        true,
+        "make",
+    ),
+    tool(
+        "cmake",
+        "development",
+        "cross-platform-build-system",
+        false,
+        true,
+        "cmake",
+    ),
+    tool("gcc", "development", "C-compiler", false, true, "gcc"),
+    tool("gdb", "development", "native-debugger", false, true, "gdb"),
+    // Almacenamiento avanzado y recuperación. Son herramientas opcionales:
+    // se detectan y se pueden instalar bajo demanda, pero nunca se ejecutan
+    // automáticamente porque varias admiten operaciones destructivas.
+    tool(
+        "wipefs",
+        "storage",
+        "filesystem-signature-management",
+        false,
+        true,
+        "util-linux",
+    ),
+    tool(
+        "blkdiscard",
+        "storage",
+        "block-device-discard",
+        false,
+        true,
+        "util-linux",
+    ),
+    tool(
+        "sgdisk",
+        "storage",
+        "GPT-scriptable-partition-management",
+        false,
+        true,
+        "gptfdisk",
+    ),
+    tool(
+        "cgdisk",
+        "storage",
+        "interactive-GPT-partition-management",
+        false,
+        true,
+        "gptfdisk",
+    ),
+    tool(
+        "partx",
+        "storage",
+        "kernel-partition-table-update",
+        false,
+        true,
+        "util-linux",
+    ),
+    tool(
+        "kpartx",
+        "storage",
+        "device-mapper-partition-mapping",
+        false,
+        true,
+        "multipath-tools",
+    ),
+    tool("lvm", "storage", "LVM-administration", false, true, "lvm2"),
+    tool(
+        "tune2fs",
+        "storage",
+        "ext-filesystem-tuning",
+        false,
+        true,
+        "e2fsprogs",
+    ),
+    tool(
+        "e2fsck",
+        "storage",
+        "ext-filesystem-check",
+        false,
+        true,
+        "e2fsprogs",
+    ),
+    tool(
+        "xfs_info",
+        "storage",
+        "XFS-filesystem-inspection",
+        false,
+        true,
+        "xfsprogs",
+    ),
+    tool(
+        "xfs_repair",
+        "storage",
+        "XFS-filesystem-repair",
+        false,
+        true,
+        "xfsprogs",
+    ),
+    tool(
+        "xfs_growfs",
+        "storage",
+        "XFS-filesystem-growth",
+        false,
+        true,
+        "xfsprogs",
+    ),
+    tool(
+        "ntfsresize",
+        "storage",
+        "NTFS-filesystem-resize",
+        false,
+        true,
+        "ntfs-3g",
+    ),
+    tool(
+        "ntfsfix",
+        "storage",
+        "NTFS-filesystem-repair",
+        false,
+        true,
+        "ntfs-3g",
+    ),
+    tool(
+        "fstrim",
+        "storage",
+        "filesystem-discard-maintenance",
+        false,
+        true,
+        "util-linux",
+    ),
+    tool(
+        "fsfreeze",
+        "storage",
+        "filesystem-freeze-control",
+        false,
+        true,
+        "util-linux",
+    ),
+    tool(
+        "mount",
+        "storage",
+        "filesystem-mounting",
+        false,
+        true,
+        "util-linux",
+    ),
+    tool(
+        "umount",
+        "storage",
+        "filesystem-unmounting",
+        false,
+        true,
+        "util-linux",
+    ),
+    tool(
+        "swapon",
+        "storage",
+        "swap-activation",
+        false,
+        true,
+        "util-linux",
+    ),
+    tool(
+        "swapoff",
+        "storage",
+        "swap-deactivation",
+        false,
+        true,
+        "util-linux",
+    ),
+    tool(
+        "testdisk",
+        "recovery",
+        "partition-and-file-recovery",
+        false,
+        true,
+        "testdisk",
+    ),
+    tool(
+        "photorec",
+        "recovery",
+        "file-carving-recovery",
+        false,
+        true,
+        "testdisk",
+    ),
+    tool(
+        "ddrescue",
+        "recovery",
+        "failing-disk-rescue",
+        false,
+        true,
+        "gddrescue",
+    ),
+    tool(
+        "restic",
+        "backup",
+        "encrypted-deduplicated-backups",
+        false,
+        true,
+        "restic",
+    ),
+    tool(
+        "borg",
+        "backup",
+        "deduplicated-backups",
+        false,
+        true,
+        "borg",
+    ),
+    tool(
+        "rclone",
+        "backup",
+        "cloud-and-remote-file-sync",
+        false,
+        true,
+        "rclone",
+    ),
+    tool(
+        "timeshift",
+        "backup",
+        "system-snapshot-management",
+        false,
+        true,
+        "timeshift",
+    ),
+    tool(
+        "snapper",
+        "backup",
+        "filesystem-snapshot-management",
+        false,
+        true,
+        "snapper",
+    ),
+    // Red avanzada y observabilidad de interfaces.
+    tool(
+        "ethtool",
+        "network",
+        "Ethernet-interface-diagnostics",
+        false,
+        true,
+        "ethtool",
+    ),
+    tool(
+        "iw",
+        "network",
+        "WiFi-interface-management",
+        false,
+        true,
+        "iw",
+    ),
+    tool(
+        "bridge",
+        "network",
+        "Linux-bridge-management",
+        false,
+        true,
+        "iproute2",
+    ),
+    tool(
+        "mtr",
+        "network",
+        "combined-ping-and-traceroute",
+        false,
+        true,
+        "mtr",
+    ),
+    tool(
+        "iperf3",
+        "network",
+        "network-throughput-testing",
+        false,
+        true,
+        "iperf3",
+    ),
+    tool("socat", "network", "socket-relay", false, true, "socat"),
+    tool(
+        "ncat",
+        "network",
+        "network-connection-tool",
+        false,
+        true,
+        "nmap",
+    ),
+    tool(
+        "sshfs",
+        "network",
+        "SSH-filesystem-mounting",
+        false,
+        true,
+        "sshfs",
+    ),
+    tool(
+        "wg",
+        "network",
+        "WireGuard-management",
+        false,
+        true,
+        "wireguard-tools",
+    ),
+    tool(
+        "openvpn",
+        "network",
+        "OpenVPN-client",
+        false,
+        true,
+        "openvpn",
+    ),
+    tool(
+        "tailscale",
+        "network",
+        "mesh-VPN-management",
+        false,
+        true,
+        "tailscale",
+    ),
+    // Hardware, energía y rendimiento.
+    tool(
+        "inxi",
+        "hardware",
+        "human-readable-hardware-report",
+        false,
+        true,
+        "inxi",
+    ),
+    tool(
+        "lshw",
+        "hardware",
+        "detailed-hardware-inventory",
+        false,
+        true,
+        "lshw",
+    ),
+    tool(
+        "hwinfo",
+        "hardware",
+        "hardware-detection-report",
+        false,
+        true,
+        "hwinfo",
+    ),
+    tool(
+        "dmidecode",
+        "hardware",
+        "firmware-DMI-inventory",
+        false,
+        true,
+        "dmidecode",
+    ),
+    tool(
+        "sensors",
+        "hardware",
+        "temperature-and-voltage-monitoring",
+        false,
+        true,
+        "lm_sensors",
+    ),
+    tool(
+        "powertop",
+        "power",
+        "power-consumption-analysis",
+        false,
+        true,
+        "powertop",
+    ),
+    tool(
+        "iotop",
+        "system",
+        "disk-I/O-process-monitoring",
+        false,
+        true,
+        "iotop",
+    ),
+    tool(
+        "iostat",
+        "system",
+        "CPU-and-I/O-statistics",
+        false,
+        true,
+        "sysstat",
+    ),
+    tool(
+        "pidstat",
+        "system",
+        "per-process-statistics",
+        false,
+        true,
+        "sysstat",
+    ),
+    tool("nvtop", "hardware", "GPU-monitoring", false, true, "nvtop"),
+    tool(
+        "nvidia-smi",
+        "hardware",
+        "NVIDIA-GPU-management",
+        false,
+        true,
+        "nvidia-utils",
+    ),
+    tool(
+        "radeontop",
+        "hardware",
+        "AMD-GPU-monitoring",
+        false,
+        true,
+        "radeontop",
+    ),
+    tool(
+        "memtester",
+        "hardware",
+        "memory-stress-testing",
+        false,
+        true,
+        "memtester",
+    ),
+    // Herramientas de desarrollo, Git y formatos estructurados.
+    tool(
+        "yq",
+        "utilities",
+        "YAML-query-and-editing",
+        false,
+        true,
+        "yq",
+    ),
+    tool(
+        "git-lfs",
+        "development",
+        "Git-large-file-storage",
+        false,
+        true,
+        "git-lfs",
+    ),
+    tool(
+        "git-filter-repo",
+        "development",
+        "Git-history-rewriting",
+        false,
+        true,
+        "git-filter-repo",
+    ),
+    tool(
+        "lazygit",
+        "development",
+        "interactive-Git-client",
+        false,
+        true,
+        "lazygit",
+    ),
+    tool(
+        "delta",
+        "development",
+        "Git-diff-pager",
+        false,
+        true,
+        "git-delta",
+    ),
+    tool("glab", "development", "GitLab-CLI", false, true, "glab"),
+    tool(
+        "node",
+        "development",
+        "JavaScript-runtime",
+        false,
+        true,
+        "nodejs",
+    ),
+    tool(
+        "npm",
+        "development",
+        "JavaScript-package-manager",
+        false,
+        true,
+        "npm",
+    ),
+    tool(
+        "pnpm",
+        "development",
+        "fast-JavaScript-package-manager",
+        false,
+        true,
+        "pnpm",
+    ),
+    tool(
+        "go",
+        "development",
+        "Go-runtime-and-toolchain",
+        false,
+        true,
+        "go",
+    ),
+    tool(
+        "rustup",
+        "development",
+        "Rust-toolchain-manager",
+        false,
+        true,
+        "rustup",
+    ),
+    tool(
+        "java",
+        "development",
+        "Java-runtime",
+        false,
+        true,
+        "jdk-openjdk",
+    ),
+    tool(
+        "mvn",
+        "development",
+        "Maven-build-tool",
+        false,
+        true,
+        "maven",
+    ),
+    tool(
+        "gradle",
+        "development",
+        "Gradle-build-tool",
+        false,
+        true,
+        "gradle",
+    ),
+    tool(
+        "valgrind",
+        "development",
+        "memory-debugger",
+        false,
+        true,
+        "valgrind",
+    ),
+    tool(
+        "perf",
+        "development",
+        "Linux-performance-profiler",
+        false,
+        true,
+        "perf",
+    ),
+    tool(
+        "bpftrace",
+        "development",
+        "eBPF-tracing",
+        false,
+        true,
+        "bpftrace",
+    ),
+    // Construcción, seguridad de imágenes y ecosistema OCI/Kubernetes.
+    tool(
+        "buildah",
+        "containers",
+        "OCI-image-building",
+        false,
+        true,
+        "buildah",
+    ),
+    tool(
+        "skopeo",
+        "containers",
+        "OCI-image-copy-and-inspection",
+        false,
+        true,
+        "skopeo",
+    ),
+    tool(
+        "crun",
+        "containers",
+        "OCI-container-runtime",
+        false,
+        true,
+        "crun",
+    ),
+    tool(
+        "runc",
+        "containers",
+        "OCI-reference-runtime",
+        false,
+        true,
+        "runc",
+    ),
+    tool(
+        "ctr",
+        "containers",
+        "containerd-client",
+        false,
+        true,
+        "containerd",
+    ),
+    tool(
+        "kustomize",
+        "kubernetes",
+        "Kubernetes-manifest-customization",
+        false,
+        true,
+        "kustomize",
+    ),
+    tool(
+        "helmfile",
+        "kubernetes",
+        "Helm-release-orchestration",
+        false,
+        true,
+        "helmfile",
+    ),
+    tool(
+        "argocd",
+        "kubernetes",
+        "GitOps-Kubernetes-client",
+        false,
+        true,
+        "argocd",
+    ),
+    tool(
+        "trivy",
+        "security",
+        "container-and-dependency-scanner",
+        false,
+        true,
+        "trivy",
+    ),
+    tool(
+        "cosign",
+        "security",
+        "container-signing-and-verification",
+        false,
+        true,
+        "cosign",
     ),
 ];
 
@@ -938,7 +1810,17 @@ pub fn install_tool(id: &str, dry_run: bool) -> Result<bool, String> {
         );
         return Ok(false);
     };
-    args.push(tool.install_package.into());
+    let package = install_package_name(id, manager);
+    args.push(package.into());
+    append_gui_install_flags(manager, &mut args);
+    let command_line = format!(
+        "{} {}",
+        manager,
+        args.iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
     println!(
         "Falta {} para {}. Se propone usar {}: {} {}",
         tool.command,
@@ -950,8 +1832,18 @@ pub fn install_tool(id: &str, dry_run: bool) -> Result<bool, String> {
             .collect::<Vec<_>>()
             .join(" ")
     );
-    if !crate::common::ask("¿Instalar esta dependencia ahora?") {
-        println!("Instalación cancelada; no se modifica el sistema.");
+    let question = crate::common::dependency_confirmation(
+        tool.command,
+        tool.feature,
+        package,
+        manager,
+        &command_line,
+    );
+    if !crate::common::ask(&question) {
+        println!(
+            "Instalación cancelada para la dependencia «{}» ({}); no se modifica el sistema.",
+            tool.command, package
+        );
         return Ok(false);
     }
     let ok = crate::platform::run_with_privilege(manager, &args, dry_run)
@@ -959,6 +1851,117 @@ pub fn install_tool(id: &str, dry_run: bool) -> Result<bool, String> {
     // En una simulación no se instala nada, así que la herramienta seguirá
     // ausente. El resultado correcto es que el plan se pudo ejecutar.
     Ok(ok && (dry_run || host_tool_available(tool)))
+}
+
+fn append_gui_install_flags(manager: &str, args: &mut Vec<String>) {
+    if std::env::var_os("LTOOLS_FRONTEND").is_none_or(|value| value != "gui") {
+        return;
+    }
+    match manager {
+        "pacman" | "pamac" | "paru" | "yay" => args.push("--noconfirm".into()),
+        "apt" | "apt-get" | "dnf" | "yum" => args.push("-y".into()),
+        "zypper" => args.push("--non-interactive".into()),
+        "xbps-install" => args.push("-y".into()),
+        _ => {}
+    }
+}
+
+fn install_package_name(id: &str, manager: &str) -> &'static str {
+    // El nombre del ejecutable no siempre coincide con el paquete y cambia
+    // entre familias de distribución. Mantener este mapa aquí evita que una
+    // instalación iniciada desde la GUI falle por reutilizar el nombre Arch
+    // del catálogo en Debian, Fedora u openSUSE.
+    match id {
+        "python3" => {
+            return match manager {
+                "pacman" | "pamac" | "paru" | "yay" => "python",
+                "apt" | "apt-get" | "dnf" | "yum" | "zypper" => "python3",
+                _ => "python3",
+            };
+        }
+        "dig" | "nslookup" => {
+            return match manager {
+                "apt" | "apt-get" => "dnsutils",
+                "dnf" | "yum" | "zypper" => "bind-utils",
+                _ => "bind",
+            };
+        }
+        "7z" => {
+            return match manager {
+                "apt" | "apt-get" => "p7zip-full",
+                "dnf" | "yum" | "zypper" => "p7zip",
+                _ => "p7zip",
+            };
+        }
+        "gpg" => {
+            return match manager {
+                "apt" | "apt-get" => "gnupg",
+                "dnf" | "yum" => "gnupg2",
+                _ => "gnupg",
+            };
+        }
+        "sensors" => {
+            return match manager {
+                "apt" | "apt-get" => "lm-sensors",
+                _ => "lm_sensors",
+            };
+        }
+        "iostat" | "pidstat" => return "sysstat",
+        "ddrescue" => {
+            return match manager {
+                "apt" | "apt-get" => "gddrescue",
+                _ => "ddrescue",
+            };
+        }
+        "sgdisk" | "cgdisk" => return "gptfdisk",
+        "kpartx" => {
+            return match manager {
+                "apt" | "apt-get" => "multipath-tools",
+                _ => "multipath-tools",
+            };
+        }
+        "node" => {
+            return match manager {
+                "apt" | "apt-get" => "nodejs",
+                _ => "nodejs",
+            };
+        }
+        "npm" => return "npm",
+        "java" => {
+            return match manager {
+                "apt" | "apt-get" => "default-jdk",
+                "dnf" | "yum" => "java-21-openjdk",
+                _ => "jdk-openjdk",
+            };
+        }
+        "mvn" => return "maven",
+        "nvidia-smi" => {
+            return match manager {
+                "apt" | "apt-get" => "nvidia-utils-535",
+                _ => "nvidia-utils",
+            };
+        }
+        _ => {}
+    }
+    if id == "xhost" {
+        return match manager {
+            "apt" | "apt-get" => "x11-xserver-utils",
+            "dnf" | "yum" | "zypper" => "xorg-x11-server-utils",
+            _ => "xorg-xhost",
+        };
+    }
+    if id == "pkexec" {
+        return match manager {
+            "apt" | "apt-get" => "policykit-1",
+            "dnf" | "yum" | "zypper" => "polkit",
+            _ => "polkit",
+        };
+    }
+    HOST_TOOLS
+        .iter()
+        .find(|tool| tool.id == id)
+        .map(|tool| tool.install_package)
+        .unwrap_or("")
 }
 
 pub fn fuse_available() -> bool {
@@ -973,6 +1976,10 @@ pub fn fuse_available() -> bool {
 
 #[allow(dead_code)]
 pub fn winslim_root() -> Option<PathBuf> {
+    None
+}
+
+pub fn nsudo_path() -> Option<PathBuf> {
     None
 }
 

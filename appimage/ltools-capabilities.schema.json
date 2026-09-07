@@ -88,10 +88,11 @@
       "properties": {
         "language": {
           "type": "object",
-          "required": ["argument", "environment", "fallback"],
+          "required": ["argument", "environment", "values", "fallback"],
           "properties": {
             "argument": { "const": "--lang" },
             "environment": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+            "values": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } },
             "fallback": { "const": "locale" }
           },
           "additionalProperties": false

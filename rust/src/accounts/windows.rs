@@ -1,4 +1,5 @@
 use crate::common::{ask, command_exists, Context};
+use std::path::Path;
 use std::process::Command;
 
 pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
@@ -49,13 +50,23 @@ fn inspect(user: &str) -> Result<(), String> {
 fn mutate(ctx: &Context, user: &str, description: &str, cmdlet: &str) -> Result<(), String> {
     let user = valid_name(user)?;
     if !ctx.dry_run && !ask(&format!("¿Quieres {description} '{user}'?")) {
+        record(ctx, "account-mutation", user, "cancelled", cmdlet)?;
         return Ok(());
     }
     if ctx.dry_run {
+        record(ctx, "account-mutation", user, "planned", cmdlet)?;
         println!("Simulación: se ejecutaría {cmdlet} -Name {user}.");
         return Ok(());
     }
-    powershell(&format!("{cmdlet} -Name '{user}'"))
+    let result = powershell(&format!("{cmdlet} -Name '{user}'"));
+    record(
+        ctx,
+        "account-mutation",
+        user,
+        if result.is_ok() { "executed" } else { "failed" },
+        cmdlet,
+    )?;
+    result
 }
 fn open_lusrmgr(ctx: &Context) -> Result<(), String> {
     if !command_exists("lusrmgr.msc") {
@@ -71,6 +82,26 @@ fn open_lusrmgr(ctx: &Context) -> Result<(), String> {
     Command::new("lusrmgr.msc")
         .spawn()
         .map_err(|e| e.to_string())?;
+    Ok(())
+}
+fn record(
+    ctx: &Context,
+    operation: &str,
+    target: &str,
+    status: &str,
+    data: &str,
+) -> Result<(), String> {
+    if let Some(plan) = &ctx.plan {
+        plan.record(
+            operation,
+            Path::new(target),
+            status,
+            false,
+            data,
+            "accounts",
+        )
+        .map_err(|error| error.to_string())?;
+    }
     Ok(())
 }
 fn menu(ctx: &Context) -> Result<(), String> {

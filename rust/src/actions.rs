@@ -84,6 +84,26 @@ static ACTIONS: &[ActionSpec] = &[
         profile: "safe-default",
     },
     ActionSpec {
+        id: "storage.partition-table",
+        category: "storage",
+        command: "storage",
+        args: &["partition-table"],
+        target: "device",
+        mutating: false,
+        confirmation: "none",
+        profile: "advanced",
+    },
+    ActionSpec {
+        id: "storage.partition-guide",
+        category: "storage",
+        command: "storage",
+        args: &["guide"],
+        target: "none",
+        mutating: false,
+        confirmation: "none",
+        profile: "safe-default",
+    },
+    ActionSpec {
         id: "storage.mounts",
         category: "storage",
         command: "storage",
@@ -208,6 +228,36 @@ static ACTIONS: &[ActionSpec] = &[
         category: "native",
         command: "native",
         args: &["security", "status"],
+        target: "none",
+        mutating: false,
+        confirmation: "none",
+        profile: "safe-default",
+    },
+    ActionSpec {
+        id: "native.tooling-status",
+        category: "native",
+        command: "native",
+        args: &["tools"],
+        target: "none",
+        mutating: false,
+        confirmation: "none",
+        profile: "safe-default",
+    },
+    ActionSpec {
+        id: "native.containers-status",
+        category: "native",
+        command: "native",
+        args: &["containers", "status"],
+        target: "none",
+        mutating: false,
+        confirmation: "none",
+        profile: "safe-default",
+    },
+    ActionSpec {
+        id: "native.kubernetes-status",
+        category: "native",
+        command: "native",
+        args: &["kubernetes", "status"],
         target: "none",
         mutating: false,
         confirmation: "none",
@@ -508,6 +558,16 @@ static ACTIONS: &[ActionSpec] = &[
         profile: "safe-default",
     },
     ActionSpec {
+        id: "storage.partition-guide",
+        category: "storage",
+        command: "storage",
+        args: &["guide"],
+        target: "none",
+        mutating: false,
+        confirmation: "none",
+        profile: "safe-default",
+    },
+    ActionSpec {
         id: "storage.mounts",
         category: "storage",
         command: "storage",
@@ -622,6 +682,36 @@ static ACTIONS: &[ActionSpec] = &[
         category: "native",
         command: "native",
         args: &["security", "status"],
+        target: "none",
+        mutating: false,
+        confirmation: "none",
+        profile: "safe-default",
+    },
+    ActionSpec {
+        id: "native.tooling-status",
+        category: "native",
+        command: "native",
+        args: &["tools"],
+        target: "none",
+        mutating: false,
+        confirmation: "none",
+        profile: "safe-default",
+    },
+    ActionSpec {
+        id: "native.containers-status",
+        category: "native",
+        command: "native",
+        args: &["containers", "status"],
+        target: "none",
+        mutating: false,
+        confirmation: "none",
+        profile: "safe-default",
+    },
+    ActionSpec {
+        id: "native.kubernetes-status",
+        category: "native",
+        command: "native",
+        args: &["kubernetes", "status"],
         target: "none",
         mutating: false,
         confirmation: "none",
@@ -823,6 +913,22 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
     }
 }
 
+/// Indicates whether a named catalog action changes state and therefore needs
+/// the transaction/plan boundary used by the CLI. Listing or running a
+/// read-only action must not create a plan merely because its verb is `run`.
+pub(crate) fn needs_plan(args: &[String]) -> bool {
+    let Some(position) = args.iter().position(|value| value == "run") else {
+        return false;
+    };
+    let Some(id) = args.get(position + 1) else {
+        return false;
+    };
+    ACTIONS
+        .iter()
+        .find(|action| action.id == id)
+        .is_some_and(|action| action.mutating)
+}
+
 fn list(args: &[String]) -> Result<(), String> {
     let format = option_value(args, "--format").unwrap_or_else(|| "text".into());
     if format == "json" {
@@ -1002,6 +1108,13 @@ mod tests {
         let value = action_json(&ACTIONS[0]);
         assert!(value.starts_with("{\"id\":"));
         assert!(value.contains("\"supports\":[\"dry-run\",\"plan\"]"));
+    }
+
+    #[test]
+    fn read_only_catalog_actions_do_not_need_a_plan() {
+        assert!(!needs_plan(&["run".into(), "audit.quick".into()]));
+        assert!(!needs_plan(&["run".into(), "storage.overview".into()]));
+        assert!(!needs_plan(&["list".into()]));
     }
 
     #[test]

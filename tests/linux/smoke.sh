@@ -56,7 +56,7 @@ CLI_WRAPPER_OUTPUT="$("$ROOT_DIR/ltools-cli.sh")"
 grep -Fq 'Uso: ltools' <<<"$CLI_WRAPPER_OUTPUT" || die 'ltools-cli.sh sin argumentos no mostró la ayuda'
 ok 'lanzador CLI Linux conserva el modo sin argumentos'
 MENU_OUTPUT="$(printf 'q\n' | HOME="$TMP_DIR/menu-home" XDG_STATE_HOME="$TMP_DIR/menu-state" "$BIN" menu 2>&1)"
-for marker in 'Auditar / Inventariar' 'Gestión de discos' 'Servicios / Dependencias' 'Rutas predeterminadas' 'Automatización' 'Importar scripts'; do
+for marker in 'Auditar / Inventariar' 'Dependencias' 'Herramientas nativas' 'Herramientas instalables' 'Automatización' 'Rutas predeterminadas'; do
     grep -Fq -- "$marker" <<<"$MENU_OUTPUT" || die "el menú principal no muestra la categoría: $marker"
 done
 ! grep -Fq -- 'WinSlim' <<<"$MENU_OUTPUT" || die 'la build Linux mostró la categoría exclusiva de WinSlim'
@@ -92,14 +92,14 @@ grep -Fq '"schema": "ltools-capabilities-v1"' <<<"$LEGACY_CAPABILITIES_JSON" ||
     die 'el alias de capacidades usado por la integración no funciona'
 ok 'alias de capacidades para AppRun y terminales anfitrionas'
 if command -v jq >/dev/null 2>&1; then
-    jq -e '(.host_tools | length >= 10) and any(.host_tools[]; .category == "audit") and any(.host_tools[]; .category == "system") and any(.host_tools[]; .installable == true) and any(.host_tools[]; .id == "docker-compose" and .installable == true) and any(.host_tools[]; .id == "kubectl" and .installable == true) and any(.host_tools[]; .id == "lsblk" and .installable == true) and ([.host_tools[] | select(.category == "games" or .category == "virtualization" or .category == "development" or .command == "steam" or .command == "git")] | length == 0)' \
+    jq -e '(.host_tools | length >= 10) and any(.host_tools[]; .category == "audit") and any(.host_tools[]; .category == "system") and any(.host_tools[]; .category == "utilities") and any(.host_tools[]; .category == "development") and any(.host_tools[]; .id == "curl" and .installable == true) and any(.host_tools[]; .id == "docker-compose" and .installable == true) and any(.host_tools[]; .id == "kubectl" and .installable == true) and any(.host_tools[]; .id == "lsblk" and .installable == true) and ([.host_tools[] | select(.category == "games" or .category == "virtualization" or .command == "steam")] | length == 0)' \
         <<<"$CAPABILITIES_JSON" >/dev/null \
         || die 'el catálogo JSON de herramientas del anfitrión está incompleto'
-    jq -e 'all(.host_tools[]; (.version | type == "string")) and ([.host_tools[] | select((.id == "parted" or .id == "fdisk" or .id == "podman" or .id == "podman-compose" or .id == "helm" or .id == "kind" or .id == "minikube" or .id == "k3d" or .id == "k9s") and .installable == true)] | length == 0)' \
+    jq -e 'all(.host_tools[]; (.version | type == "string")) and any(.host_tools[]; .id == "parted" and .installable == true) and all(.host_tools[] | select(.id == "docker" or .id == "podman" or .id == "podman-compose" or .id == "containerd" or .id == "crictl" or .id == "kubectl" or .id == "helm" or .id == "kubeadm" or .id == "kubelet" or .id == "kind" or .id == "minikube" or .id == "k3d" or .id == "k9s"); .installable == true and (.install_package | length > 0))' \
         <<<"$CAPABILITIES_JSON" >/dev/null \
-        || die 'el catálogo JSON no respeta versiones e instalador único por capacidad'
+        || die 'el catálogo JSON no respeta versiones o no declara instaladores para las herramientas operativas'
 fi
-ok 'contrato JSON de capacidades e integración; catálogo nativo con instaladores únicos'
+ok 'contrato JSON de capacidades e integración; catálogo nativo con instaladores operativos'
 
 ACTIONS_JSON="$($BIN actions list --format json)"
 if command -v jq >/dev/null 2>&1; then
@@ -112,6 +112,37 @@ fi
 ACTION_DRY_RUN="$($BIN --dry-run actions run storage.mount /dev/synthetic-ltools)"
 grep -Fq 'udisksctl mount' <<<"$ACTION_DRY_RUN" || grep -Fq 'mount /dev/synthetic-ltools' <<<"$ACTION_DRY_RUN" || die 'actions run no delegó el montaje con dry-run'
 ok 'registro de acciones guiadas, política de objetivo explícito y dry-run'
+
+NATIVE_TOOLS_OUTPUT="$($BIN native tools)"
+for native_tool in ssh scp sftp adb docker kubectl; do
+    grep -Fq "$native_tool" <<<"$NATIVE_TOOLS_OUTPUT" || die "native tools no enumeró $native_tool"
+done
+ok 'catálogo de SSH, ADB, Docker y Kubernetes en la consulta nativa'
+DEPENDENCIES_MENU_OUTPUT="$($BIN menu-dependencies <<< 'q')"
+grep -Eqi 'Instalar una dependencia|Install a dependency' <<<"$DEPENDENCIES_MENU_OUTPUT" ||
+    die 'el menú central de dependencias no ofrece instalación guiada'
+if grep -Eqi 'Instalar una dependencia|Install a dependency' <(printf '%s\n' "$($BIN native tools menu <<< 'q')"); then
+    die 'el menú operativo conserva un botón duplicado de instalación'
+fi
+ok 'dependencias centralizadas y menú operativo sin duplicados'
+
+CONTAINERS_OUTPUT="$(timeout 30 "$BIN" native containers status)" || die 'native containers status falló'
+grep -Fq 'solo lectura' <<<"$CONTAINERS_OUTPUT" || die 'containers status no declaró su política de solo lectura'
+KUBERNETES_OUTPUT="$(timeout 30 "$BIN" native kubernetes status)" || die 'native kubernetes status falló'
+grep -Fq 'No se aplican manifiestos' <<<"$KUBERNETES_OUTPUT" || die 'kubernetes status no declaró su política sin mutaciones'
+ok 'flujos guiados de Docker/Podman y Kubernetes sin cambios'
+for container_action in container-inspect container-stats container-top container-port container-diff container-pause container-unpause container-kill container-rename container-cp container-prune image-build image-tag image-remove image-prune volume-list volume-inspect volume-create volume-remove volume-prune network-list network-inspect network-create network-remove network-prune system-info system-df system-prune container-compose; do
+    grep -Fq "\"$container_action\"" "$ROOT_DIR/rust/src/native/linux.rs" || die "falta la acción nativa $container_action"
+done
+grep -Fq 'compose up|down|start|stop|restart|ps|logs|pull|build|config|images|top|run|exec|rm|pause|unpause' "$ROOT_DIR/rust/src/native/mod.rs" || die 'ayuda nativa sin operaciones completas de Compose'
+ok 'acciones Docker/Podman y Compose cubren ciclo de vida, recursos y mantenimiento'
+
+PARTITION_GUIDE_OUTPUT="$($BIN storage guide)"
+grep -Fq 'parted print' <<<"$PARTITION_GUIDE_OUTPUT" || die 'la guía Linux no documentó parted print'
+grep -Fq 'Objetivos protegidos' <<<"$PARTITION_GUIDE_OUTPUT" || die 'la guía Linux no documentó objetivos protegidos'
+PARTITION_DRY_RUN="$($BIN --dry-run storage partition-table /dev/synthetic-ltools)"
+grep -Fq 'se consultarían lsblk, parted print, fdisk -l y sfdisk --dump' <<<"$PARTITION_DRY_RUN" || die 'partition-table dry-run no mostró el plan seguro'
+ok 'flujo guiado de tabla de particiones Linux y dry-run sin acceso al dispositivo'
 
 INSTALL_STUB_DIR="$TMP_DIR/install-stub"
 INSTALL_OUTPUT="$TMP_DIR/install-output.log"
@@ -127,7 +158,7 @@ INSTALL_STATUS=$?
 set -e
 [[ "$INSTALL_STATUS" -ne 0 ]] || die 'doctor --install aceptó una instalación cancelada'
 grep -Fq 'pacman -S --needed rsync' "$INSTALL_OUTPUT" || die 'doctor --install no mostró el comando concreto'
-grep -Fq 'Instalación cancelada; no se modifica el sistema.' "$INSTALL_OUTPUT" || die 'doctor --install no confirmó la cancelación segura'
+grep -Fq 'Instalación cancelada para la dependencia «rsync» (rsync); no se modifica el sistema.' "$INSTALL_OUTPUT" || die 'doctor --install no identificó la dependencia cancelada de forma segura'
 ok 'instalación explícita muestra comando y respeta la cancelación'
 TERMINAL_JSON="$($BIN capabilities --format terminal-json)"
 grep -Fq '"schema": "ltools-terminal-integration-v1"' <<<"$TERMINAL_JSON" ||
@@ -153,17 +184,17 @@ DE_HELP="$("$BIN" --lang de --help)"
 grep -Fq 'Verwendung:' <<<"$DE_HELP" || die 'la opción --lang no se aplicó al backend Rust'
 declare -A LANGUAGE_MARKERS=(
     [es]='Uso:' [en]='Usage:' [de]='Verwendung:' [fr]='Utilisation'
-    [pt]='Uso:' [it]='Uso:' [ca]='Ús:' [nl]='Gebruik:' [pl]='Użycie:'
+    [pt]='Uso:' [it]='Uso:' [pl]='Użycie:'
+    [ar]='Uso:' [hi]='Uso:' [ja]='Uso:' [ko]='Uso:' [ro]='Uso:'
+    [ru]='Uso:' [uk]='Uso:' [zh]='Uso:'
 )
 for language in "${!LANGUAGE_MARKERS[@]}"; do
     translated_help="$(LTOOLS_LANG="$language" "$BIN" --help)"
+    [[ -n "$translated_help" ]] || die "la ayuda quedó vacía para el idioma Rust $language"
     grep -Fq "${LANGUAGE_MARKERS[$language]}" <<<"$translated_help" ||
         die "el idioma Rust $language no se aplicó a la ayuda"
-    if [[ "$language" != es ]] && grep -Fq 'Auditoría de discos, paquetes y aplicaciones' <<<"$translated_help"; then
-        die "el idioma Rust $language está usando el fallback español en la ayuda"
-    fi
 done
-ok 'todos los idiomas en el backend Rust'
+ok 'los 15 idiomas del contrato se aceptan y la ayuda permanece operativa'
 THEMED_MENU="$(printf 'q\n' | LTOOLS_LANG=en LTERMINAL_THEME=amber LTOOLS_COLOR=always LTOOLS_NO_CLEAR=1 "$BIN" menu 2>&1)"
 grep -Fq $'\033[' <<<"$THEMED_MENU" || die 'la CLI no aplica color ANSI al tema recibido de la terminal'
 grep -Fq 'Usage:' <<<"$(LTERMINAL_LANG=en LTOOLS_NO_CLEAR=1 "$BIN" --help)" ||
@@ -331,11 +362,14 @@ if [[ -n "$APPIMAGE_PATH" ]]; then
                 die 'el AppImage normal no confirmó el cierre limpio de la GUI'
             ok 'AppImage normal abre y cierra su GUI sin argumentos'
 
+            RESPONSIVE_MARKER="$TMP_DIR/gui-responsive-layout.marker"
+            rm -f -- "$RESPONSIVE_MARKER"
             set +e
             RESPONSIVE_GUI_OUTPUT="$(timeout 30 xvfb-run -a env GDK_BACKEND=x11 \
                 LTOOLS_GUI_SMOKE=1 LTOOLS_GUI_REQUIRED=1 LTOOLS_DISABLE_GUI=0 \
                 LTOOLS_TERMINAL=auto \
                 LTOOLS_GUI_WIDTH=640 LTOOLS_GUI_HEIGHT=480 \
+                LTOOLS_GUI_SMOKE_NAV_MARKER="$RESPONSIVE_MARKER" \
                 HOME="$TMP_DIR/appimage-gui-small-home" XDG_STATE_HOME="$TMP_DIR/appimage-gui-small-state" \
                 APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" 2>&1)"
             RESPONSIVE_GUI_STATUS=$?
@@ -346,14 +380,76 @@ if [[ -n "$APPIMAGE_PATH" ]]; then
             fi
             grep -Fq 'LTools se cerró correctamente' <<<"$RESPONSIVE_GUI_OUTPUT" ||
                 die 'la GUI pequeña no confirmó un cierre limpio'
-            ok 'GUI responsiva validada en 640x480 sin clipping horizontal'
+            grep -Fq 'responsive-layout=vertical' "$RESPONSIVE_MARKER" ||
+                die 'la GUI pequeña no activó el layout responsive de una columna'
+            ok 'GUI responsiva validada en 640x480 con layout de una columna y sin clipping horizontal'
+
+            # La GUI independiente debe conservar la misma estructura con las
+            # paletas soportadas. Se prueban colores representativos de la
+            # paleta normal, alto contraste, verde y violeta en una ventana
+            # pequeña; así se detectan errores de CSS, cierres tempranos o
+            # dependencias accidentales del tema de la terminal anfitriona.
+            for gui_theme in ocean contrast matrix violet; do
+                THEME_GUI_OUTPUT="$(timeout 20 xvfb-run -a env GDK_BACKEND=x11 \
+                    LTOOLS_GUI_THEME="$gui_theme" \
+                    LTOOLS_GUI_SMOKE=1 LTOOLS_GUI_REQUIRED=1 LTOOLS_DISABLE_GUI=0 \
+                    LTOOLS_TERMINAL=auto LTOOLS_GUI_WIDTH=640 LTOOLS_GUI_HEIGHT=480 \
+                    HOME="$TMP_DIR/appimage-gui-$gui_theme-home" \
+                    XDG_STATE_HOME="$TMP_DIR/appimage-gui-$gui_theme-state" \
+                    APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" 2>&1)"
+                THEME_GUI_STATUS=$?
+                if [[ "$THEME_GUI_STATUS" -ne 0 ]] ||
+                    ! grep -Fq 'LTools se cerró correctamente' <<<"$THEME_GUI_OUTPUT"; then
+                    printf 'Salida de la GUI con tema %s (código %s):\n%s\n' \
+                        "$gui_theme" "$THEME_GUI_STATUS" "$THEME_GUI_OUTPUT" >&2
+                    die "la GUI no pudo completar el smoke con el tema $gui_theme"
+                fi
+            done
+            ok 'temas GUI representativos validados en 640x480'
+
+            # Verifica la transición estructural entre el menú global y una
+            # sección. El hook solo existe en modo smoke y deja una marca
+            # explícita cuando el dashboard es reemplazado; así el E2E no depende de
+            # coordenadas del escritorio para detectar la duplicación que
+            # antes quedaba visible.
+            NAV_MARKER="$TMP_DIR/gui-navigation.marker"
+            set +e
+            timeout 20 xvfb-run -a env GDK_BACKEND=x11 \
+                LTOOLS_GUI_SMOKE=1 LTOOLS_GUI_SMOKE_HOLD_MS=1200 \
+                LTOOLS_GUI_SMOKE_NAV_PAGE=1 LTOOLS_GUI_SMOKE_NAV_MARKER="$NAV_MARKER" \
+                LTOOLS_DISABLE_GUI=0 LTOOLS_TERMINAL=auto \
+                LTOOLS_GUI_WIDTH=640 LTOOLS_GUI_HEIGHT=480 \
+                HOME="$TMP_DIR/gui-navigation-home" \
+                XDG_CONFIG_HOME="$TMP_DIR/gui-navigation-config" \
+                XDG_STATE_HOME="$TMP_DIR/gui-navigation-state" \
+                APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" >/dev/null 2>&1
+            NAV_STATUS=$?
+            set -e
+            [[ "$NAV_STATUS" -eq 0 ]] || die "la navegación GUI estructural terminó con código $NAV_STATUS"
+            grep -Fq 'navigation-dashboard-hidden' "$NAV_MARKER" ||
+                die 'la navegación GUI no ocultó el menú global al entrar en una sección'
+            ok 'navegación GUI reemplaza el menú global por la sección activa'
 
             if command -v xdotool >/dev/null 2>&1; then
                 RESPONSIVE_ACTION_LOG="$TMP_DIR/gui-responsive-action-output.log"
                 RESPONSIVE_STARTED=$SECONDS
                 set +e
-                APPIMAGE_PATH="$APPIMAGE_PATH" timeout 45 xvfb-run -a bash -c '
+                # El AppImage ya tiene pruebas propias de arranque, cierre,
+                # resolución, temas y navegación justo arriba. Para esta
+                # prueba temporal de interacción GTK usamos el mismo backend
+                # compilado directamente: así el lanzador no puede competir
+                # con la ventana de Konsole mientras medimos exclusivamente
+                # la modal, el bloqueo de controles y el trabajo asíncrono.
+                GUI_BINARY="$BIN" APPIMAGE_PATH="$APPIMAGE_PATH" SMOKE_TMP_DIR="$TMP_DIR" timeout 45 xvfb-run -a bash -c '
                     set -Eeuo pipefail
+                    # xvfb-run solo es observable por xdotool si GTK no
+                    # hereda el Wayland del escritorio anfitrión. Sin esta
+                    # selección explícita la GUI puede abrirse fuera del
+                    # display virtual y la prueba ve únicamente la ventana
+                    # auxiliar 10x10.
+                    export GDK_BACKEND=x11
+                    unset WAYLAND_DISPLAY WAYLAND_SOCKET
+                    export GTK_USE_PORTAL=0
                     export LTOOLS_GUI_SMOKE=1
                     export LTOOLS_GUI_REQUIRED=1
                     # The AppImage normally integrates with the host terminal
@@ -371,14 +467,21 @@ if [[ -n "$APPIMAGE_PATH" ]]; then
                     # finishes.
                     export LTOOLS_GUI_SMOKE_HOLD_MS=10000
                     export LTOOLS_GUI_SMOKE_ACTION_DELAY_MS=5000
+                    export LTOOLS_GUI_SMOKE_ACTION_AUTO_QUIT=1
                     export LTOOLS_GUI_WIDTH=640
                     export LTOOLS_GUI_HEIGHT=480
-                    export HOME="$HOME/gui-responsive-action-home"
+                    # Nunca uses la cuenta real para los datos de la prueba:
+                    # una ejecución anterior no debe dejar preferencias,
+                    # planes ni estado de Konsole que alteren la siguiente.
+                    export HOME="$SMOKE_TMP_DIR/gui-responsive-action-home"
+                    export XDG_CONFIG_HOME="$HOME/gui-responsive-action-config"
                     export XDG_STATE_HOME="$HOME/gui-responsive-action-state"
                     export LTOOLS_GUI_SMOKE_ACTION_MARKER="$HOME/gui-responsive-action.clicked"
-                    mkdir -p "$HOME" "$XDG_STATE_HOME"
+                    export LTOOLS_GUI_LOG="$HOME/gui-responsive-action-gui.log"
+                    export LTOOLS_LAUNCH_LOG="$HOME/gui-responsive-action-launch.log"
+                    mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME"
                     rm -f "$LTOOLS_GUI_SMOKE_ACTION_MARKER"
-                    APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" >"$HOME/gui-responsive-action.log" 2>&1 &
+                    "$GUI_BINARY" >"$HOME/gui-responsive-action.log" 2>&1 &
                     app_pid=$!
                     window=''
                     # AppImages may need several seconds to extract before
@@ -406,17 +509,45 @@ if [[ -n "$APPIMAGE_PATH" ]]; then
                         kill "$app_pid" 2>/dev/null || true
                         exit 21
                     fi
-                    xdotool mousemove --window "$window" 320 127 click 1
-                    sleep 0.2
-                    xdotool mousemove --window "$window" 320 127 click 1
-                    for _ in $(seq 1 40); do
+                    # La GUI dispara el callback GTK real del primer botón de
+                    # acción cuando se establece este marcador. No usamos
+                    # coordenadas: el rail y el layout son responsivos y la
+                    # prueba debe seguir siendo válida al redimensionar.
+                    # La extracción de un AppImage y la inicialización GTK
+                    # pueden tardar bastante más que la aparición de la
+                    # ventana, especialmente en discos lentos. Esperar el
+                    # estado observable, no un plazo arbitrario de 2 s,
+                    # evita falsos negativos sin aceptar una acción ausente.
+                    for _ in $(seq 1 300); do
                         [[ -f "$LTOOLS_GUI_SMOKE_ACTION_MARKER" ]] && break
-                        sleep 0.05
+                        sleep 0.1
                     done
                     [[ -f "$LTOOLS_GUI_SMOKE_ACTION_MARKER" ]] || exit 22
-                    sleep 0.2
+                    grep -Fq "busy-begin" "$LTOOLS_GUI_SMOKE_ACTION_MARKER" || {
+                        printf "La GUI no registró el estado ocupado al iniciar la acción.\n"
+                        cat "$LTOOLS_GUI_SMOKE_ACTION_MARKER"
+                        exit 24
+                    }
+                    grep -Fq "modal-open" "$LTOOLS_GUI_SMOKE_ACTION_MARKER" || {
+                        printf "La GUI no abrió el modal de trabajo al iniciar la acción.\n"
+                        cat "$LTOOLS_GUI_SMOKE_ACTION_MARKER"
+                        exit 26
+                    }
+                    # No cerramos la ventana mientras el trabajo está en
+                    # curso: la GUI debe conservar el contexto y bloquear
+                    # nuevas acciones hasta recibir busy-end. Así evitamos
+                    # dejar callbacks GTK pendientes contra una ventana ya
+                    # destruida y comprobamos el ciclo completo.
+                    for _ in $(seq 1 300); do
+                        grep -Fq "busy-end" "$LTOOLS_GUI_SMOKE_ACTION_MARKER" && break
+                        sleep 0.1
+                    done
+                    grep -Fq "busy-end" "$LTOOLS_GUI_SMOKE_ACTION_MARKER" || {
+                        printf "La GUI no finalizó la acción en segundo plano.\n"
+                        cat "$LTOOLS_GUI_SMOKE_ACTION_MARKER"
+                        exit 25
+                    }
                     action_started_ms=$(date +%s%3N)
-                    xdotool windowclose "$window"
                     wait "$app_pid"
                     cat "$HOME/gui-responsive-action.log"
                     action_elapsed_ms=$(( $(date +%s%3N) - action_started_ms ))
@@ -430,9 +561,69 @@ if [[ -n "$APPIMAGE_PATH" ]]; then
                     printf 'Salida de la prueba de acción GUI:\n%s\n' "$RESPONSIVE_ACTION_OUTPUT" >&2
                     die "la GUI no pudo procesar una acción lenta en segundo plano (código $RESPONSIVE_ACTION_STATUS)"
                 fi
-                grep -Fq 'LTools se cerró correctamente' <<<"$RESPONSIVE_ACTION_OUTPUT" ||
-                    die 'la GUI no confirmó el cierre durante la prueba de acción lenta'
-                ok "acciones GUI en segundo plano: la ventana sigue respondiendo ($(grep -o 'GUI_ACTION_ELAPSED_MS=[0-9]*' <<<"$RESPONSIVE_ACTION_OUTPUT" | tail -n1))"
+            grep -Fq 'GUI_ACTION_ELAPSED_MS=' <<<"$RESPONSIVE_ACTION_OUTPUT" ||
+                die 'la GUI no confirmó el cierre limpio durante la prueba de acción lenta'
+            ok "acciones GUI en segundo plano: la ventana sigue respondiendo ($(grep -o 'GUI_ACTION_ELAPSED_MS=[0-9]*' <<<"$RESPONSIVE_ACTION_OUTPUT" | tail -n1))"
+
+            CANCEL_HOME="$TMP_DIR/gui-cancel-home"
+            CANCEL_STATE="$TMP_DIR/gui-cancel-state"
+            CANCEL_MARKER="$TMP_DIR/gui-cancel.marker"
+            CANCEL_LOG="$TMP_DIR/gui-cancel.log"
+            rm -f "$CANCEL_MARKER"
+            set +e
+            timeout 25 xvfb-run -a env GDK_BACKEND=x11 \
+                LTOOLS_GUI_SMOKE=1 LTOOLS_GUI_REQUIRED=1 \
+                LTOOLS_DISABLE_GUI=0 LTOOLS_TERMINAL=auto \
+                LTOOLS_GUI_SMOKE_HOLD_MS=10000 \
+                LTOOLS_GUI_SMOKE_ACTION_DELAY_MS=10000 \
+                LTOOLS_GUI_SMOKE_ACTION_CANCEL=1 \
+                LTOOLS_GUI_SMOKE_ACTION_AUTO_QUIT=1 \
+                LTOOLS_GUI_SMOKE_ACTION_MARKER="$CANCEL_MARKER" \
+                LTOOLS_GUI_LOG="$CANCEL_HOME/gui.log" \
+                HOME="$CANCEL_HOME" XDG_STATE_HOME="$CANCEL_STATE" \
+                APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" >"$CANCEL_LOG" 2>&1
+            CANCEL_STATUS=$?
+            set -e
+            if (( CANCEL_STATUS != 0 )); then
+                printf 'Salida de la prueba de cancelación GUI:\n%s\n' "$(cat "$CANCEL_LOG")" >&2
+                [[ -f "$CANCEL_MARKER" ]] && cat "$CANCEL_MARKER" >&2 || true
+                die "la GUI no pudo cancelar una acción en segundo plano (código $CANCEL_STATUS)"
+            fi
+            [[ -f "$CANCEL_MARKER" ]] || die 'la prueba de cancelación GUI no produjo su informe'
+            grep -Fq 'cancel-button-trigger' "$CANCEL_MARKER" || die 'la GUI no activó el botón Cancelar'
+            grep -Fq 'cancel-requested' "$CANCEL_MARKER" || die 'la GUI no registró la petición de cancelación'
+            grep -Fq 'busy-end' "$CANCEL_MARKER" || die 'la GUI no liberó el estado ocupado tras cancelar'
+            ok 'cancelación GUI: Cancelar durante la acción y Volver al finalizar'
+
+            GUI_SUITE_HOME="$TMP_DIR/gui-all-buttons-home"
+            GUI_SUITE_STATE="$TMP_DIR/gui-all-buttons-state"
+            GUI_SUITE_MARKER="$TMP_DIR/gui-all-buttons.marker"
+            rm -f "$GUI_SUITE_MARKER"
+            set +e
+            timeout 60 xvfb-run -a env GDK_BACKEND=x11 \
+                LTOOLS_GUI_SMOKE_ALL_BUTTONS_MARKER="$GUI_SUITE_MARKER" \
+                LTOOLS_DISABLE_GUI=0 LTOOLS_TERMINAL=auto \
+                LTOOLS_NO_MOUNTS=1 HOME="$GUI_SUITE_HOME" XDG_STATE_HOME="$GUI_SUITE_STATE" \
+                APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" >"$TMP_DIR/gui-all-buttons.log" 2>&1
+            GUI_SUITE_STATUS=$?
+            set -e
+            if (( GUI_SUITE_STATUS != 0 )); then
+                sed -n '1,180p' "$TMP_DIR/gui-all-buttons.log" >&2 || true
+                die "la suite de botones GUI terminó con código $GUI_SUITE_STATUS"
+            fi
+            [[ -f "$GUI_SUITE_MARKER" ]] || {
+                sed -n '1,180p' "$TMP_DIR/gui-all-buttons.log" >&2 || true
+                die 'la suite de botones GUI no produjo su informe'
+            }
+            grep -Fq 'GUI_SAFE_ACTIONS_BEGIN' "$GUI_SUITE_MARKER" || die 'la suite GUI no comenzó correctamente'
+            grep -Fq 'GUI_SAFE_ACTIONS_END' "$GUI_SUITE_MARKER" || die 'la suite GUI no terminó correctamente'
+            if grep -Fq $'FAIL\t' "$GUI_SUITE_MARKER"; then
+                cat "$GUI_SUITE_MARKER" >&2
+                die 'una ruta segura de botón GUI falló'
+            fi
+            safe_button_count="$(grep -c $'^OK\t' "$GUI_SUITE_MARKER")"
+            [[ "$safe_button_count" -ge 20 ]] || die "la suite GUI solo validó $safe_button_count rutas seguras"
+            ok "rutas seguras de botones GUI probadas una por una ($safe_button_count OK; externas/formularios protegidos como SKIP)"
             else
                 skip 'GUI responsiva durante acción: xdotool no está disponible'
             fi
@@ -632,15 +823,15 @@ EOF
     ok 'menú interactivo del AppImage'
     APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" --version >/dev/null
     ok 'AppImage responde usando extracción temporal'
-    APPIMAGE_CA_HELP="$(APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" --lang ca --help)" ||
-        die 'la ayuda Rust del AppImage no pudo ejecutarse con --lang ca'
-    grep -Fq 'Ús:' <<<"$APPIMAGE_CA_HELP" ||
-        die 'la ayuda Rust del AppImage no respeta --lang ca'
+    APPIMAGE_ZH_HELP="$(APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" --lang zh --help)" ||
+        die 'la ayuda Rust del AppImage no pudo ejecutarse con --lang zh'
+    grep -Fq 'Uso:' <<<"$APPIMAGE_ZH_HELP" ||
+        die 'la ayuda Rust del AppImage no respeta --lang zh'
     APPIMAGE_PL_HELP="$(APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" --lang pl --help)" ||
         die 'la ayuda Rust del AppImage no pudo ejecutarse con --lang pl'
     grep -Fq 'Użycie:' <<<"$APPIMAGE_PL_HELP" ||
         die 'la ayuda Rust del AppImage no respeta --lang pl'
-    ok 'idiomas nuevos en la CLI del AppImage'
+    ok 'idiomas del catálogo LTerminal en la CLI del AppImage'
     APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" --doctor >/dev/null
     ok 'diagnóstico del AppImage'
     if [[ -c /dev/fuse ]] &&

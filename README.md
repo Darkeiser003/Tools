@@ -18,7 +18,7 @@ lanzadores ni las terminales anfitrionas.
 | Runtime | Rust 2021 · Bash/PowerShell solo para lanzadores, build y tests |
 | Distribución | AppImage terminal, AppImage CLI, tarball Linux y ZIP Windows |
 | Licencia | MIT |
-| Idiomas | Español, inglés, alemán, francés, portugués, italiano, catalán, neerlandés y polaco |
+| Idiomas | Los 15 identificadores de LTerminal, más selección automática desde el entorno del host |
 | Proyecto | [Darkeiser003/Tools](https://github.com/Darkeiser003/Tools) |
 
 LTools no es una herramienta de borrado ciego. Sus operaciones de limpieza y
@@ -79,10 +79,11 @@ admiten `--dry-run` y generan planes reversibles cuando corresponde.
   y journal en Linux, y consultas/exportaciones `.reg` mediante `reg.exe` en
   Windows. No mezcla Registro Windows con la configuración Linux.
 - Detecta un catálogo amplio de herramientas nativas del anfitrión, agrupadas
-  por almacenamiento, hardware, red, paquetes, servicios, procesos, archivos
-  y escritorio. Wine, juegos, virtualización y desarrollo pertenecen a sus
-  módulos propios o a la terminal, no a este catálogo. El catálogo se publica
-  también en `capabilities --format json` para frontends.
+  por almacenamiento, hardware, red, paquetes, servicios, procesos, archivos y
+  escritorio, utilidades y desarrollo. Wine, juegos y virtualización siguen
+  siendo módulos separados para no mezclar sus dependencias con el anfitrión.
+  El catálogo se publica también en `capabilities --format json` para
+  frontends.
 - Genera AppImage con fallback de extracción si FUSE no está disponible y un
   ZIP portable nativo para Windows.
 
@@ -116,6 +117,13 @@ Este contrato (`ltools-actions-v1`) permite que LTerminal, WinSlim Terminal,
 la GUI y futuros scripts de WinSlim compartan botones y parámetros sin
 duplicar comandos de shell. Las acciones se compilan por plataforma: Linux no
 publica acciones Windows y Windows no publica acciones Linux.
+
+En la GUI, las operaciones largas se ejecutan fuera del hilo visual. Mientras
+una acción está activa se muestra un indicador animado y su estado en la salida,
+se deshabilitan temporalmente los submenús para impedir acciones concurrentes y
+se restauran al terminar, también cuando la herramienta devuelve un error. El
+panel de salida sigue siendo desplazable y el separador entre controles y
+resultados se puede redimensionar.
 
 Los alias cortos se publican junto a cada acción para que el host pueda ofrecer
 comandos cómodos como tdisk status, tsvc list, tnet status, tboot status o
@@ -175,24 +183,43 @@ Los gestores de paquetes se usan exclusivamente como mecanismo nativo para
 consultar inventarios y ejecutar una limpieza que el usuario haya pedido, o
 para una dependencia básica concreta previamente justificada. LTools no
 incluye una tienda, no recomienda listas de aplicaciones de terceros y no
-instala paquetes opcionales por iniciativa propia. Wine, juegos,
-virtualización y herramientas de desarrollo no forman parte del catálogo
-general; Wine solo se ofrece como dependencia contextual de la creación de un
-prefijo.
+instala paquetes opcionales por iniciativa propia. Wine, juegos y
+virtualización no forman parte del catálogo general; Wine solo se ofrece como
+dependencia contextual de la creación de un prefijo. Las utilidades de
+diagnóstico, automatización y desarrollo sí aparecen como opcionales cuando
+son herramientas del sistema razonables y su instalación puede resolverse con
+el gestor nativo.
 
-El catálogo sí cubre herramientas básicas que las acciones de mantenimiento
-pueden aprovechar. En Linux detecta `lsblk`, `findmnt`, `parted`, GParted,
-`fdisk`, `sfdisk`, `blkid`, `udisksctl`, Btrfs, LVM, ZFS, cifrado, Docker,
-Compose, Podman, containerd, nerdctl y clientes Kubernetes como `kubectl`,
-Helm, Kind, Minikube, k3d y k9s. Solo `lsblk`, `docker-compose` y `kubectl`
-son instaladores automáticos principales; el resto son alternativas o
-componentes ya instalados que se reportan sin intentar reemplazarlos.
+El catálogo cubre herramientas básicas y avanzadas que las acciones de
+mantenimiento pueden aprovechar. En Linux detecta almacenamiento y
+recuperación (`lsblk`, `findmnt`, `parted`, `fdisk`, `sfdisk`, `sgdisk`,
+`wipefs`, `blkdiscard`, `testdisk`, `photorec`, `ddrescue`, Btrfs, LVM, ZFS,
+LUKS, XFS y NTFS), copias (`restic`, `borg`, `rclone`, `timeshift`, `snapper`),
+Docker/Compose, Podman, Buildah, Skopeo, containerd, nerdctl, SSH/SCP/SFTP,
+ADB y Kubernetes (`kubectl`, Helm, Kind, Minikube, k3d, k9s, Kustomize,
+Helmfile y Argo CD). También ofrece red avanzada (`ethtool`, `iw`, `mtr`,
+`iperf3`, `socat`, WireGuard, OpenVPN y Tailscale), hardware y rendimiento
+(`inxi`, `lshw`, `hwinfo`, `dmidecode`, `sensors`, `powertop`, `iotop`, `nvtop`,
+`nvidia-smi` y `radeontop`), seguridad de contenedores (`trivy`, `cosign`) y
+desarrollo (`jq`, `yq`, `git-lfs`, `git-filter-repo`, LazyGit, Delta, GLab,
+Python, Node, Go, Rustup, Java, Maven, Gradle, Make, CMake, GCC, GDB, Valgrind,
+Perf y BPFTrace).
 
-En Windows detecta PowerShell, `diskpart`, `mountvol`, cmdlets de discos y
-red, `reg.exe`, `sc.exe`, `tasklist`, `taskkill`, `wevtutil`, Docker/Compose,
-Podman y el ecosistema Kubernetes. Para resolver una dependencia faltante solo
-se ofrecen Compose y `kubectl`, usando winget, Chocolatey o Scoop en ese orden;
-los demás comandos son nativos, opcionales o requieren una instalación manual.
+En Windows detecta PowerShell, DiskPart, Administración de discos, cmdlets de
+discos/red/Defender, `reg.exe`, `sc.exe`, `tasklist`, `taskkill`, `wevtutil`,
+Docker/Compose, Podman, OpenSSH, ADB y Kubernetes. También cataloga reparación
+y recuperación (`chkdsk`, `sfc`, DISM, `fsutil`, `diskshadow`, BitLocker,
+`cipher`, `vssadmin`, `wbadmin`, WinRE), drivers (`pnputil`, `driverquery`),
+red (`netsh`, `arp`, `pathping`, `getmac`), tareas (`schtasks`, políticas de
+grupo), permisos (`icacls`, `takeown`, `auditpol`) y runtimes de desarrollo
+como Python, Node, Java y .NET.
+
+Las herramientas instalables se ofrecen bajo demanda cuando la plataforma
+conoce un paquete fiable. Las herramientas integradas de Windows y las que no
+tienen un paquete universal se identifican como nativas o de instalación
+manual. El JSON publica `available`, `installable`, `install_package` y
+`version` para que una terminal pueda mostrar el estado sin ejecutar acciones
+inesperadas.
 El JSON publica `available`, `installable`, `install_package` y `version` para
 que una terminal pueda mostrar el estado sin ejecutar acciones inesperadas.
 
@@ -235,11 +262,14 @@ no contengan bytes dependientes de una página de código.
 ### Interfaz gráfica y perfil CLI
 
 El AppImage Linux normal y el `ltools.exe` Windows normal abren su propia
-ventana gráfica nativa escrita en Rust. La ventana ofrece botones para las
-categorías generales y sus submenús: auditoría/inventario, discos,
-servicios/dependencias, rutas predeterminadas, automatización e importación de
-scripts; la salida se muestra dentro de la propia aplicación. En Linux usa
-GTK3 del sistema y en Windows usa Win32.
+ventana gráfica nativa escrita en Rust. La interfaz se organiza como una
+aplicación de terminal: barra superior compacta, rail lateral persistente de
+secciones, área central para el submenú activo y panel inferior de salida
+redimensionable. Así las acciones no se amontonan en una lista única y cada
+módulo conserva su contexto. La ventana ofrece secciones generales y sus
+submenús: auditoría/inventario, dependencias, herramientas nativas, herramientas
+instalables y automatización. En Linux usa GTK3
+del sistema y en Windows usa Win32.
 Si el entorno Linux no tiene sesión gráfica o GTK, el AppImage conserva el
 fallback controlado a una terminal externa.
 
@@ -249,19 +279,49 @@ El JSON de integración sigue siendo opcional y solo sirve para que LTerminal o
 WinSlim Terminal lancen acciones declarativas; no es necesario para la GUI ni
 para el funcionamiento autónomo de las releases.
 
-La CLI y la GUI usan una navegación jerárquica para evitar un menú principal saturado:
+La CLI y la GUI usan la misma navegación jerárquica para evitar un menú principal
+saturado. Cada entrada abre la siguiente pantalla y no conserva un panel duplicado:
 
 1. **Auditar / Inventariar**: discos y aplicaciones, juegos y lanzadores,
    paquetes y, en Linux, prefijos Wine/Proton.
-2. **Gestión de discos**: discos, particiones y limpieza protegida.
-3. **Servicios / Dependencias**: servicios, procesos, journal y diagnóstico.
-4. **Rutas predeterminadas**: rutas efectivas y configuración nativa.
-5. **Automatización**: acciones rápidas, gestores detectados, Git y registros.
-6. **Importar scripts**: registrar, listar, ejecutar o retirar automatizaciones.
+2. **Dependencias**: detectar, consultar almacenes, buscar e instalar paquetes,
+   revisar versiones, instalar herramientas faltantes y consultar dependencias de
+   servicios. Esta es la única sección que ofrece instalación.
+3. **Herramientas nativas**: discos, particiones, montajes, servicios, procesos,
+   usuarios, red, hardware, energía, seguridad, arranque, rutas y configuración.
+4. **Herramientas instalables**: Git/GitHub, SSH/SCP/SFTP, ADB, Docker/Podman/Compose
+   y Kubernetes, cada uno con su propio flujo operativo.
+5. **Automatización**: registrar, listar, ejecutar y retirar automatizaciones,
+   además de acciones guiadas.
+6. **Ajustes**: idioma, tema, modo de color y visibilidad de secciones.
 
-En Windows aparece una séptima categoría **WinSlim** únicamente si existe
-`C:\WSCore`. Es una superficie reservada para una integración futura y no
-ejecuta todavía ningún componente de WSCore.
+Los comandos antiguos (`menu-storage`, `menu-services`, `menu-import`, etc.) siguen
+aceptándose como compatibilidad de terminal, pero ya no aparecen como botones ni
+categorías duplicadas en la portada.
+
+En Windows aparece una categoría **WinSlim** después de Ajustes únicamente si existe
+`C:\WSCore`. La sección informa también si encuentra `NSudoLC.exe`, `NSudoLG.exe`
+o `NSudo.exe` dentro de esa raíz (o en el `PATH`). La elevación normal continúa
+usando UAC; NSudo no se activa automáticamente. Solo una integración WinSlim
+explícita puede habilitarlo para la sesión, evitando que una acción accidental
+se ejecute con privilegios de TrustedInstaller/SYSTEM.
+
+NSudo se busca primero en `C:\WSCore`, incluyendo sus subdirectorios de
+herramientas, y después en el `PATH`. LTools no descarga ejecutables de
+privilegios desde URLs no verificadas ni crea usuarios administrativos. Si no
+está disponible, la instalación debe hacerse mediante una fuente de Windows
+que el usuario haya elegido y confirmado.
+
+Para una automatización WinSlim que requiera explícitamente ese backend, la
+sesión puede habilitarlo con `LTOOLS_USE_NSUDO=1`. Sin esa variable, incluso
+cuando NSudo esté presente, las acciones de LTools continúan usando la
+elevación UAC nativa de Windows.
+
+La CLI comparte la misma gramática de navegación: cabecera persistente,
+sección activa como ruta, grupos de acciones, `Enter`/`b` para volver, `h`/`?`
+para ayuda y `q` para salir. Un cambio de tema o idioma se aplica a la sesión
+actual y los lanzamientos con argumentos siguen siendo no interactivos y
+adecuados para alias de LTerminal.
 
 Las automatizaciones registradas conservan el programa, el directorio de
 trabajo y cada argumento por separado. LTools invoca el programa sin shell;
@@ -366,6 +426,13 @@ del lanzador, pero ya no selecciona una implementación alternativa:
 ./ltools.sh capabilities --format json
 ```
 
+Los informes generados sin `--out` no se guardan en el checkout ni crean un
+directorio nuevo por ejecución. LTools mantiene un único informe actualizado
+por módulo en `$XDG_STATE_HOME/ltools/reports/` (o en
+`~/.local/state/ltools/reports/` si no está definido; en Windows usa
+`%LOCALAPPDATA%\\LTools\\reports`). Si se necesita conservar una copia
+independiente, se puede indicar explícitamente `--out`.
+
 | Comando | Función |
 |---|---|
 | `audit` | Discos, aplicaciones, archivos grandes y duplicados |
@@ -427,19 +494,23 @@ proceda, ofrecer `--dry-run`; la terminal no debe ocultar ni elevar comandos
 por su cuenta. `requiresCommands` permite ocultar o marcar un botón cuando la
 dependencia concreta no está disponible, sin convertir LTools en una tienda.
 
-El flujo recomendado para LTerminal es: leer
+El flujo recomendado para LTerminal/WinSlim Terminal es: leer
 `distribution/ltools-project.json` desde el catálogo de proyectos, descargar
-la release estable indicada para el sistema, localizar `ltools-terminal.json`
-junto al ejecutable y convertir `actions` en botones. El botón debe ejecutar
+la release estable indicada para el sistema, seleccionar el descriptor de
+`integration.descriptors` para la plataforma (`ltools-terminal.json` en Linux,
+`ltools-terminal-windows.json` en Windows) y convertir `actions` en botones.
+El botón debe ejecutar
 `executable` con `args`, conservar `workingDirectory: "current"` y mostrar la
 salida en una pestaña. El descriptor se genera en cada build, por lo que en
 Windows ya contiene `ltools.exe` y solo acciones nativas Windows; en Linux
 contiene `ltools` y las acciones Linux disponibles. No hace falta mantener un
 segundo catálogo manual ni modificar el JSON cuando cambie una ruta local.
 
-Para una integración directa basta con distribuir también
-`ltools-terminal.json`; es la versión reducida del contrato destinada única y
-exclusivamente a la integración con la familia LTerminal. Es opcional: no se
+Para una integración directa basta con distribuir también los descriptores
+generados por plataforma; `ltools-terminal.json` es la versión reducida del
+contrato Linux y `ltools-terminal-windows.json` su variante Windows. Están
+destinados única y exclusivamente a la integración con la familia LTerminal.
+Son opcionales: no se
 lee ni se necesita para ejecutar el AppImage, el AppImage CLI, el tarball ni el
 `.exe` portable. `ltools-terminal.schema.json` permite validar el descriptor
 antes de instalarlo.
@@ -567,17 +638,61 @@ submenú permite consultar y gestionar el flujo habitual:
 ./ltools.sh storage filesystems
 ./ltools.sh storage volume-stack
 ./ltools.sh storage blockdev /dev/sda
+./ltools.sh storage partition-table /dev/sda
+./ltools.sh storage guide
 ./ltools.sh storage tools
 ./ltools.sh registry status
 ./ltools.sh registry paths
 ```
 
-`status`, `partitions`, `mounts`, `inspect`, `health` y `check` son consultas;
+`status`, `partitions`, `partition-table`, `mounts`, `inspect`, `health` y `check` son consultas;
 la comprobación usa `fsck -N` y nunca repara. `mount` y `unmount` piden
 confirmación, validan el objetivo y se anotan en el plan. `open-gparted` abre
 el gestor gráfico instalado, pero LTools no genera órdenes destructivas de
 particionado. Si falta una herramienta opcional, se ofrece su instalación
 puntual mediante `doctor --install`.
+
+`storage guide` documenta el flujo seguro de particionado. En Linux enumera
+`lsblk`, `parted print`, `fdisk -l` y `sfdisk --dump`; en Windows documenta
+`list`, `select`, `detail`, `create`, `extend`, `shrink`, `format`, `convert`,
+`clean` y `delete`, marcando las operaciones destructivas y sin generarlas
+automáticamente. El selector guiado excluye `/`, raíces de montaje y `C:` de
+cualquier preselección.
+
+La acción native tools status consulta dependencias y muestra qué componentes
+puede instalar LTools. `native tools install --tool ID` abre la instalación
+guiada de una dependencia concreta; en la GUI existe el mismo botón con un
+modal selector. La acción native tools menu abre los
+flujos operativos. No son informes pasivos: permiten conectar por SSH, copiar
+con SCP, abrir SFTP, ejecutar shell/transferencias/reinicio con ADB,
+descargar/crear/iniciar/detener/reiniciar/eliminar contenedores, ver logs,
+ejecutar comandos, inspeccionar contenedores, consultar estadísticas, procesos,
+puertos y diferencias, pausar/reanudar/terminar, renombrar y copiar archivos;
+también permite construir, inspeccionar, etiquetar, eliminar y limpiar imágenes,
+gestionar volúmenes y redes, consultar el uso del motor, ejecutar `prune` y
+gestionar Compose/Podman Compose con ciclo de vida, servicios, logs, build,
+config, run, exec y limpieza, además de aplicar/eliminar manifiestos,
+escalar deployments, reiniciar rollouts y abrir port-forward en Kubernetes.
+Cada objetivo se solicita explícitamente, se muestra el comando completo, pide
+confirmación cuando puede modificar estado y admite --dry-run.
+
+Los mismos flujos pueden invocarse sin stdin —útil para la GUI y para
+LTerminal— con argumentos separados, por ejemplo:
+
+    ./ltools.sh native tools ssh-connect --target usuario@servidor
+    ./ltools.sh native tools adb-install --apk ./app.apk
+    ./ltools.sh native tools container-run --image alpine:latest --name prueba
+    ./ltools.sh native tools container-inspect --name prueba
+    ./ltools.sh native tools image-build --path ./servicio --tag servicio:dev
+    ./ltools.sh native tools container-compose --operation ps --file compose.yml
+    ./ltools.sh native tools system-df
+    ./ltools.sh native tools kubernetes-apply --file ./deployment.yaml
+
+Si falta ssh, adb, Docker/Podman, containerd, crictl o cualquier cliente
+Kubernetes catalogado, LTools ofrece la instalación del componente cuando el
+catálogo de la plataforma conoce un instalador seguro;
+nunca inventa un gestor ni ejecuta una orden de instalación sin aceptación
+explícita. Las operaciones remotas y de clúster requieren objetivos explícitos.
 
 En Windows, el mismo comando usa PowerShell y las herramientas nativas:
 
@@ -742,18 +857,31 @@ El módulo `git` no es un cliente de credenciales ni modifica una shell. Usa
 
 ```bash
 ./ltools.sh git status --repo ./proyecto
+./ltools.sh git log --repo ./proyecto --limit 30
 ./ltools.sh --dry-run git clone https://github.com/usuario/proyecto.git ./proyecto --yes
 ./ltools.sh --dry-run git fetch --repo ./proyecto --prune --yes
 ./ltools.sh --dry-run git pull --repo ./proyecto --rebase --yes
+./ltools.sh --dry-run git add --repo ./proyecto --all --yes
+./ltools.sh --dry-run git commit --repo ./proyecto --message "mensaje" --all --yes
+./ltools.sh --dry-run git push --repo ./proyecto --remote origin --branch main --yes
+./ltools.sh --dry-run git branch --repo ./proyecto --switch main --yes
+./ltools.sh --dry-run git tag --repo ./proyecto --name v1.0.0 --message "release" --yes
+./ltools.sh --dry-run git release --repo usuario/proyecto --tag v1.0.0 --title "LTools 1.0.0" --notes "Notas" --yes
+./ltools.sh --dry-run git gh repo --repo usuario/proyecto
 ./ltools.sh git login
 ```
 
 `pull` se bloquea si hay cambios sin confirmar salvo que se indique
-`--allow-dirty` de forma explícita. `clone`, `fetch` y `pull` piden
-confirmación y quedan registrados en el plan; no se ofrece rollback automático
-de cambios Git porque un fetch/pull puede implicar hooks, merges o trabajo
-remoto irreversible. `git login` solo muestra la identidad configurada y, si
-existe GitHub CLI (`gh`), ofrece abrir su flujo oficial; no lee, guarda ni
+`--allow-dirty` de forma explícita. `clone`, `fetch`, `pull`, `add`, `commit`,
+`push`, ramas, tags y releases piden confirmación o requieren `--yes` explícito
+en automatización, y quedan registrados en el plan. No se ofrece rollback
+automático de cambios Git porque un pull puede implicar hooks, merges o trabajo
+remoto irreversible. La GUI Linux expone estas mismas operaciones desde un
+submenú Git/GitHub: el repositorio, URL, destino, rama, remoto, mensajes, notas
+y límite se introducen en campos separados; la salida completa queda en el
+panel de resultados. Las consultas de GitHub (`repo`, `prs`, `releases` y
+`auth-status`) solo se habilitan si está instalado `gh`. `git login` muestra la
+identidad configurada y ofrece el flujo oficial; LTools nunca lee, guarda ni
 imprime tokens o contraseñas.
 
 ## Build y distribución
@@ -767,9 +895,9 @@ Build Linux completa:
 La build Linux ejecuta rustfmt, Clippy, tests Rust, sintaxis Bash, contratos,
 compilación release, tarball, AppImage, smoke, E2E de migración/rollback, E2E
 de menús y funciones, y una E2E aislada de stores simuladas y Git. También valida AppStream, FUSE, idiomas, gestores de
-paquetes, duplicados y las rutas efectivas del ecosistema Wine. No ejecuta
-binarios Windows mediante Wine salvo que se active explícitamente
-`--windows-wine`.
+paquetes, duplicados y las rutas efectivas del ecosistema Wine. En una build
+interactiva, Wine/Proton viene activado por defecto (`S/n`); se puede desactivar
+con `n` o con `--no-windows-wine`.
 
 `dist/` es staging local: contiene logs, tiempos, informes y salidas de trabajo.
 `release/` es la carpeta canónica de publicación: el builder copia allí los
@@ -800,8 +928,8 @@ Estos `.exe` GNU están validados bajo Wine; la release oficial Windows para
 distribuir a usuarios Windows sigue siendo la producida por `windows/build.ps1`
 con MSVC.
 
-En una ejecución interactiva sin argumentos, el builder pregunta si también se
-quiere activar esta etapa. `--windows-wine-prefix` permite usar un prefijo
+En una ejecución interactiva sin argumentos, el builder pregunta si se mantiene
+esta etapa activada por defecto. `--windows-wine-prefix` permite usar un prefijo
 concreto, y `--windows-wine-install-mono` permite preparar Wine Mono cuando el
 runner no lo incluye. LTools no necesita Mono: se ofrece únicamente para
 validar el entorno de otras aplicaciones Windows.
@@ -878,16 +1006,20 @@ builder busca automáticamente estas claves, sin incluirlas en el paquete:
 
 También se pueden indicar otras rutas con `LTOOLS_SIGNING_PRIVATE_KEY_FILE` y
 `LTOOLS_UPDATE_PUBLIC_KEY_FILE` (o sus equivalentes `LTERMINAL_*`). La clave
-privada nunca debe entrar en GitHub ni en el repositorio. Para una release
-oficial se recomienda exigir la firma:
+privada nunca debe entrar en GitHub ni en el repositorio. Los builders exigen
+la firma por defecto, tanto en Linux como en Windows; si faltan las claves la
+release se detiene antes de publicar artefactos:
 
 ```bash
-LTOOLS_REQUIRE_SIGNING=1 ./build.sh
+./build.sh
 ```
 
-En un entorno sin claves, una build local puede conservar el checksum y
-advertir que no está firmada. `--require-signing` convierte esa advertencia en
-un error. El backend también permite verificar manualmente una release:
+Para una build local deliberadamente no publicable sin firma hay que declarar
+la excepción explícita `./build.sh --allow-unsigned` o
+`.\windows\build.ps1 -AllowUnsigned`. `--require-signing` y las variables
+`LTOOLS_REQUIRE_SIGNING`/`LTERMINAL_REQUIRE_SIGNING` se mantienen como
+compatibilidad para pipelines que quieran expresar la exigencia de forma
+explícita. El backend también permite verificar manualmente una release:
 
 ```bash
 ./ltools.sh release-signature \
@@ -983,8 +1115,10 @@ LTOOLS_LANG=en ./ltools.sh --help
 ./ltools.sh --lang fr defaults
 ```
 
-Los códigos soportados son `es`, `en`, `de`, `fr`, `pt`, `it`, `ca`, `nl` y
-`pl`. `auto` usa el locale del entorno y, si no hay traducción, se usa español.
+LTools acepta los 15 IDs de locale de LTerminal: `ar`, `de`, `en`, `es`, `fr`,
+`hi`, `it`, `ja`, `ko`, `pl`, `pt`, `ro`, `ru`, `uk` y `zh`. `auto` usa el
+locale del entorno y, si una cadena concreta aún no tiene traducción, se usa
+español como fallback.
 Los tests comprueban normalización como `en_US.UTF-8` y `pt-BR`, además de todos
 los catálogos disponibles.
 
@@ -998,18 +1132,24 @@ LTERMINAL_LANGUAGE=en LTERMINAL_THEME=matrix ./ltools-cli.sh menu
 ./ltools.sh --theme contrast --no-color audit --format json
 ```
 
-Los temas disponibles son `ocean`, `forest`, `amber`, `nordic`, `matrix`,
-`contrast`, `slate`, `plum`, `teal`, `crimson`, `silver` y `violet`. También se
-aceptan alias compatibles con LTerminal como `greenPhosphor`, `highContrast` y
-`techCyan`. `--color auto` solo usa ANSI cuando la salida es una terminal;
+Los temas disponibles, en el mismo orden que LTerminal, son `silver`,
+`winslim`, `ocean`, `forest`, `amber`, `violet`, `nordic`, `crimson`, `matrix`,
+`contrast`, `slate`, `plum` y `teal`.
+También se aceptan alias compatibles con LTerminal como `greenPhosphor`,
+`highContrast` y `techCyan` (normalizado a `winslim`). `--color auto` solo usa ANSI cuando la salida es una terminal;
 `always` y `never` permiten automatizar o depurar ese comportamiento. Las
 salidas JSON y TSV nunca incluyen secuencias ANSI.
 
-La GUI autónoma usa por defecto la paleta oscura `ocean` y no hereda por
-accidente el tema de una terminal. Puede personalizarse explícitamente con
-`LTOOLS_GUI_THEME=forest`. La integración declarativa para hosts documenta el
-mismo contrato en `ui_context`; LTerminal o WinSlim Terminal solo tienen que
-exportar esas variables al abrir la acción.
+La GUI autónoma usa por defecto la paleta oscura `silver`, inspirada en la
+superficie negra, los bordes finos y el texto plateado de LTerminal. Incluye
+botones de **Tema**, **Idioma** y **Ajustes**. Tema se aplica inmediatamente;
+idioma y visibilidad se guardan para el siguiente arranque en
+`$XDG_CONFIG_HOME/ltools/gui-preferences.conf` (o `%APPDATA%\ltools` en
+Windows). Una elección manual
+se guarda en la configuración de LTools y tiene prioridad sobre el tema/idioma
+recibido de la terminal; mientras no exista, se hereda el contexto de
+LTerminal o WinSlim Terminal. La integración declarativa para hosts documenta
+el mismo contrato en `ui_context`.
 
 ## Logs, planes y rollback
 
@@ -1027,7 +1167,11 @@ ejecutadas y permite lanzar `rollback --plan FICHERO`. `rollback --dry-run`
 valida el plan y muestra las restauraciones previstas sin mover, copiar ni
 retirar nada. Las consultas puras no crean planes de estado salvo que se
 solicite explícitamente `--plan` o `--dry-run`; así los inventarios no llenan
-la carpeta de planes vacíos.
+la carpeta de planes vacíos. Los planes automáticos usan un único fichero
+estable por módulo (`plan-rust-storage.tsv`, `plan-rust-system.tsv`, etc.) y
+se eliminan si la operación no registró ningún paso reversible. Una nueva
+operación del mismo módulo reemplaza su plan automático anterior; para
+conservar un plan concreto y poder recuperarlo después, usa `--plan FICHERO`.
 
 Los logs, informes, planes, targets, staging y artefactos de distribución son
 locales y están excluidos por `.gitignore`. Para inspeccionar qué residuos
@@ -1036,6 +1180,12 @@ regenerables existen antes de limpiar el árbol de trabajo:
 ```bash
 ./clean-repository.sh --dry-run
 ```
+
+Los planes automáticos legacy se almacenan fuera del repositorio. Para
+revisarlos sin borrar nada, usa `./clean-repository.sh --plans-only --dry-run`.
+La retirada requiere `--plans-only --apply`; solo coincide con los nombres
+fechados o asociados a un PID de la implementación antigua y conserva los
+planes estables y los ficheros que el usuario haya nombrado explícitamente.
 
 El limpiador solo conoce carpetas de salida explícitas (`dist/`, `release/`,
 `rust/target/`, targets Windows y caches habituales de herramientas). Protege
@@ -1100,9 +1250,10 @@ el contrato de capacidades, el inventario nativo, informes, planes y acciones
 del sistema. Usan `native-process.ps1`, un capturador .NET común con UTF-8,
 timeouts, cierre de stdin y diagnóstico de stdout/stderr; no dependen del
 pipeline frágil de PowerShell para procesos nativos. Deben ejecutarse en
-Windows. Desde Linux, la compilación y prueba
-aislada opcional bajo Wine/Proton se solicita con `./build.sh --windows-wine`;
-usa un prefijo temporal y no activa la lógica Linux de prefijos.
+Windows. Desde Linux, la compilación y prueba aislada bajo Wine/Proton viene
+activa por defecto en `./build.sh`; se puede desactivar con
+`--no-windows-wine`. Usa un prefijo temporal y no activa la lógica Linux de
+prefijos.
 
 ## Seguridad y límites
 

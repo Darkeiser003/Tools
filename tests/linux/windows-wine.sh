@@ -293,6 +293,18 @@ package_windows_artifact() {
     # wrapper Bash o de una variable de entorno. Es el mismo modelo que usa
     # el builder nativo Windows.
     cp -a -- "$WINEXE" "$cli_artifact"
+    # Una release combinada puede tener el descriptor Linux como canónico;
+    # publica además la variante Windows para WinSlim Terminal.
+    if [[ -z "${CAPABILITIES:-}" ]]; then
+        CAPABILITIES="$(run_windows_timeout capabilities --format json 2>>"$LOG_PATH")" \
+            || die 'no se pudo generar el descriptor de capacidades Windows'
+    fi
+    if [[ -z "${TERMINAL_JSON:-}" ]]; then
+        TERMINAL_JSON="$(run_windows_timeout capabilities --format terminal-json 2>>"$LOG_PATH")" \
+            || die 'no se pudo generar el descriptor de terminal Windows'
+    fi
+    printf '%s\n' "$CAPABILITIES" > "$ARTIFACT_DIR/ltools-capabilities-windows.json"
+    printf '%s\n' "$TERMINAL_JSON" > "$ARTIFACT_DIR/ltools-terminal-windows.json"
     cat > "$metadata" <<EOF
 {
   "application": "WinSlim-Tools",
@@ -367,6 +379,15 @@ else
             all(.host_tools[]; (.version | type == "string"))
         ' >/dev/null || die 'el catálogo Windows bajo Wine mezcla plataformas o instaladores alternativos'
         ok 'catálogo Windows nativo, versiones y primarios únicos'
+        for expanded_id in \
+            chkdsk.exe fsutil.exe manage-bde.exe sfc.exe pnputil.exe \
+            schtasks.exe netsh.exe icacls.exe vssadmin.exe wbadmin.exe \
+            dotnet.exe; do
+            printf '%s\n' "$CAPABILITIES" | jq -e --arg id "$expanded_id" \
+                'any(.host_tools[]; .id == $id)' >/dev/null ||
+                die "falta la herramienta Windows ampliada en capacidades: $expanded_id"
+        done
+        ok 'catálogo Windows ampliado: disco, reparación, red, seguridad y desarrollo'
     fi
     TERMINAL_JSON="$(run_windows_timeout capabilities --format terminal-json 2>>"$LOG_PATH")" ||
         die 'capabilities --format terminal-json falló'
@@ -377,6 +398,31 @@ else
     ok 'descriptor declarativo WinSlim Terminal'
     ok 'contrato JSON Windows'
     run_case 'defaults' defaults
+    native_tools_output="$(run_windows_timeout native tools 2>>"$LOG_PATH")" ||
+        die 'native tools Windows bajo Wine falló'
+    printf '%s\n' "$native_tools_output" | tee -a "$LOG_PATH" >/dev/null
+    for tool_name in ssh scp sftp adb docker kubectl chkdsk.exe fsutil.exe netsh.exe; do
+        grep -Fqi "$tool_name" <<<"$native_tools_output" ||
+            die "native tools Windows no mostró $tool_name"
+    done
+    ok 'inventario Windows de SSH, ADB, Docker y Kubernetes'
+    disk_guide_output="$(run_windows_timeout storage guide 2>>"$LOG_PATH")" ||
+        die 'storage guide Windows bajo Wine falló'
+    printf '%s\n' "$disk_guide_output" | tee -a "$LOG_PATH" >/dev/null
+    for guide_marker in 'list disk' 'select disk' 'detail disk' 'clean all' 'C:'; do
+        grep -Fqi "$guide_marker" <<<"$disk_guide_output" ||
+            die "storage guide Windows no mostró $guide_marker"
+    done
+    ok 'guía DiskPart Windows con protección de objetivos'
+    registry_dry_run_output="/tmp/ltools-registry-dry-run-$$.reg"
+    registry_output="$(run_windows_timeout registry export --key 'HKCU\\Software' --out "$registry_dry_run_output" --dry-run 2>>"$LOG_PATH")" ||
+        die 'registry export --dry-run Windows bajo Wine falló'
+    printf '%s\n' "$registry_output" | tee -a "$LOG_PATH" >/dev/null
+    grep -Fq 'no se modificaría el Registro' <<<"$registry_output" ||
+        die 'registry export --dry-run no confirmó que no escribiría'
+    [[ ! -e "$registry_dry_run_output" ]] ||
+        die 'registry export --dry-run creó un archivo inesperadamente'
+    ok 'exportación del Registro Windows respeta dry-run y no escribe archivos'
     menu_output="$(printf 'q\n' | run_windows_timeout menu 2>&1)" || {
         die 'el menú Windows no se abrió correctamente'
     }
@@ -385,6 +431,41 @@ else
         die 'el menú Windows no se abrió correctamente'
     fi
     ok 'menú Windows abre y sale con q'
+
+    if command -v xvfb-run >/dev/null 2>&1; then
+        gui_output="$(mktemp "${TMPDIR:-/tmp}/ltools-windows-gui.XXXXXX.log")"
+        gui_marker="$(mktemp "${TMPDIR:-/tmp}/ltools-windows-gui.XXXXXX.marker")"
+        rm -f -- "$gui_marker"
+        set +e
+        timeout 60 xvfb-run -a -s '-screen 0 1280x900x24' env \
+            WINEPREFIX="$PREFIX" WINEDEBUG=-all \
+            LTOOLS_GUI_REQUIRED=1 LTOOLS_DISABLE_GUI=0 LTOOLS_TERMINAL=auto \
+            LTOOLS_LANG=es LTOOLS_GUI_SMOKE_NAV_PAGE=1 \
+            LTOOLS_GUI_SMOKE_NAV_MARKER="$gui_marker" \
+            LTOOLS_GUI_SMOKE_HOLD_MS=1200 bash -c '
+                set -Eeuo pipefail
+                runner="$1"
+                mode="$2"
+                executable="$3"
+                if [[ "$mode" == proton ]]; then
+                    "$runner" run "$executable"
+                else
+                    "$runner" "$executable"
+                fi
+            ' _ "$RUNNER" "$RUNNER_MODE" "$WINEXE" >"$gui_output" 2>&1
+        gui_status=$?
+        set -e
+        if (( gui_status != 0 )) || ! grep -Fq 'navigation-page=1' "$gui_marker"; then
+            printf 'Salida de la GUI Windows bajo Wine (código %s):\n' "$gui_status" >&2
+            sed -n '1,160p' "$gui_output" >&2 || true
+            [[ -f "$gui_marker" ]] && cat "$gui_marker" >&2 || true
+            die 'la GUI Windows bajo Wine no pudo abrir y navegar por una categoría'
+        fi
+        rm -f -- "$gui_output" "$gui_marker"
+        ok 'GUI Windows bajo Wine abre, navega por una categoría y cierra limpiamente'
+    else
+        warn 'GUI Windows bajo Wine omitida: xvfb-run no está disponible'
+    fi
 fi
 
 package_windows_artifact

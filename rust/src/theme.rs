@@ -10,8 +10,8 @@ use std::env;
 use std::io::{self, IsTerminal};
 
 pub const SUPPORTED: &[&str] = &[
-    "ocean", "forest", "amber", "nordic", "matrix", "contrast", "slate", "plum", "teal", "crimson",
-    "silver", "violet",
+    "silver", "winslim", "ocean", "forest", "amber", "violet", "nordic", "crimson", "matrix",
+    "contrast", "slate", "plum", "teal",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,7 +92,8 @@ pub fn normalize(value: &str) -> &'static str {
     let value = match value.as_str() {
         "greenphosphor" | "green-phosphor" | "matrix" => "matrix",
         "highcontrast" | "high-contrast" | "contrast" => "contrast",
-        "techcyan" | "tech-cyan" | "turquoise" | "teal" => "teal",
+        "techcyan" | "tech-cyan" | "winslim" => "winslim",
+        "turquoise" | "teal" => "teal",
         "blue" | "ocean-dark" => "ocean",
         "purple" => "violet",
         other => other,
@@ -102,6 +103,25 @@ pub fn normalize(value: &str) -> &'static str {
         .copied()
         .find(|candidate| *candidate == value)
         .unwrap_or("ocean")
+}
+
+pub fn label(id: &str) -> &'static str {
+    match normalize(id) {
+        "silver" => "Negro y plata",
+        "winslim" => "Cian técnico",
+        "ocean" => "Océano",
+        "forest" => "Bosque",
+        "amber" => "Ámbar",
+        "violet" => "Violeta",
+        "nordic" => "Nórdico",
+        "crimson" => "Carmesí",
+        "matrix" => "Fósforo verde",
+        "contrast" => "Alto contraste",
+        "slate" => "Pizarra",
+        "plum" => "Ciruela",
+        "teal" => "Turquesa",
+        _ => "Tema",
+    }
 }
 
 pub fn color_mode(value: &str) -> ColorMode {
@@ -149,14 +169,18 @@ pub fn current() -> Theme {
     }
 }
 
-/// Tema de la GUI independiente. No hereda por accidente el tema de una
-/// terminal anfitriona; solo `LTOOLS_GUI_THEME` lo puede cambiar de forma
-/// explícita. Así una AppImage abierta desde un lanzador conserva su aspecto.
+/// Tema de la GUI. Una preferencia explícita de LTools tiene prioridad; si no
+/// existe, hereda el tema de la terminal anfitriona y, en último término, usa
+/// el mismo valor oscuro de referencia que la CLI (`ocean`).
 pub fn gui() -> Theme {
-    let id = env::var("LTOOLS_GUI_THEME")
-        .ok()
-        .map(|value| normalize(&value))
-        .unwrap_or("ocean");
+    let id = first_env(&[
+        "LTOOLS_GUI_THEME",
+        "LTERMINAL_THEME",
+        "WINSLIM_TERMINAL_THEME",
+        "TERMINAL_THEME",
+    ])
+    .map(|value| normalize(&value))
+    .unwrap_or("ocean");
     Theme {
         id,
         palette: palette(id),
@@ -166,6 +190,19 @@ pub fn gui() -> Theme {
 
 pub fn palette(id: &str) -> Palette {
     match normalize(id) {
+        "winslim" => Palette {
+            background: "#0d0d0d",
+            surface: "#1e1e1e",
+            surface_alt: "#161616",
+            border: "#333333",
+            text: "#d4d4d4",
+            muted: "#888888",
+            accent: "#0078d4",
+            output_background: "#0d0d0d",
+            success: "#7ee787",
+            warning: "#e6b450",
+            error: "#ff7b72",
+        },
         "forest" => Palette {
             background: "#101b16",
             surface: "#1b3228",
@@ -310,17 +347,19 @@ pub fn palette(id: &str) -> Palette {
             error: "#ff8994",
         },
         _ => Palette {
-            background: "#10161b",
-            surface: "#1c2b34",
-            surface_alt: "#28586d",
-            border: "#456878",
-            text: "#e6edf3",
-            muted: "#9fb3be",
-            accent: "#65c7e8",
-            output_background: "#090d10",
-            success: "#7ee787",
-            warning: "#e6b450",
-            error: "#ff7b72",
+            // Paleta autónoma alineada con LTerminal: negro profundo,
+            // superficies planas, borde fino y acento plateado.
+            background: "#080808",
+            surface: "#191919",
+            surface_alt: "#111111",
+            border: "#3b3d40",
+            text: "#d7d7d7",
+            muted: "#8b8e92",
+            accent: "#b8bec6",
+            output_background: "#080808",
+            success: "#4ec9b0",
+            warning: "#e5c07b",
+            error: "#e06c75",
         },
     }
 }
@@ -350,8 +389,20 @@ mod tests {
     fn normalizes_terminal_theme_aliases() {
         assert_eq!(normalize("greenPhosphor"), "matrix");
         assert_eq!(normalize("high-contrast"), "contrast");
-        assert_eq!(normalize("techCyan"), "teal");
+        assert_eq!(normalize("techCyan"), "winslim");
+        assert_eq!(normalize("WinSlim"), "winslim");
         assert_eq!(normalize("unknown"), "ocean");
+    }
+
+    #[test]
+    fn catalog_matches_lterminal_theme_order() {
+        assert_eq!(
+            SUPPORTED,
+            &[
+                "silver", "winslim", "ocean", "forest", "amber", "violet", "nordic", "crimson",
+                "matrix", "contrast", "slate", "plum", "teal",
+            ]
+        );
     }
 
     #[test]
@@ -362,6 +413,7 @@ mod tests {
             assert!(colors.output_background.starts_with('#'));
             assert!(!colors.accent.is_empty());
         }
+        assert_eq!(palette("winslim").accent, "#0078d4");
     }
 
     #[test]

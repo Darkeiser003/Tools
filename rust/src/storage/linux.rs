@@ -1,8 +1,7 @@
-use crate::common::{
-    command_exists, command_output, ensure_tool, run_command, run_with_sudo, Context,
-};
+use crate::common::{command_exists, ensure_tool, run_command, run_with_sudo, Context};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::thread;
 
 /// Gestión Linux de almacenamiento. Las operaciones destructivas de tabla de
 /// particiones se delegan al gestor nativo tras una confirmación explícita.
@@ -11,6 +10,10 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
     match action {
         "status" | "disks" | "overview" => status(ctx),
         "partitions" | "partition" => partitions(ctx),
+        "partition-table" | "partition-inspect" => {
+            partition_table(ctx, target_after(args, action)?)
+        }
+        "guide" | "partition-guide" => partition_guide(),
         "mounts" | "mountpoints" => mounts(),
         "inspect" | "details" => inspect(ctx, target_after(args, action)?),
         "mount" => mount(ctx, target_after(args, action)?),
@@ -71,8 +74,10 @@ fn partitions(ctx: &Context) -> Result<(), String> {
     if command_exists("parted") {
         println!("\n=== Tablas de particiones (solo lectura) ===");
         run_capture("parted", &["-l"])?;
-    } else {
+    } else if !ensure_tool(ctx, "parted")? {
         println!("parted: no instalado; lsblk sigue disponible como alternativa segura.");
+    } else {
+        println!("parted se ha preparado; vuelve a ejecutar la consulta para incluir sus datos.");
     }
     println!(
         "\nGestor completo: {}",
@@ -82,6 +87,252 @@ fn partitions(ctx: &Context) -> Result<(), String> {
             "gparted no instalado; puede instalarse bajo demanda"
         }
     );
+    Ok(())
+}
+
+/// Consulta varias vistas de una tabla sin modificarla. Las herramientas se
+/// prueban una a una para que la ausencia de una alternativa no oculte las
+/// demás; nunca se llama a parted/fdisk en modo de escritura.
+fn partition_table(ctx: &Context, raw: &str) -> Result<(), String> {
+    let target = validate_device(raw, ctx.dry_run)?;
+    println!(
+        "=== Tabla de particiones (solo lectura): {} ===",
+        target.display()
+    );
+    let target = target.display().to_string();
+    if ctx.dry_run {
+        println!("Simulación: se consultarían lsblk, parted print, fdisk -l y sfdisk --dump sobre {target}.");
+        return Ok(());
+    }
+    let mut found = false;
+    if command_exists("lsblk") {
+        found = true;
+        run_capture_owned(
+            "lsblk",
+            &[
+                "-o".into(),
+                "NAME,PATH,TYPE,SIZE,FSTYPE,FSVER,LABEL,UUID,MOUNTPOINTS,RO,RM".into(),
+                target.clone(),
+            ],
+        )?;
+    }
+    if command_exists("parted") {
+        found = true;
+        println!("\n--- parted print (solo lectura) ---");
+        run_capture_owned(
+            "parted",
+            &[
+                "-s".into(),
+                target.clone(),
+                "unit".into(),
+                "MiB".into(),
+                "print".into(),
+            ],
+        )?;
+    }
+    if command_exists("fdisk") {
+        found = true;
+        println!("\n--- fdisk -l (solo lectura) ---");
+        run_capture_owned("fdisk", &["-l".into(), target.clone()])?;
+    }
+    if command_exists("sfdisk") {
+        found = true;
+        println!("\n--- sfdisk --dump (solo lectura) ---");
+        run_capture_owned("sfdisk", &["--dump".into(), target])?;
+    }
+    if !found {
+        return Err("no se encontró una herramienta de inspección de particiones".into());
+    }
+    Ok(())
+}
+
+fn partition_guide() -> Result<(), String> {
+    println!("=== Guía de particionado Linux: discos y particiones ===");
+    println!();
+    println!("Esta guía explica qué mirar, qué herramienta elegir y en qué orden trabajar.");
+    println!("LTools consulta el sistema y puede abrir gestores nativos; no aplica cambios");
+    println!("destructivos de particionado por su cuenta.");
+    println!();
+    println!("1. Conceptos básicos");
+    println!("   Disco físico: /dev/sda, /dev/sdb o /dev/nvme0n1.");
+    println!("   Partición:   /dev/sda1, /dev/sdb2 o /dev/nvme0n1p1.");
+    println!("   Sistema de archivos: ext4, btrfs, xfs, ntfs, vfat, swap, etc.");
+    println!("   Montaje: la ruta donde Linux presenta una partición, por ejemplo /home.");
+    println!("   No confundas el disco completo con una de sus particiones.");
+    println!();
+    println!("2. Orden recomendado para cualquier tarea");
+    println!("   a) Haz copia de los datos importantes y cierra aplicaciones que usen el disco.");
+    println!("   b) Consulta el resumen:     ltools storage status");
+    println!("   c) Consulta el árbol:       ltools storage partitions");
+    println!("   d) Inspecciona el objetivo: ltools storage inspect /dev/sdX1");
+    println!("   e) Revisa la tabla:         ltools storage partition-table /dev/sdX");
+    println!("   f) Decide qué va a cambiar antes de abrir una herramienta de escritura.");
+    println!("   g) Aplica una sola operación, revisa el resumen y vuelve a verificar.");
+    println!();
+    println!("3. Qué consulta hace cada herramienta");
+    println!("   lsblk       árbol de discos, particiones, tipos, tamaños y montajes.");
+    println!("   blkid       UUID, etiqueta y tipo del sistema de archivos.");
+    println!("   findmnt     montajes activos y sus opciones reales.");
+    println!("   parted print tabla GPT/MBR, límites y tamaños; consulta de solo lectura.");
+    println!("   fdisk       vista compatible de discos y particiones; aquí se usa -l.");
+    println!("   sfdisk      volcado legible de la tabla; aquí se usa --dump, solo lectura.");
+    println!();
+    println!("4. Qué herramienta elegir");
+    println!("   GParted                 cambios visuales y guiados en particiones.");
+    println!("   GNOME Disks             inspección, montaje y tareas sencillas.");
+    println!("   KDE Partition Manager   alternativa completa para escritorios KDE.");
+    println!("   parted/fdisk/sfdisk     trabajo CLI avanzado; exige conocer el objetivo.");
+    println!("   LVM, cryptsetup, Btrfs, ZFS y mdadm deben gestionarse con sus propias");
+    println!("   herramientas, no tratando sus capas como si fueran discos normales.");
+    println!();
+    println!("5. Tareas habituales");
+    println!("   Disco nuevo");
+    println!("     1) Identifica el disco completo por modelo y tamaño.");
+    println!("     2) Comprueba que no tenga montajes ni datos que conservar.");
+    println!("     3) Elige GPT salvo que necesites compatibilidad MBR antigua.");
+    println!("     4) Crea la partición, el sistema de archivos y una etiqueta clara.");
+    println!("     5) Monta y verifica UUID, capacidad y permisos.");
+    println!("   Montar una partición existente");
+    println!("     1) Consulta: ltools storage inspect /dev/sdX1");
+    println!("     2) Comprueba que el tipo y el UUID sean los esperados.");
+    println!("     3) Ejecuta: ltools storage mount /dev/sdX1");
+    println!("     4) Verifica con: ltools storage mounts");
+    println!("   Desmontar antes de trabajar");
+    println!("     1) Comprueba quién usa el punto de montaje.");
+    println!("     2) Cierra terminales, juegos, máquinas virtuales y exploradores allí.");
+    println!("     3) Ejecuta: ltools storage unmount /dev/sdX1");
+    println!("     4) Si es raíz, /home, swap o un volumen ocupado, detente y usa un");
+    println!("        sistema live o el procedimiento específico de esa capa.");
+    println!();
+    println!("6. Operaciones de particionado: todas las capacidades");
+    println!("   La guía documenta acciones destructivas para que puedas reconocerlas.");
+    println!("   LTools no las ejecuta desde esta pantalla: el selector, la confirmación");
+    println!("   y la herramienta nativa deben mostrar el objetivo antes de escribir.");
+    println!("   Nivel CRÍTICO: borrar, clean, wipefs, mkfs, luksFormat, destroy y dd.");
+    println!();
+    println!("   6.1 Tabla de particiones");
+    println!("     Crear GPT:     parted /dev/sdX mklabel gpt");
+    println!("     Crear MBR:     parted /dev/sdX mklabel msdos");
+    println!("     Crear:         parted /dev/sdX mkpart primary ext4 1MiB 100%");
+    println!("     Nombrar GPT:   parted /dev/sdX name 1 Datos");
+    println!("     Borrar:        parted /dev/sdX rm N");
+    println!("     Redimensionar: parted /dev/sdX resizepart N 100%");
+    println!("     Cambiar flags: parted /dev/sdX set N esp on");
+    println!("     Recuperar:     parted /dev/sdX rescue INICIO FIN");
+    println!("     Otras órdenes parted: print, select, unit, align-check, disk_set y");
+    println!("     disk_toggle. print consulta; el resto puede escribir o cambiar metadatos.");
+    println!();
+    println!("     fdisk permite: p listar, g GPT, o MBR, n crear, d borrar, t tipo,");
+    println!("     l tipos, x expertos, v validar, w escribir y q salir sin guardar.");
+    println!("     sfdisk permite volcar, restaurar, borrar y cambiar tipo, etiqueta,");
+    println!("     UUID y tamaño. Usa --dump y --backup antes de cualquier escritura.");
+    println!("     gdisk ofrece operaciones equivalentes para GPT y reparación de cabeceras.");
+    println!("     Nunca pulses w, Write, Apply o Save sin revisar disco, partición y resumen.");
+    println!();
+    println!("   6.2 Crear, borrar o limpiar un sistema de archivos");
+    println!("     Crear ext4:   mkfs.ext4 /dev/sdX1");
+    println!("     Crear Btrfs:  mkfs.btrfs /dev/sdX1");
+    println!("     Crear NTFS:   mkfs.ntfs /dev/sdX1");
+    println!("     Cambiar label: e2label /dev/sdX1 Datos");
+    println!("     Limpiar firmas: wipefs -a /dev/sdX1");
+    println!("     Descartar SSD: blkdiscard /dev/sdX");
+    println!("     Sobrescribir:   dd if=/dev/zero of=/dev/sdX status=progress");
+    println!("     mkfs borra el contenido; wipefs, blkdiscard y dd pueden impedir");
+    println!("     la recuperación. Confirma siempre que X no sea el disco del sistema.");
+    println!();
+    println!("   6.3 Redimensionar y mover");
+    println!("     Aumentar: primero amplía la partición y después el sistema de archivos.");
+    println!("     Reducir: primero reduce el sistema de archivos y después la partición.");
+    println!("     Mover el inicio puede copiar muchos datos y dejar el disco inutilizable");
+    println!("     si se interrumpe. Haz copia, usa corriente estable y no fuerces el cierre.");
+    println!("     ext4: resize2fs; xfs: xfs_growfs; Btrfs: btrfs filesystem resize;");
+    println!("     NTFS: ntfsresize. Cada sistema tiene límites y pasos propios.");
+    println!();
+    println!("   6.4 Montaje, desmontaje y swap");
+    println!("     mount /dev/sdX1 /mnt/datos       monta manualmente.");
+    println!("     mount -o ro /dev/sdX1 /mnt/datos  monta solo lectura.");
+    println!("     umount /mnt/datos                  desmonta por ruta.");
+    println!("     umount -l solo debe usarse cuando conozcas el efecto de lazy unmount.");
+    println!("     mkswap /dev/sdX2; swapon /dev/sdX2; swapoff /dev/sdX2 gestionan swap.");
+    println!("     Para permanencia, usa UUID en /etc/fstab y prueba con mount -a.");
+    println!();
+    println!("   6.5 Cifrado LUKS");
+    println!("     luksFormat BORRA el contenedor; guarda la cabecera y las claves.");
+    println!("     cryptsetup luksFormat /dev/sdX1");
+    println!("     cryptsetup open /dev/sdX1 datos_crypt");
+    println!("     Trabaja después sobre /dev/mapper/datos_crypt, no sobre el contenedor.");
+    println!("     cryptsetup resize, close y luksHeaderBackup requieren revisar la capa.");
+    println!("     Sin la clave o la cabecera correcta, los datos cifrados no son recuperables.");
+    println!();
+    println!("   6.6 LVM");
+    println!("     Flujo: pvcreate -> vgcreate -> lvcreate -> mkfs -> mount.");
+    println!("     Ampliar: lvextend -r -L +10G /dev/VG/LV, y después verifica el FS.");
+    println!("     Reducir: desmonta, comprueba, reduce FS, reduce LV y vuelve a montar.");
+    println!("     pvremove, vgremove, lvremove y lvreduce pueden destruir volúmenes.");
+    println!("     No uses GParted sobre un LV como si fuera una partición física.");
+    println!();
+    println!("   6.7 Btrfs");
+    println!("     btrfs subvolume create/delete gestiona subvolúmenes.");
+    println!("     btrfs subvolume snapshot crea copias; delete y snapshot -r requieren cuidado.");
+    println!("     btrfs filesystem resize, balance, device add/remove y replace cambian el FS.");
+    println!("     btrfs check --readonly es consulta; no uses --repair sin copia y diagnóstico.");
+    println!();
+    println!("   6.8 ZFS");
+    println!("     zpool create/destroy/add/remove/replace gestiona el pool físico.");
+    println!("     zpool scrub comprueba; zpool export/import desconecta y vuelve a importar.");
+    println!("     zfs create/destroy, snapshot, rollback, set y rename gestionan datasets.");
+    println!("     destroy y rollback pueden eliminar datos o volver atrás en el tiempo.");
+    println!();
+    println!("   6.9 RAID por software");
+    println!("     mdadm --detail consulta; --create, --add, --fail y --remove cambian el array.");
+    println!("     --grow puede cambiar nivel o tamaño; espera a que termine el rebuild.");
+    println!("     No formatees ni retires un miembro sin revisar UUID, estado y redundancia.");
+    println!();
+    println!("   6.10 EFI, recuperación y borrado seguro");
+    println!("     Conserva la partición EFI, su flag esp y sus montajes antes de editar.");
+    println!("     Para una tabla dañada: deja de escribir, guarda un dump y usa recuperación");
+    println!("     especializada como testdisk o ddrescue; no pruebes reparaciones al azar.");
+    println!("     clean, clean all, wipefs -a, blkdiscard y dd son irreversibles en la práctica.");
+    println!();
+    println!("7. Redimensionar: el orden importa");
+    println!("   Aumentar: primero amplía la partición y después el sistema de archivos.");
+    println!("   Reducir: primero reduce el sistema de archivos y después la partición.");
+    println!("   Nunca reduzcas sin copia de seguridad y sin confirmar el espacio usado.");
+    println!("   ext4, xfs, btrfs y ntfs tienen reglas distintas; no intercambies sus pasos.");
+    println!("   Una operación que mueve el inicio de una partición puede tardar mucho.");
+    println!();
+    println!("8. Capas avanzadas: identifica la capa antes de actuar");
+    println!("   LUKS:       desbloquear el contenedor antes de trabajar con su contenido.");
+    println!("   LVM:        PV -> VG -> LV -> sistema de archivos -> montaje.");
+    println!("   Btrfs:      puede contener subvolúmenes y snapshots dentro del mismo FS.");
+    println!("   ZFS:        pool y datasets; no trates cada miembro como un disco aislado.");
+    println!("   RAID mdadm: conserva la alineación y el estado del conjunto completo.");
+    println!("   NVMe:       el disco suele acabar en n1 y sus particiones en p1, p2, etc.");
+    println!("   Consulta primero: ltools storage volume-stack");
+    println!();
+    println!("9. Comprobaciones después de un cambio");
+    println!("   ltools storage partitions      árbol y tamaños actualizados.");
+    println!("   ltools storage filesystems     UUID, etiquetas y tipos.");
+    println!("   ltools storage mounts          montajes y opciones activas.");
+    println!("   ltools storage usage           espacio e inodos disponibles.");
+    println!("   ltools storage health /dev/sdX salud SMART cuando el dispositivo lo permite.");
+    println!(
+        "   No ejecutes fsck sobre un sistema montado ni confundas fsck -N con una reparación."
+    );
+    println!();
+    println!("10. Señales para detenerse");
+    println!("   El tamaño, modelo, UUID o etiqueta no coincide con lo esperado.");
+    println!("   El objetivo está montado, es swap, pertenece a RAID/LVM/LUKS o contiene /home.");
+    println!("   La herramienta propone borrar, limpiar, formatear o mover sin copia verificada.");
+    println!("   No sabes si estás seleccionando el disco completo o una partición.");
+    println!("   En cualquiera de estos casos, cancela y vuelve a inspeccionar.");
+    println!();
+    println!("Protecciones de LTools");
+    println!("   Objetivos protegidos por defecto: /, /boot, /home, /usr, /var, /etc, /run");
+    println!("   y las raíces de montaje. Las acciones sensibles exigen objetivo explícito,");
+    println!("   confirmación y, cuando corresponde, autorización administrativa.");
+    println!();
+    println!("Acceso rápido: storage menu abre el flujo completo de gestión de almacenamiento.");
     Ok(())
 }
 
@@ -171,8 +422,8 @@ fn unmount(ctx: &Context, raw: &str) -> Result<(), String> {
 
 fn health(ctx: &Context, raw: &str) -> Result<(), String> {
     let target = validate_device(raw, ctx.dry_run)?;
-    if !command_exists("smartctl") {
-        println!("smartctl no está instalado. Puedes instalarlo bajo demanda con doctor --install smartctl.");
+    if !ensure_tool(ctx, "smartctl")? {
+        println!("smartctl no está disponible; no se ejecutó la consulta SMART.");
         return Ok(());
     }
     println!("=== Salud SMART (solo lectura) ===");
@@ -204,8 +455,30 @@ fn filesystem_check(ctx: &Context, raw: &str) -> Result<(), String> {
 }
 
 fn open_gparted(ctx: &Context, args: &[String]) -> Result<(), String> {
-    if !command_exists("gparted") {
-        return Err("gparted no está instalado; usa doctor --install gparted si quieres instalar el gestor gráfico".into());
+    if !command_exists("gparted") && !ensure_tool(ctx, "gparted")? {
+        return Err("gparted no está instalado y la instalación fue cancelada".into());
+    }
+    let graphical_frontend = std::env::var_os("LTOOLS_FRONTEND")
+        .is_some_and(|value| value == "gui")
+        && (std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some());
+    if graphical_frontend && !command_exists("pkexec") && !ensure_tool(ctx, "pkexec")? {
+        return Err(
+            "GParted necesita pkexec/polkit para autorizar su backend gráfico; instalación cancelada."
+                .into(),
+        );
+    }
+    // GParted ejecuta su backend como root mediante polkit. En sesiones
+    // Wayland con Xwayland necesita `xhost` para conceder temporalmente al
+    // usuario root acceso a DISPLAY; sin él la contraseña puede aceptarse y
+    // aun así gpartedbin termina con "cannot open display".
+    if std::env::var_os("DISPLAY").is_some()
+        && !command_exists("xhost")
+        && !ensure_tool(ctx, "xhost")?
+    {
+        return Err(
+            "GParted necesita xhost para autorizar su ventana en esta sesión gráfica; instalación cancelada."
+                .into(),
+        );
     }
     if !args.iter().any(|arg| arg == "--yes")
         && !confirm_or_simulate(ctx, "¿Abrir GParted? Puede modificar particiones y datos.")
@@ -217,12 +490,78 @@ fn open_gparted(ctx: &Context, args: &[String]) -> Result<(), String> {
         println!("Simulación: se abriría gparted.");
         return Ok(());
     }
-    Command::new("gparted")
-        .spawn()
-        .map_err(|e| format!("no se pudo abrir gparted: {e}"))?;
+
+    // GParted inicia su backend privilegiado con polkit. En X11/Xwayland el
+    // backend root no puede abrir el display del usuario por sí solo. Se
+    // concede únicamente el permiso local para root, se lanza GParted con
+    // sus pipes desacoplados de LTools y se revoca cuando el proceso termina.
+    // No se usa `xhost +`, que abriría el display a cualquier cliente.
+    let display_access = if std::env::var_os("DISPLAY").is_some() {
+        grant_root_display_access()?;
+        true
+    } else {
+        false
+    };
+    let mut command = Command::new("gparted");
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if display_access {
+        command.env("GDK_BACKEND", "x11");
+    }
+    let child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            if display_access {
+                let _ = revoke_root_display_access();
+            }
+            return Err(format!("no se pudo abrir gparted: {error}"));
+        }
+    };
+    if display_access {
+        thread::spawn(move || {
+            let mut child = child;
+            let _ = child.wait();
+            let _ = revoke_root_display_access();
+        });
+    }
     println!("GParted se ha iniciado. Las operaciones de particionado se realizan allí.");
     record(ctx, "storage-open-manager", Path::new("gparted"), true);
     Ok(())
+}
+
+fn grant_root_display_access() -> Result<bool, String> {
+    let output = Command::new("xhost")
+        .args(["+SI:localuser:root"])
+        .output()
+        .map_err(|error| format!("no se pudo ejecutar xhost para autorizar GParted: {error}"))?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(if detail.is_empty() {
+            "xhost no pudo conceder acceso temporal a root; GParted no se abrirá".into()
+        } else {
+            format!("xhost no pudo conceder acceso temporal a root: {detail}")
+        });
+    }
+    Ok(true)
+}
+
+fn revoke_root_display_access() -> Result<(), String> {
+    let output = Command::new("xhost")
+        .args(["-SI:localuser:root"])
+        .output()
+        .map_err(|error| format!("no se pudo revocar el acceso temporal de GParted: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        Err(if detail.is_empty() {
+            "xhost no pudo revocar el acceso temporal de root".into()
+        } else {
+            format!("xhost no pudo revocar el acceso temporal de root: {detail}")
+        })
+    }
 }
 
 fn open_path(ctx: &Context, raw: &str) -> Result<(), String> {
@@ -344,6 +683,9 @@ fn open_external_manager(ctx: &Context, program: &str, label: &str) -> Result<()
         return Ok(());
     }
     Command::new(program)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
         .map_err(|error| format!("no se pudo abrir {label}: {error}"))?;
     println!("{label} se ha iniciado; LTools no aplica cambios destructivos automáticamente.");
@@ -471,6 +813,8 @@ fn menu(ctx: &Context) -> Result<(), String> {
         println!(" 13) Uso, inodos, UUID y etiquetas");
         println!(" 14) LVM, cifrado, Btrfs, ZFS y RAID");
         println!(" 15) Gestores nativos alternativos");
+        println!(" 16) Tabla de particiones de un dispositivo (solo lectura)");
+        println!(" 17) Guía de operaciones y protecciones");
         println!("  q) Volver");
         let answer =
             crate::menu_input("Elige una opción (Enter para volver): ").unwrap_or_default();
@@ -490,6 +834,8 @@ fn menu(ctx: &Context) -> Result<(), String> {
             "13" => advanced_menu(ctx)?,
             "14" => volume_stack()?,
             "15" => managers_menu(ctx)?,
+            "16" => prompt_then(ctx, "Dispositivo (ej. /dev/sda): ", partition_table)?,
+            "17" => partition_guide()?,
             "q" | "Q" | "" => return Ok(()),
             _ => println!("Opción no válida."),
         }
@@ -597,6 +943,7 @@ fn validate_device(raw: &str, dry_run: bool) -> Result<PathBuf, String> {
                 || c.is_whitespace()
                 || !c.is_ascii_alphanumeric() && !"/._-:".contains(c)
         })
+        || value.split('/').any(|part| matches!(part, "." | ".."))
         || !value.starts_with("/dev/")
     {
         return Err("el dispositivo debe ser una ruta /dev/... con caracteres válidos".into());
@@ -615,6 +962,7 @@ fn validate_unmount_target(raw: &str, dry_run: bool) -> Result<PathBuf, String> 
     let value = raw.trim();
     if value.is_empty()
         || value.chars().any(|c| c.is_control() || c.is_whitespace())
+        || value.split('/').any(|part| matches!(part, "." | ".."))
         || (!value.starts_with("/dev/") && !value.starts_with('/'))
     {
         return Err("indica un dispositivo /dev/... o una ruta absoluta de montaje".into());
@@ -635,10 +983,41 @@ fn validate_path(raw: &str) -> Result<PathBuf, String> {
 }
 fn is_protected_mount(path: &Path) -> bool {
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    matches!(
+    if matches!(
         canonical.to_string_lossy().as_ref(),
         "/" | "/home" | "/boot" | "/usr" | "/var" | "/etc" | "/run"
-    )
+    ) {
+        return true;
+    }
+    // Un dispositivo como /dev/nvme0n1p1 puede ser la fuente de `/` aunque
+    // no tenga una ruta crítica como destino. Resolverlo evita que el selector
+    // seguro pueda desmontar la raíz por haber elegido el nombre del bloque.
+    if path.to_string_lossy().starts_with("/dev/") {
+        if !command_exists("findmnt") {
+            // Sin una respuesta fiable, bloquear es más seguro que adivinar.
+            return true;
+        }
+        let output = Command::new("findmnt")
+            .args(["-rn", "-S"])
+            .arg(path)
+            .args(["-o", "TARGET"])
+            .output();
+        let Ok(output) = output else {
+            return true;
+        };
+        if !output.status.success() {
+            return true;
+        }
+        return String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .any(|target| {
+                matches!(
+                    target.trim(),
+                    "/" | "/home" | "/boot" | "/usr" | "/var" | "/etc" | "/run"
+                )
+            });
+    }
+    false
 }
 fn confirm_or_simulate(ctx: &Context, question: &str) -> bool {
     ctx.dry_run || crate::common::ask(question)
@@ -690,11 +1069,6 @@ fn run_capture_owned(program: &str, args: &[String]) -> Result<(), String> {
         })
     }
 }
-#[allow(dead_code)]
-fn _command_path(name: &str) -> Option<String> {
-    command_output("sh", &["-c", &format!("command -v -- {name}")])
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -708,6 +1082,8 @@ mod tests {
     fn rechaza_espacios_y_control_en_destinos() {
         assert!(validate_device("/dev/sda 1", true).is_err());
         assert!(validate_unmount_target("/dev/sda\n", true).is_err());
+        assert!(validate_device("/dev/../etc/passwd", true).is_err());
+        assert!(validate_unmount_target("/run/../etc", true).is_err());
     }
     #[test]
     fn protege_montajes_criticos() {

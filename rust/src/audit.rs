@@ -539,13 +539,14 @@ pub fn run(ctx: &Context, args: &[String], games: bool) -> Result<(), String> {
         return Err("sha256sum es necesario para buscar duplicados".into());
     }
     let roots = default_roots(&ctx.home, full, &roots, include_home, auto_mounts);
+    let managed_output = out.is_none();
     let out = out.unwrap_or_else(|| {
-        PathBuf::from(format!(
-            "rust-{}-{}",
-            if games { "games" } else { "audit" },
-            crate::common::timestamp()
-        ))
+        crate::common::default_report_dir(&ctx.home, if games { "games" } else { "audit" })
     });
+    if managed_output {
+        crate::common::reset_default_report_dir(&out)
+            .map_err(|e| format!("no se pudo preparar el informe: {e}"))?;
+    }
     fs::create_dir_all(&out).map_err(|e| format!("no se pudo crear el informe: {e}"))?;
     let phase_total = if duplicates { 7 } else { 6 };
     println!(
@@ -593,16 +594,23 @@ pub fn run(ctx: &Context, args: &[String], games: bool) -> Result<(), String> {
     println!("Informe: {}", out.display());
     println!("Prefijos detectados: {}", prefixes.len());
     println!("Solo lectura: no se han modificado datos de origen.");
-    if let Some(plan) = &ctx.plan {
-        plan.record(
-            "audit",
-            &out,
-            "executed",
-            true,
-            "solo lectura",
-            if ctx.dry_run { "dry-run" } else { "audit" },
-        )
-        .map_err(|e| e.to_string())?;
+    if ctx.dry_run
+        || ctx
+            .plan
+            .as_ref()
+            .is_some_and(crate::common::Plan::is_explicit)
+    {
+        if let Some(plan) = &ctx.plan {
+            plan.record(
+                "audit",
+                &out,
+                if ctx.dry_run { "planned" } else { "observed" },
+                false,
+                "solo lectura",
+                if ctx.dry_run { "dry-run" } else { "audit" },
+            )
+            .map_err(|e| e.to_string())?;
+        }
     }
     Ok(())
 }

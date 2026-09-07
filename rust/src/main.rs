@@ -3,6 +3,7 @@ mod actions;
 mod audit;
 mod automation;
 mod boot;
+mod cli_ui;
 mod common;
 mod compat;
 mod diagnostics;
@@ -10,6 +11,7 @@ mod games;
 mod git;
 #[cfg(any(target_os = "linux", windows))]
 mod gui;
+mod gui_preferences;
 mod i18n;
 mod native;
 mod packages;
@@ -187,12 +189,16 @@ enum MenuSelection {
 
 #[derive(Clone, Copy)]
 enum MenuCategory {
+    Dependencies,
+    NativeTools,
+    InstallableTools,
     AuditInventory,
     Storage,
     Services,
     Defaults,
     Automation,
     Import,
+    Settings,
     WinSlim,
 }
 
@@ -212,11 +218,15 @@ fn execute_action(command: &str, ctx: &Context, args: &[String]) -> Result<(), S
         "automation" | "automations" | "import" => automation::run(ctx, args),
         "actions" | "action-catalog" => actions::run(ctx, args),
         "menu-audit-inventory" => category_menu(ctx, MenuCategory::AuditInventory),
+        "menu-dependencies" => category_menu(ctx, MenuCategory::Dependencies),
+        "menu-native-tools" => category_menu(ctx, MenuCategory::NativeTools),
+        "menu-installable-tools" => category_menu(ctx, MenuCategory::InstallableTools),
         "menu-storage" => category_menu(ctx, MenuCategory::Storage),
         "menu-services" => category_menu(ctx, MenuCategory::Services),
         "menu-defaults" => category_menu(ctx, MenuCategory::Defaults),
         "menu-automation" => category_menu(ctx, MenuCategory::Automation),
         "menu-import" => category_menu(ctx, MenuCategory::Import),
+        "menu-settings" => category_menu(ctx, MenuCategory::Settings),
         "menu-winslim" => category_menu(ctx, MenuCategory::WinSlim),
         // Kept for older terminal descriptors and launchers.
         "menu-audits" => category_menu(ctx, MenuCategory::AuditInventory),
@@ -269,23 +279,25 @@ fn command_needs_plan(command: &str, args: &[String], dry_run: bool, explicit: b
     if dry_run || explicit {
         return true;
     }
+    if command.starts_with("menu-") {
+        // Cambiar de menú no es una operación del sistema. Las acciones
+        // mutables crean su propio plan cuando se ejecutan de forma explícita.
+        return false;
+    }
     let has_any = |values: &[&str]| args.iter().any(|arg| values.contains(&arg.as_str()));
     match command {
         "audit" | "games" | "packages" | "defaults" | "paths" | "report" | "reports"
-        | "diagnostics" | "diag" | "health" | "boot" | "bootloader" | "efi" => false,
-        "storage" | "disks" | "partitions" => {
-            args.is_empty()
-                || has_any(&[
-                    "menu",
-                    "mount",
-                    "unmount",
-                    "open-manager",
-                    "open-gparted",
-                    "format",
-                    "resize",
-                    "partition",
-                ])
-        }
+        | "diagnostics" | "diag" | "health" => false,
+        "storage" | "disks" | "partitions" => has_any(&[
+            "mount",
+            "unmount",
+            "format",
+            "resize",
+            "partition",
+            "open-gparted",
+            "open-disk-management",
+            "open-diskpart",
+        ]),
         "system" | "services" | "systemctl" => has_any(&[
             "start",
             "stop",
@@ -300,26 +312,155 @@ fn command_needs_plan(command: &str, args: &[String], dry_run: bool, explicit: b
         "software" | "package-search" | "package-install" | "install-package" => {
             has_any(&["install", "upgrade", "remove", "uninstall"])
         }
-        "git" | "git-tools" => has_any(&["clone", "fetch", "pull", "push", "login"]),
-        "automation" | "automations" | "import" => {
-            args.is_empty() || has_any(&["menu", "add", "remove", "run"])
+        "git" | "git-tools" => {
+            if matches!(args.first().map(String::as_str), Some("gh" | "github")) {
+                matches!(args.get(1).map(String::as_str), Some("login"))
+            } else {
+                has_any(&[
+                    "clone", "fetch", "pull", "add", "commit", "push", "branch", "tag", "release",
+                    "login", "auth",
+                ])
+            }
         }
-        "actions" | "action-catalog" => args.is_empty() || has_any(&["menu", "run"]),
-        "registry" | "records" => has_any(&["write", "apply", "import", "export"]),
-        // Cleaning and prefix management are mutation-capable by design.
-        "clean" | "prefix" | "wine" | "wine-audit" => true,
-        _ => true,
+        "automation" | "automations" | "import" => has_any(&["add", "remove", "run"]),
+        "actions" | "action-catalog" => actions::needs_plan(args),
+        "tools" | "quick-actions" => false,
+        "registry" | "records" => has_any(&["write", "apply", "import"]),
+        // Native inventories and status checks are read-only. Only the
+        // explicit DNS flush mutates host state and therefore needs a plan.
+        "native" | "native-tools" => has_any(&[
+            "flush-dns",
+            "set-interface",
+            "interface-up",
+            "interface-down",
+            "profile-set",
+            "networkmanager-connection",
+            "suspend",
+            "hibernate",
+            "reboot",
+            "shutdown",
+            "firewall-enable",
+            "firewall-disable",
+            "firewall-reload",
+            "ssh-connect",
+            "scp-copy",
+            "sftp",
+            "ssh-keygen",
+            "ssh-copy-id",
+            "adb-install",
+            "adb-shell",
+            "adb-push",
+            "adb-pull",
+            "adb-reboot",
+            "container-pull",
+            "container-run",
+            "container-start",
+            "container-stop",
+            "container-restart",
+            "container-remove",
+            "container-exec",
+            "container-pause",
+            "container-unpause",
+            "container-kill",
+            "container-rename",
+            "container-cp",
+            "container-prune",
+            "image-build",
+            "image-tag",
+            "image-remove",
+            "image-prune",
+            "volume-create",
+            "volume-remove",
+            "volume-prune",
+            "network-create",
+            "network-remove",
+            "network-prune",
+            "system-prune",
+            "container-compose",
+            "kubernetes-apply",
+            "kubernetes-delete",
+            "kubernetes-scale",
+            "kubernetes-rollout",
+            "kubernetes-port-forward",
+            "install",
+            "install-dependency",
+        ]),
+        // A preview/menu or a bare cleanup command is read-only. Only a
+        // cleanup with an explicit target can mutate the host. Prefix
+        // inventories are also read-only; management verbs are not.
+        "clean" | "cleanup" => has_any(&[
+            "--package",
+            "--path",
+            "--orphans",
+            "--package-caches",
+            "--pacman-cache",
+            "--flatpak-unused",
+        ]),
+        #[cfg(not(windows))]
+        "wine" => has_any(&[
+            "create",
+            "migrate",
+            "copy",
+            "remove",
+            "delete",
+            "activate",
+            "set-defaults",
+            "update-launchers",
+            "rewrite-configs",
+            "remove-source",
+        ]),
+        #[cfg(windows)]
+        "prefix" | "wine" | "wine-audit" => false,
+        #[cfg(not(windows))]
+        "prefix" | "wine-audit" => has_any(&[
+            "create",
+            "migrate",
+            "copy",
+            "remove",
+            "delete",
+            "activate",
+            "set-defaults",
+            "update-launchers",
+            "rewrite-configs",
+        ]),
+        "accounts" | "users" | "user-management" => has_any(&[
+            "create",
+            "add",
+            "remove",
+            "delete",
+            "modify",
+            "password",
+            "group-add",
+            "group-remove",
+            "lock",
+            "unlock",
+        ]),
+        "boot" | "bootloader" | "efi" => {
+            has_any(&["install", "update", "set-default", "set-timeout", "write"])
+        }
+        // Unknown commands fail in dispatch and must not create state as a
+        // side effect.
+        _ => false,
+    }
+}
+
+fn finalize_failed_plan(ctx: &Context) {
+    let Some(plan) = &ctx.plan else {
+        return;
+    };
+    match plan.finalize() {
+        Ok(true) if plan.is_explicit() => {
+            eprintln!("Plan conservado: {}", plan.path.display());
+        }
+        Ok(_) => {}
+        Err(error) => eprintln!("No se pudo cerrar el plan: {error}"),
     }
 }
 
 fn run_interactive_menu(base_args: &[String], dry_run: bool, plan_path: Option<PathBuf>) {
-    let mut requested_plan_path = plan_path;
-    let mut first_menu = true;
+    let requested_plan_path = plan_path;
     loop {
-        if !first_menu {
-            clear_screen();
-        }
-        first_menu = false;
+        clear_screen();
         let (command, mut args) = match menu_choice() {
             MenuSelection::Command(command, selected_args) => (command, selected_args),
             MenuSelection::Continue => continue,
@@ -334,20 +475,38 @@ fn run_interactive_menu(base_args: &[String], dry_run: bool, plan_path: Option<P
                 command.as_str(),
                 "clean" | "system" | "storage" | "registry"
             ) && action_args.iter().any(|arg| arg == "menu"));
-        let plan = match Plan::create(requested_plan_path.take(), &format!("rust-{command}")) {
-            Ok(plan) => plan,
-            Err(error) => {
-                eprintln!("No se pudo crear el plan: {error}");
-                continue;
+        let wants_plan = command_needs_plan(
+            &command,
+            &action_args,
+            dry_run,
+            requested_plan_path.is_some(),
+        );
+        let plan = if wants_plan {
+            match Plan::create(requested_plan_path.clone(), &format!("rust-{command}")) {
+                Ok(plan) => Some(plan),
+                Err(error) => {
+                    eprintln!("No se pudo crear el plan: {error}");
+                    continue;
+                }
             }
+        } else {
+            None
         };
         let ctx = Context {
             home: home_dir(),
             dry_run,
-            plan_path: Some(plan.path.clone()),
-            plan: Some(plan),
+            plan_path: plan.as_ref().map(|value| value.path.clone()),
+            plan,
         };
         let result = execute_action(&command, &ctx, &action_args);
+        let retained_plan = ctx.plan.as_ref().and_then(|plan| match plan.finalize() {
+            Ok(true) => Some(plan.path.clone()),
+            Ok(false) => None,
+            Err(error) => {
+                eprintln!("No se pudo cerrar el plan: {error}");
+                Some(plan.path.clone())
+            }
+        });
         if is_submenu && result.is_ok() {
             // El submenú ya gestiona su navegación. Al salir con Enter/q,
             // volver directamente al menú que lo abrió, sin una pausa extra.
@@ -366,8 +525,10 @@ fn run_interactive_menu(base_args: &[String], dry_run: bool, plan_path: Option<P
                 theme::current().paint(theme::Role::Error, format!("Error: {error}"))
             ),
         }
-        println!("Plan: {}", ctx.plan_path.as_ref().unwrap().display());
-        print!("Pulsa Enter para volver al menú, o q para salir: ");
+        if let Some(path) = retained_plan {
+            println!("Plan: {}", path.display());
+        }
+        print!("{}", i18n::tools_text("pause"));
         let _ = io::stdout().flush();
         match read_menu_line() {
             Ok(Some(answer)) if answer.trim().eq_ignore_ascii_case("q") => return,
@@ -614,10 +775,13 @@ fn main() {
         };
         if let Err(error) = doctor_action(&ctx, &filtered) {
             eprintln!("Error: {error}");
+            finalize_failed_plan(&ctx);
             std::process::exit(1);
         }
-        if let Some(plan_path) = ctx.plan_path {
-            println!("Plan: {}", plan_path.display());
+        if let Some(plan) = &ctx.plan {
+            if plan.finalize().unwrap_or(true) {
+                println!("Plan: {}", plan.path.display());
+            }
         }
         return;
     }
@@ -642,6 +806,7 @@ fn main() {
     let result = execute_action(&command, &ctx, &filtered);
     if let Err(error) = result {
         eprintln!("Error: {error}");
+        finalize_failed_plan(&ctx);
         std::process::exit(1);
     }
     let machine_output = matches!(command.as_str(), "software" | "package-search")
@@ -676,7 +841,11 @@ fn main() {
                 || filtered.windows(2).any(|window| {
                     window[0] == "--format" && matches!(window[1].as_str(), "json" | "tsv")
                 })));
-    if let Some(plan_path) = ctx.plan_path {
+    if let Some(plan) = &ctx.plan {
+        if !plan.finalize().unwrap_or(true) {
+            return;
+        }
+        let plan_path = plan.path.clone();
         if machine_output {
             eprintln!("Plan: {}", plan_path.display());
         } else {
@@ -707,22 +876,20 @@ fn menu_choice_windows() -> MenuSelection {
 }
 
 fn menu_choice_for_platform() -> MenuSelection {
-    println!(
-        "{} Rust {VERSION}",
-        theme::current().paint(theme::Role::Title, i18n::text("menu.title"))
-    );
+    cli_ui::header(None);
+    cli_ui::group(i18n::product_name());
     println!("  1) {}", i18n::category_text("audit_inventory"));
-    println!("  2) {}", i18n::category_text("storage"));
-    println!("  3) {}", i18n::category_text("services"));
-    println!("  4) {}", i18n::category_text("defaults"));
+    println!("  2) {}", i18n::category_text("dependencies"));
+    println!("  3) {}", i18n::category_text("native_tools"));
+    println!("  4) {}", i18n::category_text("installable_tools"));
     println!("  5) {}", i18n::category_text("automation"));
-    println!("  6) {}", i18n::category_text("import"));
+    println!("  6) {}", i18n::category_text("defaults"));
+    println!("  7) {}", i18n::category_text("settings"));
     #[cfg(windows)]
     if platform::winslim_available() {
-        println!("  7) {}", i18n::category_text("winslim"));
+        println!("  8) {}", i18n::category_text("winslim"));
     }
-    println!("  h) {}", i18n::text("menu.help"));
-    println!("  q) {}", i18n::text("menu.quit"));
+    cli_ui::footer(false);
     print!("{}", i18n::text("menu.prompt"));
     let _ = io::stdout().flush();
     let answer = match read_menu_line() {
@@ -737,17 +904,18 @@ fn menu_choice_for_platform() -> MenuSelection {
     match answer.trim().to_lowercase().as_str() {
         "" => MenuSelection::Quit,
         "1" => MenuSelection::Command("menu-audit-inventory".into(), Vec::new()),
-        "2" => MenuSelection::Command("menu-storage".into(), Vec::new()),
-        "3" => MenuSelection::Command("menu-services".into(), Vec::new()),
-        "4" => MenuSelection::Command("menu-defaults".into(), Vec::new()),
+        "2" => MenuSelection::Command("menu-dependencies".into(), Vec::new()),
+        "3" => MenuSelection::Command("menu-native-tools".into(), Vec::new()),
+        "4" => MenuSelection::Command("menu-installable-tools".into(), Vec::new()),
         "5" => MenuSelection::Command("menu-automation".into(), Vec::new()),
-        "6" => MenuSelection::Command("menu-import".into(), Vec::new()),
+        "6" => MenuSelection::Command("menu-defaults".into(), Vec::new()),
+        "7" => MenuSelection::Command("menu-settings".into(), Vec::new()),
         #[cfg(windows)]
-        "7" if platform::winslim_available() => {
+        "8" if platform::winslim_available() => {
             MenuSelection::Command("menu-winslim".into(), Vec::new())
         }
         "q" | "quit" | "salir" => MenuSelection::Quit,
-        "h" => {
+        "h" | "?" => {
             usage();
             MenuSelection::Continue
         }
@@ -759,15 +927,23 @@ fn menu_choice_for_platform() -> MenuSelection {
 }
 
 fn category_menu(ctx: &Context, category: MenuCategory) -> Result<(), String> {
+    // Las categorías nuevas son módulos completos, no una pantalla puente
+    // vacía: al abrirlas se entra directamente en su submenú operativo.
+    match category {
+        MenuCategory::Dependencies => return dependencies_menu(ctx),
+        MenuCategory::NativeTools => return native_tools_menu(ctx),
+        MenuCategory::InstallableTools => return installable_tools_menu(ctx),
+        _ => {}
+    }
     loop {
         clear_screen();
-        println!(
-            "{} · {} Rust {VERSION}\n",
-            theme::current().paint(theme::Role::Title, i18n::text("menu.title")),
-            theme::current().paint(theme::Role::Section, i18n::category_text(category.key()))
-        );
+        cli_ui::header(Some(category.key()));
         match category {
+            MenuCategory::Dependencies
+            | MenuCategory::NativeTools
+            | MenuCategory::InstallableTools => unreachable!("módulo ya despachado"),
             MenuCategory::AuditInventory => {
+                cli_ui::group(i18n::category_text(category.key()));
                 println!("  1) {}", i18n::text("menu.audit"));
                 println!("  2) {}", i18n::games_label());
                 println!("  3) {}", i18n::text("menu.packages"));
@@ -775,43 +951,61 @@ fn category_menu(ctx: &Context, category: MenuCategory) -> Result<(), String> {
                 println!("  4) {}", i18n::prefix_label());
             }
             MenuCategory::Storage => {
+                cli_ui::group(i18n::category_text(category.key()));
                 println!("  1) {}", i18n::storage_label());
                 println!("  2) {}", i18n::text("menu.clean"));
             }
             MenuCategory::Services => {
+                cli_ui::group(i18n::category_text(category.key()));
                 println!("  1) {}", i18n::text("menu.system"));
                 println!("  2) {}", i18n::text("menu.doctor"));
                 println!("  3) {}", i18n::diagnostics_label());
                 println!("  4) {}", i18n::accounts_label());
-                println!("  5) Herramientas nativas detectadas");
+                println!("  5) {}", i18n::native_action_text("tools_status"));
                 println!("  6) {}", i18n::native_label());
-                println!("  7) Arranque, EFI y cargador del sistema");
+                println!("  7) {}", i18n::boot_label());
             }
             MenuCategory::Defaults => {
+                cli_ui::group(i18n::category_text(category.key()));
                 println!("  1) {}", i18n::text("menu.defaults"));
                 println!("  2) {}", i18n::registry_label());
             }
             MenuCategory::Automation => {
-                println!("  1) {}", software::menu_label());
-                println!("  2) Git");
-                println!("  3) {}", i18n::text("menu.clean"));
-                println!("  4) {}", i18n::actions_text("menu"));
+                cli_ui::group(i18n::category_text(category.key()));
+                println!("  1) {}", i18n::automation_text("menu"));
+                println!("  2) {}", i18n::actions_text("menu"));
             }
             MenuCategory::Import => {
+                cli_ui::group(i18n::category_text(category.key()));
                 println!("  1) {}", i18n::automation_text("menu"));
+            }
+            MenuCategory::Settings => {
+                cli_ui::group(i18n::category_text(category.key()));
+                println!("  1) {}", i18n::settings_text("theme"));
+                println!("  2) {}", i18n::settings_text("language"));
+                println!(
+                    "  3) {}: auto / always / never",
+                    i18n::settings_text("color")
+                );
             }
             MenuCategory::WinSlim => {
                 #[cfg(windows)]
                 if let Some(root) = platform::winslim_root() {
                     println!("{}", i18n::automation_text("winslim_ready"));
                     println!("  {}", root.display());
+                    match platform::nsudo_path() {
+                        Some(path) => println!("  NSudo detectado: {}", path.display()),
+                        None => println!(
+                            "  NSudo no detectado; las acciones elevadas usarán UAC por defecto."
+                        ),
+                    }
                     println!("{}", i18n::automation_text("winslim_placeholder"));
                 }
                 #[cfg(not(windows))]
                 println!("{}", i18n::automation_text("winslim_unavailable"));
             }
         }
-        println!("  q) {}", i18n::text("menu.back"));
+        cli_ui::footer(true);
 
         let answer = match menu_input(i18n::text("menu.prompt")) {
             Some(answer) => answer.to_lowercase(),
@@ -820,12 +1014,15 @@ fn category_menu(ctx: &Context, category: MenuCategory) -> Result<(), String> {
         if answer.is_empty() || matches!(answer.as_str(), "q" | "quit" | "salir") {
             return Ok(());
         }
-        if matches!(answer.as_str(), "h" | "help" | "ayuda") {
+        if matches!(answer.as_str(), "h" | "?" | "help" | "ayuda") {
             usage();
             continue;
         }
 
         let stay_in_category = match category {
+            MenuCategory::Dependencies
+            | MenuCategory::NativeTools
+            | MenuCategory::InstallableTools => unreachable!("módulo ya despachado"),
             MenuCategory::AuditInventory => match answer.as_str() {
                 "1" => category_leaf(ctx, "audit", menu_audit()),
                 "2" => category_leaf(ctx, "games", menu_games()),
@@ -855,14 +1052,18 @@ fn category_menu(ctx: &Context, category: MenuCategory) -> Result<(), String> {
                 _ => category_invalid(),
             },
             MenuCategory::Automation => match answer.as_str() {
-                "1" => category_submenu(ctx, "tools", Vec::new())?,
-                "2" => category_submenu(ctx, "automation", vec!["menu".into()])?,
-                "3" => category_submenu(ctx, "clean", vec!["menu".into()])?,
-                "4" => category_submenu(ctx, "actions", vec!["menu".into()])?,
+                "1" => category_submenu(ctx, "automation", vec!["menu".into()])?,
+                "2" => category_submenu(ctx, "actions", vec!["menu".into()])?,
                 _ => category_invalid(),
             },
             MenuCategory::Import => match answer.as_str() {
                 "1" => category_submenu(ctx, "automation", vec!["menu".into()])?,
+                _ => category_invalid(),
+            },
+            MenuCategory::Settings => match answer.as_str() {
+                "1" => settings_theme_menu(),
+                "2" => settings_language_menu(),
+                "3" => settings_color_menu(),
                 _ => category_invalid(),
             },
             MenuCategory::WinSlim => match answer.as_str() {
@@ -883,13 +1084,160 @@ fn category_menu(ctx: &Context, category: MenuCategory) -> Result<(), String> {
 impl MenuCategory {
     fn key(self) -> &'static str {
         match self {
+            Self::Dependencies => "dependencies",
+            Self::NativeTools => "native_tools",
+            Self::InstallableTools => "installable_tools",
             Self::AuditInventory => "audit_inventory",
             Self::Storage => "storage",
             Self::Services => "services",
             Self::Defaults => "defaults",
             Self::Automation => "automation",
             Self::Import => "import",
+            Self::Settings => "settings",
             Self::WinSlim => "winslim",
+        }
+    }
+}
+
+fn module_result(ctx: &Context, result: Result<(), String>) {
+    match result {
+        Ok(()) => println!(
+            "{}",
+            theme::current().paint(theme::Role::Success, "Operación terminada correctamente.")
+        ),
+        Err(error) => eprintln!(
+            "{}",
+            theme::current().paint(theme::Role::Error, format!("Error: {error}"))
+        ),
+    }
+    if let Some(plan_path) = &ctx.plan_path {
+        println!("Plan: {}", plan_path.display());
+    }
+    let _ = menu_input(i18n::tools_text("pause"));
+}
+
+fn dependencies_menu(ctx: &Context) -> Result<(), String> {
+    loop {
+        clear_screen();
+        cli_ui::header(Some("dependencies"));
+        cli_ui::group(i18n::category_text("dependencies"));
+        println!("  1) {}", i18n::gui_text("doctor"));
+        println!("  2) {}", i18n::native_action_text("tools_status"));
+        println!("  3) {}", i18n::gui_text("stores"));
+        println!("  4) {}", i18n::tools_text("search"));
+        println!("  5) {}", i18n::tools_text("install"));
+        println!("  6) {}", i18n::native_action_text("tools_install"));
+        println!("  7) {}", i18n::diagnostics_label());
+        println!("  8) {}", i18n::text("menu.system.dependencies"));
+        println!("  9) {}", i18n::text("menu.clean"));
+        println!("  q) Volver");
+        let answer = menu_input(i18n::text("menu.prompt")).unwrap_or_default();
+        let result = match answer.as_str() {
+            "1" => execute_action("doctor", ctx, &[]),
+            "2" => execute_action("native", ctx, &["tools".into(), "status".into()]),
+            "3" => execute_action("software", ctx, &["stores".into()]),
+            "4" => {
+                let query = menu_input(i18n::gui_text("package_placeholder")).unwrap_or_default();
+                if query.is_empty() {
+                    Ok(())
+                } else {
+                    execute_action("software", ctx, &["search".into(), query])
+                }
+            }
+            "5" => {
+                let query = menu_input(i18n::gui_text("package_placeholder")).unwrap_or_default();
+                if query.is_empty() {
+                    Ok(())
+                } else {
+                    execute_action("software", ctx, &["install".into(), query])
+                }
+            }
+            "6" => execute_action("native", ctx, &["tools".into(), "install".into()]),
+            "7" => execute_action("diagnostics", ctx, &["health".into()]),
+            "8" => {
+                let prompt = format!("{}: ", i18n::text("menu.system.dependencies"));
+                let unit = menu_input(&prompt).unwrap_or_default();
+                if unit.is_empty() {
+                    Ok(())
+                } else {
+                    execute_action(
+                        "system",
+                        ctx,
+                        &["dependencies".into(), "--unit".into(), unit],
+                    )
+                }
+            }
+            "9" => execute_action("clean", ctx, &["menu".into()]),
+            "" | "q" | "Q" => return Ok(()),
+            _ => {
+                println!("{}", i18n::text("menu.invalid"));
+                Ok(())
+            }
+        };
+        if !answer.is_empty() {
+            module_result(ctx, result);
+        }
+    }
+}
+
+fn native_tools_menu(ctx: &Context) -> Result<(), String> {
+    loop {
+        clear_screen();
+        cli_ui::header(Some("native_tools"));
+        cli_ui::group(i18n::category_text("native_tools"));
+        println!("  1) {}", i18n::storage_label());
+        println!("  2) {}", i18n::text("menu.system"));
+        println!("  3) {}", i18n::accounts_label());
+        println!("  4) {}", i18n::native_label());
+        println!("  5) {}", i18n::boot_label());
+        println!("  6) {}", i18n::registry_label());
+        println!("  q) Volver");
+        let answer = menu_input(i18n::text("menu.prompt")).unwrap_or_default();
+        let result = match answer.as_str() {
+            "1" => execute_action("storage", ctx, &["menu".into()]),
+            "2" => execute_action("system", ctx, &["menu".into()]),
+            "3" => execute_action("accounts", ctx, &["menu".into()]),
+            "4" => execute_action("native", ctx, &["menu".into()]),
+            "5" => execute_action("boot", ctx, &["menu".into()]),
+            "6" => execute_action("registry", ctx, &["menu".into()]),
+            "" | "q" | "Q" => return Ok(()),
+            _ => {
+                println!("{}", i18n::text("menu.invalid"));
+                Ok(())
+            }
+        };
+        if !answer.is_empty() {
+            module_result(ctx, result);
+        }
+    }
+}
+
+fn installable_tools_menu(ctx: &Context) -> Result<(), String> {
+    loop {
+        clear_screen();
+        cli_ui::header(Some("installable_tools"));
+        cli_ui::group(i18n::category_text("installable_tools"));
+        println!("  1) {}", i18n::tools_text("git_menu"));
+        println!("  2) {}", i18n::native_tools_label());
+        println!("  3) {}", i18n::native_action_text("adb_devices"));
+        println!("  4) {}", i18n::native_action_text("container_list"));
+        println!("  5) {}", i18n::native_action_text("kubernetes_contexts"));
+        println!("  q) Volver");
+        let answer = menu_input(i18n::text("menu.prompt")).unwrap_or_default();
+        let result = match answer.as_str() {
+            "1" => execute_action("tools", ctx, &[]),
+            "2" => execute_action("native", ctx, &["tools".into(), "ssh".into()]),
+            "3" => execute_action("native", ctx, &["tools".into(), "adb".into()]),
+            "4" => execute_action("native", ctx, &["tools".into(), "containers".into()]),
+            "5" => execute_action("native", ctx, &["tools".into(), "kubernetes".into()]),
+            "" | "q" | "Q" => return Ok(()),
+            _ => {
+                println!("{}", i18n::text("menu.invalid"));
+                Ok(())
+            }
+        };
+        if !answer.is_empty() {
+            module_result(ctx, result);
         }
     }
 }
@@ -899,6 +1247,65 @@ fn category_invalid() -> bool {
         "{}",
         theme::current().paint(theme::Role::Warning, i18n::text("menu.invalid"))
     );
+    true
+}
+
+/// Menú CLI de temas; la GUI utiliza la misma lista desde `theme::SUPPORTED`.
+fn settings_theme_menu() -> bool {
+    println!(
+        "\n{}: {}",
+        i18n::settings_text("current"),
+        theme::label(theme::current().id)
+    );
+    for (index, theme_id) in theme::SUPPORTED.iter().enumerate() {
+        println!("  {}) {}", index + 1, theme::label(theme_id));
+    }
+    let Some(answer) = menu_input(i18n::text("menu.prompt")) else {
+        return false;
+    };
+    let Ok(index) = answer.parse::<usize>() else {
+        return true;
+    };
+    if let Some(theme_id) = theme::SUPPORTED.get(index.saturating_sub(1)) {
+        theme::set(theme_id);
+    }
+    true
+}
+
+/// Menú CLI de idiomas; conserva los 15 locales compartidos con LTerminal.
+fn settings_language_menu() -> bool {
+    println!(
+        "\n{}: {}",
+        i18n::settings_text("current"),
+        i18n::language_label(i18n::current())
+    );
+    for (index, language_id) in i18n::SUPPORTED.iter().enumerate() {
+        println!("  {}) {}", index + 1, i18n::language_label(language_id));
+    }
+    let Some(answer) = menu_input(i18n::text("menu.prompt")) else {
+        return false;
+    };
+    let Ok(index) = answer.parse::<usize>() else {
+        return true;
+    };
+    if let Some(language_id) = i18n::SUPPORTED.get(index.saturating_sub(1)) {
+        i18n::set(language_id);
+    }
+    true
+}
+
+/// Menú CLI del modo de color heredado por la salida de terminal.
+fn settings_color_menu() -> bool {
+    println!("\nauto | always | never");
+    let Some(answer) = menu_input(i18n::text("menu.prompt")) else {
+        return false;
+    };
+    if matches!(
+        answer.to_ascii_lowercase().as_str(),
+        "auto" | "always" | "never"
+    ) {
+        theme::set_color_mode(&answer);
+    }
     true
 }
 
@@ -930,7 +1337,7 @@ fn category_leaf(ctx: &Context, command: &str, args: Option<Vec<String>>) -> boo
     }
 }
 
-fn menu_input(prompt: &str) -> Option<String> {
+pub(crate) fn menu_input(prompt: &str) -> Option<String> {
     print!("{prompt}");
     let _ = io::stdout().flush();
     match read_menu_line() {
@@ -945,7 +1352,7 @@ fn menu_input(prompt: &str) -> Option<String> {
     }
 }
 
-fn menu_yes_no(prompt: &str, default: bool) -> Option<bool> {
+pub(crate) fn menu_yes_no(prompt: &str, default: bool) -> Option<bool> {
     let answer = menu_input(prompt)?;
     if answer.is_empty() {
         return Some(default);
@@ -1020,12 +1427,11 @@ fn menu_games() -> Option<Vec<String>> {
 fn menu_packages() -> Option<Vec<String>> {
     println!("\nInventario de paquetes y almacenes");
     let out = menu_input("Directorio de informe (vacío para el predeterminado): ")?;
-    let out = if out.is_empty() {
-        format!("rust-package-audit-{}", crate::common::timestamp())
+    if out.is_empty() {
+        Some(vec!["--view-report".into()])
     } else {
-        out
-    };
-    Some(vec!["--out".into(), out, "--view-report".into()])
+        Some(vec!["--out".into(), out, "--view-report".into()])
+    }
 }
 
 fn apply_language(raw: &[String]) {
@@ -1230,26 +1636,95 @@ mod tests {
 
     #[test]
     fn pure_queries_do_not_create_state_plans() {
-        for command in ["audit", "packages", "defaults", "report"] {
+        for command in [
+            "audit",
+            "packages",
+            "defaults",
+            "report",
+            "native",
+            "diagnostics",
+            "accounts",
+            "boot",
+        ] {
             assert!(!command_needs_plan(command, &[], false, false), "{command}");
         }
+        assert!(!command_needs_plan(
+            "native",
+            &args(&["containers", "status"]),
+            false,
+            false
+        ));
+        assert!(!command_needs_plan(
+            "native",
+            &args(&["kubernetes", "status"]),
+            false,
+            false
+        ));
+        assert!(!command_needs_plan(
+            "accounts",
+            &args(&["sessions"]),
+            false,
+            false
+        ));
+        assert!(!command_needs_plan(
+            "boot",
+            &args(&["status"]),
+            false,
+            false
+        ));
+        assert!(!command_needs_plan(
+            "prefix",
+            &args(&["list"]),
+            false,
+            false
+        ));
+        assert!(!command_needs_plan("unknown-command", &[], false, false));
+        assert!(command_needs_plan(
+            "native",
+            &args(&["network", "flush-dns"]),
+            false,
+            false
+        ));
+        assert!(command_needs_plan(
+            "native-tools",
+            &args(&["container-remove", "demo"]),
+            false,
+            false
+        ));
     }
 
     #[test]
-    fn submenu_and_simulation_keep_the_transaction_boundary() {
-        assert!(command_needs_plan("storage", &[], false, false));
+    fn menus_do_not_create_transaction_files() {
+        assert!(!command_needs_plan("storage", &[], false, false));
         assert!(command_needs_plan(
+            "storage",
+            &args(&["open-gparted", "--yes"]),
+            false,
+            false
+        ));
+        assert!(!command_needs_plan(
             "actions",
             &args(&["menu"]),
             false,
             false
         ));
-        assert!(command_needs_plan(
+        assert!(!command_needs_plan(
             "automation",
             &args(&["menu"]),
             false,
             false
         ));
+        assert!(!command_needs_plan(
+            "native",
+            &args(&["menu"]),
+            false,
+            false
+        ));
+        assert!(!command_needs_plan("menu-native-tools", &[], false, false));
+    }
+
+    #[test]
+    fn simulation_and_explicit_plan_keep_the_transaction_boundary() {
         assert!(command_needs_plan("defaults", &[], true, false));
         assert!(command_needs_plan("packages", &[], false, true));
     }
@@ -1275,5 +1750,43 @@ mod tests {
             false
         ));
         assert!(command_needs_plan("git", &args(&["pull"]), false, false));
+        assert!(!command_needs_plan(
+            "git",
+            &args(&["gh", "repo"]),
+            false,
+            false
+        ));
+        assert!(command_needs_plan(
+            "git",
+            &args(&["gh", "login"]),
+            false,
+            false
+        ));
+        assert!(!command_needs_plan(
+            "clean",
+            &args(&["--preview"]),
+            false,
+            false
+        ));
+        assert!(!command_needs_plan("clean", &args(&["menu"]), false, false));
+        assert!(command_needs_plan(
+            "clean",
+            &args(&["--package-caches"]),
+            false,
+            false
+        ));
+        assert!(command_needs_plan(
+            "cleanup",
+            &args(&["--package-caches"]),
+            false,
+            false
+        ));
+        assert!(!command_needs_plan("wine", &args(&["list"]), false, false));
+        assert!(command_needs_plan(
+            "wine",
+            &args(&["migrate", "--source", "/tmp/a"]),
+            false,
+            false
+        ));
     }
 }

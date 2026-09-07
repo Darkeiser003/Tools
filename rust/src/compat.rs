@@ -29,6 +29,16 @@ pub fn descriptor_json() -> String {
     } else {
         "\"audit\", \"games\", \"packages\", \"protected-cleanup\", \"wine-prefixes\",\n    \"storage\", \"registry\", \"defaults\", \"system-control\", \"native-diagnostics\", \"native-actions\",\n    \"rollback\", \"dry-run\", \"plans\", \"tsv-export\", \"json-export\""
     };
+    let language_values = crate::i18n::SUPPORTED
+        .iter()
+        .map(|value| format!("\"{}\"", json_escape(value)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let theme_values = crate::theme::SUPPORTED
+        .iter()
+        .map(|value| format!("\"{}\"", json_escape(value)))
+        .collect::<Vec<_>>()
+        .join(", ");
     format!(
         r#"{{
   "schema": "ltools-capabilities-v1",
@@ -65,13 +75,14 @@ pub fn descriptor_json() -> String {
     "language": {{
       "argument": "--lang",
       "environment": ["LTOOLS_LANG", "LTERMINAL_LANGUAGE", "LTERMINAL_LANG", "WINSLIM_TERMINAL_LANGUAGE", "WINSLIM_TERMINAL_LANG"],
+      "values": [{}],
       "fallback": "locale"
     }},
     "theme": {{
       "argument": "--theme",
       "environment": ["LTOOLS_THEME", "LTERMINAL_THEME", "WINSLIM_TERMINAL_THEME", "TERMINAL_THEME"],
       "default": "ocean",
-      "values": ["ocean", "forest", "amber", "nordic", "matrix", "contrast", "slate", "plum", "teal", "crimson", "silver", "violet"],
+      "values": [{}],
       "color_argument": "--color",
       "color_values": ["auto", "always", "never"]
     }}
@@ -111,6 +122,8 @@ pub fn descriptor_json() -> String {
         },
         features,
         terminal_actions_json(platform),
+        language_values,
+        theme_values,
         host_tools_json()
     )
 }
@@ -127,6 +140,16 @@ fn terminal_descriptor_json_for(platform: &str) -> String {
     } else {
         ("ltools", "LTerminal", "lterminal")
     };
+    let language_values = crate::i18n::SUPPORTED
+        .iter()
+        .map(|value| format!("\"{}\"", json_escape(value)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let theme_values = crate::theme::SUPPORTED
+        .iter()
+        .map(|value| format!("\"{}\"", json_escape(value)))
+        .collect::<Vec<_>>()
+        .join(", ");
     format!(
         r#"{{
   "schema": "ltools-terminal-integration-v1",
@@ -159,13 +182,14 @@ fn terminal_descriptor_json_for(platform: &str) -> String {
     "language": {{
       "argument": "--lang",
       "environment": ["LTOOLS_LANG", "LTERMINAL_LANGUAGE", "LTERMINAL_LANG", "WINSLIM_TERMINAL_LANGUAGE", "WINSLIM_TERMINAL_LANG"],
+      "values": [{}],
       "fallback": "locale"
     }},
     "theme": {{
       "argument": "--theme",
       "environment": ["LTOOLS_THEME", "LTERMINAL_THEME", "WINSLIM_TERMINAL_THEME", "TERMINAL_THEME"],
       "default": "ocean",
-      "values": ["ocean", "forest", "amber", "nordic", "matrix", "contrast", "slate", "plum", "teal", "crimson", "silver", "violet"],
+      "values": [{}],
       "color_argument": "--color",
       "color_values": ["auto", "always", "never"]
     }}
@@ -188,6 +212,8 @@ fn terminal_descriptor_json_for(platform: &str) -> String {
         host_id,
         host_product,
         command,
+        language_values,
+        theme_values,
         command,
         terminal_actions_json(platform)
     )
@@ -601,6 +627,146 @@ fn terminal_actions_json(platform: &str) -> String {
         false,
     ));
     actions.push(action_json(
+        "native-tools-menu",
+        "Abrir herramientas operativas",
+        "Herramientas",
+        "Sistema",
+        "Abre los flujos guiados de SSH, SCP, SFTP, ADB, contenedores y Kubernetes.",
+        command,
+        &["native", "tools", "menu"],
+        &[],
+        true,
+        false,
+        "none",
+        true,
+    ));
+    actions.push(action_json(
+        "native-tools-install",
+        "Instalar una dependencia nativa",
+        "Instalar dependencia",
+        "Herramientas",
+        "Permite elegir una dependencia ausente, muestra el paquete y el gestor, y confirma antes de instalarla.",
+        command,
+        &["native", "tools", "install"],
+        &[],
+        true,
+        true,
+        "required",
+        false,
+    ));
+    actions.push(action_json(
+        "native-ssh-connect",
+        "Conectar por SSH",
+        "SSH",
+        "Herramientas",
+        "Conecta a un destino explícito mediante OpenSSH con confirmación.",
+        command,
+        &["native", "tools", "ssh-connect"],
+        &["ssh"],
+        true,
+        false,
+        "required",
+        false,
+    ));
+    actions.push(action_json(
+        "native-adb-install",
+        "Instalar APK con ADB",
+        "ADB install",
+        "Herramientas",
+        "Instala un APK en el dispositivo elegido mediante Android Debug Bridge.",
+        command,
+        &["native", "tools", "adb-install"],
+        &["adb"],
+        true,
+        false,
+        "required",
+        false,
+    ));
+    actions.push(action_json(
+        "native-container-run",
+        "Crear y ejecutar contenedor",
+        "Contenedor run",
+        "Herramientas",
+        "Crea un contenedor con un motor Docker o Podman explícito.",
+        command,
+        &["native", "tools", "container-run"],
+        &["docker"],
+        true,
+        false,
+        "required",
+        false,
+    ));
+    actions.push(action_json(
+        "native-container-compose",
+        "Gestionar Docker Compose / Podman Compose",
+        "Compose",
+        "Herramientas",
+        "Expone las operaciones Compose guiadas: ciclo de vida, servicios, logs, build, run, exec y limpieza.",
+        command,
+        &["native", "tools", "container-compose"],
+        &[],
+        true,
+        true,
+        "required",
+        false,
+    ));
+    actions.push(action_json(
+        "native-container-prune",
+        "Limpiar contenedores detenidos",
+        "Prune de contenedores",
+        "Herramientas",
+        "Elimina solo contenedores detenidos después de una confirmación explícita.",
+        command,
+        &["native", "tools", "container-prune"],
+        &[],
+        true,
+        false,
+        "required",
+        false,
+    ));
+    actions.push(action_json(
+        "native-image-build",
+        "Construir imagen",
+        "Build de imagen",
+        "Herramientas",
+        "Construye una imagen desde un Dockerfile o Containerfile y permite etiquetarla.",
+        command,
+        &["native", "tools", "image-build"],
+        &[],
+        true,
+        false,
+        "required",
+        false,
+    ));
+    actions.push(action_json(
+        "native-system-df",
+        "Consultar uso del motor",
+        "Uso Docker/Podman",
+        "Herramientas",
+        "Muestra el uso de espacio de imágenes, contenedores, volúmenes y cachés.",
+        command,
+        &["native", "tools", "system-df"],
+        &[],
+        false,
+        false,
+        "none",
+        true,
+    ));
+    actions.push(action_json(
+        "native-kubernetes-apply",
+        "Aplicar manifiesto Kubernetes",
+        "Kubernetes apply",
+        "Herramientas",
+        "Aplica un manifiesto explícito al clúster seleccionado.",
+        command,
+        &["native", "tools", "kubernetes-apply"],
+        &["kubectl"],
+        true,
+        false,
+        "required",
+        false,
+    ));
+    actions.push(action_json(
         "package-search",
         "Buscar un paquete en stores disponibles",
         "Buscar paquetes",
@@ -696,6 +862,174 @@ fn terminal_actions_json(platform: &str) -> String {
         true,
         false,
         "required",
+        true,
+    ));
+    actions.push(action_json(
+        "git-log",
+        "Ver historial Git",
+        "Git log",
+        "Git",
+        "Muestra el historial del repositorio sin modificarlo.",
+        command,
+        &["git", "log"],
+        &["git"],
+        false,
+        false,
+        "none",
+        true,
+    ));
+    actions.push(action_json(
+        "git-add",
+        "Preparar cambios Git",
+        "Git add",
+        "Git",
+        "Prepara rutas concretas o todos los cambios tras confirmación explícita.",
+        command,
+        &["git", "add"],
+        &["git"],
+        true,
+        false,
+        "required",
+        false,
+    ));
+    actions.push(action_json(
+        "git-commit",
+        "Crear commit Git",
+        "Git commit",
+        "Git",
+        "Crea un commit con un mensaje proporcionado por el usuario y confirmación explícita.",
+        command,
+        &["git", "commit"],
+        &["git"],
+        true,
+        false,
+        "required",
+        false,
+    ));
+    actions.push(action_json(
+        "git-push",
+        "Publicar cambios Git",
+        "Git push",
+        "Git",
+        "Publica cambios en el remoto elegido; nunca fuerza el push por defecto.",
+        command,
+        &["git", "push"],
+        &["git"],
+        true,
+        false,
+        "required",
+        false,
+    ));
+    actions.push(action_json(
+        "git-branch",
+        "Gestionar ramas Git",
+        "Git branch",
+        "Git",
+        "Lista, crea, cambia o elimina ramas mediante una operación explícita.",
+        command,
+        &["git", "branch"],
+        &["git"],
+        true,
+        false,
+        "required",
+        false,
+    ));
+    actions.push(action_json(
+        "git-tag",
+        "Gestionar tags Git",
+        "Git tag",
+        "Git",
+        "Lista o crea tags y permite publicar uno solo tras confirmación.",
+        command,
+        &["git", "tag"],
+        &["git"],
+        true,
+        false,
+        "required",
+        false,
+    ));
+    actions.push(action_json(
+        "gh-release",
+        "Crear release de GitHub",
+        "GitHub release",
+        "Git",
+        "Crea una release mediante gh, con tag, título y notas explícitos.",
+        command,
+        &["git", "release"],
+        &["git", "gh"],
+        true,
+        false,
+        "required",
+        false,
+    ));
+    actions.push(action_json(
+        "gh-login",
+        "Iniciar sesión en GitHub",
+        "GitHub login",
+        "Git",
+        "Abre el flujo oficial de autenticación de gh; LTools nunca recoge ni almacena credenciales.",
+        command,
+        &["git", "gh", "login"],
+        &["gh"],
+        true,
+        false,
+        "required",
+        true,
+    ));
+    actions.push(action_json(
+        "gh-repo",
+        "Consultar repositorio GitHub",
+        "GitHub repo",
+        "Git",
+        "Consulta los datos del repositorio actual o de owner/repo mediante gh.",
+        command,
+        &["git", "gh", "repo"],
+        &["gh"],
+        false,
+        false,
+        "none",
+        true,
+    ));
+    actions.push(action_json(
+        "gh-prs",
+        "Consultar pull requests GitHub",
+        "GitHub pull requests",
+        "Git",
+        "Lista pull requests del repositorio elegido mediante gh.",
+        command,
+        &["git", "gh", "prs"],
+        &["gh"],
+        false,
+        false,
+        "none",
+        true,
+    ));
+    actions.push(action_json(
+        "gh-releases",
+        "Consultar releases GitHub",
+        "GitHub releases",
+        "Git",
+        "Lista releases del repositorio elegido mediante gh.",
+        command,
+        &["git", "gh", "releases"],
+        &["gh"],
+        false,
+        false,
+        "none",
+        true,
+    ));
+    actions.push(action_json(
+        "gh-auth-status",
+        "Consultar autenticación GitHub",
+        "GitHub auth status",
+        "Git",
+        "Consulta el estado de autenticación de gh sin mostrar ni guardar secretos.",
+        command,
+        &["git", "gh", "auth-status"],
+        &["gh"],
+        false,
+        false,
+        "none",
         true,
     ));
     if platform != "windows" {
@@ -820,6 +1154,9 @@ mod tests {
         assert!(json.contains("lterminal-startup-v1"));
         assert!(json.contains("--open-path"));
         assert!(json.contains("\"host_tools\""));
+        assert!(json.contains("native-tools-install"));
+        assert!(json.contains("native-container-compose"));
+        assert!(json.contains("native-container-prune"));
         let expected_application = if cfg!(windows) {
             "\"application\": \"WinSlim-Tools\""
         } else {
@@ -837,6 +1174,8 @@ mod tests {
         assert!(json.contains("LTERMINAL_LANGUAGE"));
         assert!(json.contains("LTERMINAL_THEME"));
         assert!(json.contains("\"default\": \"ocean\""));
+        assert!(json.contains("\"winslim\""));
+        assert!(json.contains("\"zh\""));
         // El catálogo de herramientas es específico de cada plataforma:
         // Linux expone auditoría/prefijos y Windows herramientas nativas.
         if cfg!(windows) {
@@ -850,13 +1189,14 @@ mod tests {
             assert!(json.contains("\"command\": \"ltools.exe\""));
         } else {
             assert!(json.contains("\"category\":\"audit\""));
+            assert!(json.contains("\"category\":\"utilities\""));
+            assert!(json.contains("\"category\":\"development\""));
             assert!(json.contains("\"install_package\":\"rsync\""));
             assert!(!json.contains("\"category\":\"games\""));
             assert!(!json.contains("\"category\":\"virtualization\""));
-            assert!(!json.contains("\"category\":\"development\""));
             assert!(!json.contains("\"command\":\"wine\""));
             assert!(json.contains("\"command\":\"docker\""));
-            assert!(!json.contains("\"command\":\"git\""));
+            assert!(json.contains("\"command\":\"git\""));
             assert!(json.contains("wine-prefixes"));
             assert!(json.contains("\"command\": \"ltools\""));
         }

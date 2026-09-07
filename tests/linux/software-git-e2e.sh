@@ -72,7 +72,34 @@ if command -v git >/dev/null 2>&1; then
     grep -Fq 'git -C' "$TMP_DIR/git-fetch.out" || die 'git fetch dry-run no mostró su plan'
     PATH="$REAL_PATH" "$BIN" --dry-run git clone https://github.com/example/example.git "$TMP_DIR/clone" --yes > "$TMP_DIR/git-clone.out"
     grep -Fq 'git clone' "$TMP_DIR/git-clone.out" || die 'git clone dry-run no mostró su plan'
-    ok 'Git status, fetch y clone con repositorio temporal y dry-run'
+    PATH="$REAL_PATH" "$BIN" --dry-run git log --repo "$REPO" --limit 5 > "$TMP_DIR/git-log.out"
+    grep -Fq 'fixture' "$TMP_DIR/git-log.out" || die 'git log no devolvió el historial del repositorio'
+    PATH="$REAL_PATH" "$BIN" --dry-run git add --repo "$REPO" --all --yes > "$TMP_DIR/git-add.out"
+    grep -Fq 'git -C' "$TMP_DIR/git-add.out" || die 'git add no mostró su plan'
+    PATH="$REAL_PATH" "$BIN" --dry-run git commit --repo "$REPO" --message 'commit e2e' --all --yes > "$TMP_DIR/git-commit.out"
+    grep -Fq 'git -C' "$TMP_DIR/git-commit.out" || die 'git commit no mostró su plan'
+    PATH="$REAL_PATH" "$BIN" --dry-run git push --repo "$REPO" --remote origin --branch main --yes > "$TMP_DIR/git-push.out"
+    grep -Fq 'git -C' "$TMP_DIR/git-push.out" || die 'git push no mostró su plan'
+    PATH="$REAL_PATH" "$BIN" --dry-run git branch --repo "$REPO" --switch main --yes > "$TMP_DIR/git-branch.out"
+    grep -Fq 'git -C' "$TMP_DIR/git-branch.out" || die 'git branch no mostró su plan'
+    PATH="$REAL_PATH" "$BIN" --dry-run git tag --repo "$REPO" --name e2e-v1 --message 'tag e2e' --yes > "$TMP_DIR/git-tag.out"
+    grep -Fq 'git -C' "$TMP_DIR/git-tag.out" || die 'git tag no mostró su plan'
+    ok 'Git status, log, fetch, clone, add, commit, push, branch y tag con dry-run'
+    if command -v gh >/dev/null 2>&1; then
+        PATH="$REAL_PATH" "$BIN" --dry-run git release --repo example/example --tag e2e-v1 --title 'E2E' --notes 'Prueba' --yes > "$TMP_DIR/gh-release.out"
+        grep -Fq 'gh release create' "$TMP_DIR/gh-release.out" || die 'gh release no mostró su plan'
+        PATH="$REAL_PATH" "$BIN" --dry-run git gh repo --repo example/example > "$TMP_DIR/gh-repo.out"
+        grep -Fq 'gh repo view' "$TMP_DIR/gh-repo.out" || die 'gh repo no mostró su plan'
+        PATH="$REAL_PATH" "$BIN" --dry-run git gh prs --repo example/example > "$TMP_DIR/gh-prs.out"
+        grep -Fq 'gh pr list' "$TMP_DIR/gh-prs.out" || die 'gh prs no mostró su plan'
+        PATH="$REAL_PATH" "$BIN" --dry-run git gh releases --repo example/example > "$TMP_DIR/gh-releases.out"
+        grep -Fq 'gh release list' "$TMP_DIR/gh-releases.out" || die 'gh releases no mostró su plan'
+        PATH="$REAL_PATH" "$BIN" --dry-run git gh auth-status > "$TMP_DIR/gh-auth.out"
+        grep -Fq 'gh auth status' "$TMP_DIR/gh-auth.out" || die 'gh auth status no mostró su plan'
+        ok 'GitHub CLI: release, repo, pull requests, releases y autenticación con dry-run'
+    else
+        printf '  SKIP  gh no está instalado; se omiten las rutas GitHub\n'
+    fi
 else
     printf '  SKIP  Git no está instalado en el entorno de prueba\n'
 fi

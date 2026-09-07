@@ -60,7 +60,9 @@ terminal por sí mismo.
 ## Acciones rápidas
 
 `ltools-terminal.json` se usa exclusivamente para convertir `actions` en
-botones. La terminal debe preferir siempre:
+botones en Linux. En una release multiplataforma combinada, Windows usa
+`ltools-terminal-windows.json`; el mapa `integration.descriptors` indica qué
+variante corresponde a cada plataforma. La terminal debe preferir siempre:
 
 ```text
 executable + args[]
@@ -85,12 +87,21 @@ del backend; los botones de selección no rellenan objetivos sensibles por su
 cuenta. En Windows `C:` queda fuera de la selección predeterminada y en Linux
 `/`, `/boot` y `/home` no se proponen como objetivos automáticos.
 
-El catálogo incluye además las acciones nativas generales:
-`native.network-status`, `native.hardware-status`, `native.power-status`,
-`native.security-status` y `native.dns-flush`. Las cuatro primeras son
-consultas; `native.dns-flush` es mutable y conserva la confirmación del
-backend, incluso al ejecutarse desde un botón. Los frontends pueden mostrar
-un resumen propio, pero deben conservar la salida completa en el panel de
+El catálogo incluye además acciones nativas generales y operativas:
+native.network-status, native.hardware-status, native.power-status,
+native.security-status, native.dns-flush, native.tools-install,
+native.ssh-connect,
+native.scp-copy, native.sftp, native.adb-install, native.adb-shell,
+native.adb-push, native.adb-pull, native.adb-reboot, native.container-pull,
+native.container-run, native.container-start, native.container-stop,
+native.container-restart, native.container-remove, native.container-logs,
+native.container-exec, native.kubernetes-apply, native.kubernetes-delete,
+native.kubernetes-scale, native.kubernetes-rollout y
+native.kubernetes-port-forward. Las consultas no modifican estado; las
+operaciones mutables conservan la confirmación del backend, incluso al
+ejecutarse desde un botón. Cada acción declara sus argumentos como args[]
+separados y exige objetivos explícitos. Los frontends pueden mostrar un
+resumen propio, pero deben conservar la salida completa en el panel de
 terminal y no inventar objetivos ni comandos.
 
 El catálogo también puede publicar aliases, como tdisk status, tsvc list,
@@ -117,7 +128,9 @@ forma explícita.
 La CLI admite también `--lang`, `--theme`, `--color auto|always|never` y
 `--no-color`. El host debe transmitirlos como argumentos separados o mediante
 el entorno, nunca concatenarlos en una cadena de shell. La GUI independiente
-usa la paleta oscura `ocean` y solo cambia con `LTOOLS_GUI_THEME`.
+usa por defecto la paleta oscura `ocean`, de la misma familia visual que la
+terminal, ofrece selección de tema, idioma y visibilidad de categorías, y
+guarda una elección manual con prioridad sobre el contexto recibido del host.
 
 La integración generada identifica automáticamente:
 

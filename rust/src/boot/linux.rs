@@ -1,5 +1,6 @@
 use crate::common::{command_exists, Context};
 use std::io::{self, Write};
+use std::path::Path;
 use std::process::Command;
 
 pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
@@ -115,5 +116,3 @@ fn mount_state(path: &str) -> &'static str {
         "no presente"
     }
 }
-
-use std::path::Path;

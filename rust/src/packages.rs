@@ -64,9 +64,12 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
             _ => {}
         }
     }
-    let out = out.unwrap_or_else(|| {
-        PathBuf::from(format!("rust-package-audit-{}", crate::common::timestamp()))
-    });
+    let managed_output = out.is_none();
+    let out = out.unwrap_or_else(|| crate::common::default_report_dir(&ctx.home, "packages"));
+    if managed_output {
+        crate::common::reset_default_report_dir(&out)
+            .map_err(|e| format!("no se pudo preparar el informe: {e}"))?;
+    }
     fs::create_dir_all(&out).map_err(|e| e.to_string())?;
     let mut inventory = File::create(out.join("inventory.tsv")).map_err(|e| e.to_string())?;
     writeln!(inventory, "kind\tscope\tmanager\tdata\tpath\tbytes").map_err(|e| e.to_string())?;
@@ -206,16 +209,23 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
         "Inventario principal: {}",
         out.join("inventory.tsv").display()
     );
-    if let Some(plan) = &ctx.plan {
-        plan.record(
-            "package-audit",
-            &out,
-            "executed",
-            true,
-            "solo lectura",
-            "inventory",
-        )
-        .map_err(|e| e.to_string())?;
+    if ctx.dry_run
+        || ctx
+            .plan
+            .as_ref()
+            .is_some_and(crate::common::Plan::is_explicit)
+    {
+        if let Some(plan) = &ctx.plan {
+            plan.record(
+                "package-audit",
+                &out,
+                if ctx.dry_run { "planned" } else { "observed" },
+                false,
+                "solo lectura",
+                "inventory",
+            )
+            .map_err(|e| e.to_string())?;
+        }
     }
     if view_report {
         crate::report::interactive(&out)?;

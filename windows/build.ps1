@@ -44,7 +44,7 @@ $StatePath = Join-Path $OutputDir ".build-state.json"
 $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $SigningPrivateKeyFile = $null
 $SigningPublicKeyFile = $null
-$SigningRequired = $false
+$SigningRequired = $true
 
 function Show-Help {
     @"
@@ -61,8 +61,8 @@ Uso: powershell -ExecutionPolicy Bypass -File windows\build.ps1 [opciones]
   -ReleaseOutput RUTA
                   Carpeta canónica de publicación (por defecto ..\release).
   -Log FICHERO    Fichero de log; -NoLog desactiva logs.
-  -RequireSigning Exige claves Ed25519 y firma válida para release.
-  -AllowUnsigned  Permite una release local sin firma.
+  -RequireSigning Exige claves Ed25519 y firma válida para release (predeterminado).
+  -AllowUnsigned  Excepción explícita para una release local sin firma.
   -NonInteractive No solicita confirmaciones.
 
 Salida: ltools-VERSION-windows-ARQUITECTURA.zip, perfiles exe/CLI y una carpeta
@@ -180,7 +180,13 @@ function Initialize-Signing {
     if ($env:LTOOLS_UPDATE_PUBLIC_KEY_FILE) { $script:SigningPublicKeyFile = $env:LTOOLS_UPDATE_PUBLIC_KEY_FILE }
     elseif ($env:LTERMINAL_UPDATE_PUBLIC_KEY_FILE) { $script:SigningPublicKeyFile = $env:LTERMINAL_UPDATE_PUBLIC_KEY_FILE }
     elseif ($configHome) { $script:SigningPublicKeyFile = Join-Path $configHome 'lterminal\release-signing-public.hex' }
-    $script:SigningRequired = $RequireSigning -or (($env:LTOOLS_REQUIRE_SIGNING -match '^(1|true|yes)$')) -or (($env:LTERMINAL_REQUIRE_SIGNING -match '^(1|true|yes)$')) -or (($env:CI -match '^(1|true|yes)$'))
+    # Las releases son firmadas por defecto. Los switches/variables de
+    # exigencia se conservan como compatibilidad explícita; la única vía
+    # normal para una build local sin firma es -AllowUnsigned.
+    $script:SigningRequired = $true
+    if ($RequireSigning -or ($env:LTOOLS_REQUIRE_SIGNING -match '^(1|true|yes)$') -or ($env:LTERMINAL_REQUIRE_SIGNING -match '^(1|true|yes)$') -or ($env:CI -match '^(1|true|yes)$')) {
+        $script:SigningRequired = $true
+    }
     if ($AllowUnsigned -or ($env:LTOOLS_ALLOW_UNSIGNED -match '^(1|true|yes)$')) { $script:SigningRequired = $false }
 }
 function Invoke-ReleaseSigning {
@@ -329,10 +335,14 @@ if ($needPackage -and -not $NoPackage) {
     if ($LASTEXITCODE -ne 0) { throw "No se pudo generar ltools-capabilities.json: $capabilities" }
     $capabilities | Set-Content -Encoding UTF8 (Join-Path $portable 'ltools-capabilities.json')
     Copy-Item -LiteralPath (Join-Path $portable 'ltools-capabilities.json') -Destination $OutputDir -Force
+    Copy-Item -LiteralPath (Join-Path $portable 'ltools-capabilities.json') -Destination (Join-Path $portable 'ltools-capabilities-windows.json') -Force
+    Copy-Item -LiteralPath (Join-Path $portable 'ltools-capabilities.json') -Destination (Join-Path $OutputDir 'ltools-capabilities-windows.json') -Force
     $terminalDescriptor = & $Binary capabilities --format terminal-json 2>&1
     if ($LASTEXITCODE -ne 0) { throw "No se pudo generar ltools-terminal.json: $terminalDescriptor" }
     $terminalDescriptor | Set-Content -Encoding UTF8 (Join-Path $portable 'ltools-terminal.json')
     Copy-Item -LiteralPath (Join-Path $portable 'ltools-terminal.json') -Destination $OutputDir -Force
+    Copy-Item -LiteralPath (Join-Path $portable 'ltools-terminal.json') -Destination (Join-Path $portable 'ltools-terminal-windows.json') -Force
+    Copy-Item -LiteralPath (Join-Path $portable 'ltools-terminal.json') -Destination (Join-Path $OutputDir 'ltools-terminal-windows.json') -Force
     Copy-Item -LiteralPath (Join-Path $Root 'appimage\ltools-capabilities.schema.json') -Destination $portable
     Copy-Item -LiteralPath (Join-Path $Root 'appimage\ltools-terminal.schema.json') -Destination $portable
     Copy-Item -LiteralPath (Join-Path $Root 'appimage\ltools-terminal.schema.json') -Destination $OutputDir -Force
@@ -368,7 +378,9 @@ if ($needPackage -and -not $NoPackage) {
         $CliExecutableArtifact,
         $zip,
         (Join-Path $OutputDir 'ltools-capabilities.json'),
+        (Join-Path $OutputDir 'ltools-capabilities-windows.json'),
         (Join-Path $OutputDir 'ltools-terminal.json'),
+        (Join-Path $OutputDir 'ltools-terminal-windows.json'),
         (Join-Path $OutputDir 'ltools-terminal.schema.json')
     )) {
         if (Test-Path -LiteralPath $file -PathType Leaf) {

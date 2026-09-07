@@ -1,5 +1,6 @@
 use crate::common::{ask, command_exists, run_with_sudo, Context};
 use std::io::{self, Write};
+use std::path::Path;
 use std::process::Command;
 
 pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
@@ -84,6 +85,13 @@ fn inspect(user: &str) -> Result<(), String> {
 fn mutate(ctx: &Context, user: &str, description: &str, command: &[&str]) -> Result<(), String> {
     let user = valid_name(user)?;
     if !ctx.dry_run && !ask(&format!("¿Quieres {description} '{user}'?")) {
+        record(
+            ctx,
+            "account-mutation",
+            user,
+            "cancelled",
+            &command.join(" "),
+        )?;
         println!("Operación cancelada; no se modificó ninguna cuenta.");
         return Ok(());
     }
@@ -94,6 +102,19 @@ fn mutate(ctx: &Context, user: &str, description: &str, command: &[&str]) -> Res
         .collect::<Vec<_>>();
     args.push(user.to_string());
     let ok = run_with_sudo(command[0], &args, ctx.dry_run).map_err(|e| e.to_string())?;
+    record(
+        ctx,
+        "account-mutation",
+        user,
+        if ctx.dry_run {
+            "planned"
+        } else if ok {
+            "executed"
+        } else {
+            "failed"
+        },
+        &args.join(" "),
+    )?;
     if !ok {
         return Err(format!(
             "{} no pudo completar la operación sobre {user}",
@@ -113,6 +134,7 @@ fn group_mutation(ctx: &Context, raw: &str, add: bool) -> Result<(), String> {
             user
         ))
     {
+        record(ctx, "account-group-mutation", raw, "cancelled", "usermod")?;
         return Ok(());
     }
     let args = if add {
@@ -120,8 +142,42 @@ fn group_mutation(ctx: &Context, raw: &str, add: bool) -> Result<(), String> {
     } else {
         vec!["-d".into(), group.into(), user.into()]
     };
-    if !run_with_sudo("usermod", &args, ctx.dry_run).map_err(|e| e.to_string())? {
+    let ok = run_with_sudo("usermod", &args, ctx.dry_run).map_err(|e| e.to_string())?;
+    record(
+        ctx,
+        "account-group-mutation",
+        raw,
+        if ctx.dry_run {
+            "planned"
+        } else if ok {
+            "executed"
+        } else {
+            "failed"
+        },
+        &args.join(" "),
+    )?;
+    if !ok {
         return Err("usermod no pudo modificar el grupo".into());
+    }
+    Ok(())
+}
+fn record(
+    ctx: &Context,
+    operation: &str,
+    target: &str,
+    status: &str,
+    data: &str,
+) -> Result<(), String> {
+    if let Some(plan) = &ctx.plan {
+        plan.record(
+            operation,
+            Path::new(target),
+            status,
+            false,
+            data,
+            "accounts",
+        )
+        .map_err(|error| error.to_string())?;
     }
     Ok(())
 }

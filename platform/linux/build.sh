@@ -50,7 +50,9 @@ FUSE_REQUIRED=0
 NO_RUN=1
 OFFLINE=0
 NON_INTERACTIVE=0
-WINDOWS_WINE=0
+# La validación Windows bajo Wine/Proton forma parte del build completo por
+# defecto. Puede desactivarse explícitamente con --no-windows-wine o con "n".
+WINDOWS_WINE=1
 WINDOWS_TARGET="${LTOOLS_WINDOWS_TARGET:-x86_64-pc-windows-gnu}"
 WINDOWS_WINE_RUNNER="${LTOOLS_WINE_RUNNER:-}"
 WINDOWS_WINE_PREFIX="${LTOOLS_WINE_PREFIX:-}"
@@ -69,7 +71,9 @@ WINDOWS_WINE_ARTIFACT_DIR=""
 WINDOWS_WINE_ARTIFACT=""
 WINDOWS_WINE_CLI_ARTIFACT=""
 WINDOWS_WINE_LOG=""
-SIGNING_REQUIRED=0
+# Las publicaciones se firman por defecto. La excepción local debe ser
+# explícita mediante --allow-unsigned o LTOOLS_ALLOW_UNSIGNED=1.
+SIGNING_REQUIRED=1
 SIGNING_PRIVATE_KEY_FILE=""
 SIGNING_PUBLIC_KEY_FILE=""
 STEP_STARTED=$SECONDS
@@ -203,8 +207,8 @@ Opciones:
   --require-fuse       Falla si el equipo no puede montar AppImages con FUSE.
   --output DIR         Directorio de salida (por defecto: ./dist).
   --release-dir DIR    Carpeta canónica de publicación (por defecto: ./release).
-  --require-signing    Exige claves Ed25519 y una firma válida para release/.
-  --allow-unsigned     Permite una release local sin firma aunque CI esté activo.
+  --require-signing    Exige claves Ed25519 y una firma válida para release/ (por defecto).
+  --allow-unsigned     Excepción explícita: permite una release local sin firma.
   --jobs N             Paralelismo de Cargo (por defecto: 2).
   --log FICHERO        Guarda la transcripción completa en esta ruta.
   --no-log             Desactiva el log persistente y la tabla de tiempos.
@@ -215,8 +219,9 @@ Opciones:
 
 La build AppImage genera un perfil terminal, un perfil CLI y
 ltools-terminal.json para integradores de terminal, además de
-ltools-release.json, SHA256SUMS.txt y su firma Ed25519 separada cuando hay
-material de firma disponible.
+ltools-release.json, SHA256SUMS.txt y su firma Ed25519 separada. La firma
+requiere por defecto las claves de ~/.config/lterminal/; usa --allow-unsigned
+solo para una build local que no vaya a publicarse.
 
 Sin opciones, en una terminal interactiva, permite elegir limpieza, perfil y
 validaciones. En CI o con cualquier opción explícita es no interactivo.
@@ -589,11 +594,29 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
         cp -a -- "$ROOT_DIR/$source" "$PACKAGE_DIR/$source"
     }
 
+    copy_launcher() {
+        local name="$1"
+        local fallback="${name}.sh"
+        local source
+        if [[ -e "$ROOT_DIR/$name" ]]; then
+            source="$name"
+        elif [[ -e "$ROOT_DIR/$fallback" ]]; then
+            # Los nombres cortos son la interfaz publicada. El fallback evita
+            # que un checkout limpio dependa de wrappers no versionados.
+            source="$fallback"
+        else
+            die "falta el lanzador de distribución: $name (ni $fallback)"
+        fi
+        mkdir -p -- "$(dirname -- "$PACKAGE_DIR/$name")"
+        cp -a -- "$ROOT_DIR/$source" "$PACKAGE_DIR/$name"
+    }
+
     # El paquete runtime solo necesita la fachada compatible; los builders y
     # wrappers de desarrollo pertenecen al repositorio, no a la distribución.
-    for file in ltools.sh ltools-cli.sh; do
-        copy_file "$file"
-    done
+    copy_launcher ltools
+    copy_launcher ltools-cli
+    copy_file ltools.sh
+    copy_file ltools-cli.sh
     cp -a -- "$BIN" "$PACKAGE_DIR/rust/target/release/ltools"
     copy_file README.md
     # Descriptor machine-readable generado por el mismo backend que se
@@ -647,7 +670,8 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
     cp -a -- "$ROOT_DIR/tests/contracts.sh" "$PACKAGE_DIR/tests/"
     cp -a -- "$ROOT_DIR/tests/encoding.sh" "$PACKAGE_DIR/tests/"
     cp -a -- "$ROOT_DIR/tests/linux"/*.sh "$PACKAGE_DIR/tests/linux/"
-    chmod +x "$PACKAGE_DIR"/*.sh "$PACKAGE_DIR/tests"/*.sh "$PACKAGE_DIR/tests/linux"/*.sh \
+    chmod +x "$PACKAGE_DIR"/ltools "$PACKAGE_DIR"/ltools-cli "$PACKAGE_DIR"/*.sh \
+        "$PACKAGE_DIR/tests"/*.sh "$PACKAGE_DIR/tests/linux"/*.sh \
         "$PACKAGE_DIR/rust/target/release/ltools"
     cat > "$PACKAGE_DIR/BUILD-INFO.txt" <<EOF
 LTools $VERSION
@@ -732,8 +756,11 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
     release_dir_real="$(readlink -f -- "$RELEASE_DIR" 2>/dev/null || realpath -- "$RELEASE_DIR")"
     if [[ "$release_output_real" != "$release_dir_real" ]]; then
         find "$RELEASE_DIR" -maxdepth 1 -type f \
-            \( -name "ltools-$VERSION-*" -o -name 'ltools-*.json' \
-            -o -name 'ltools-*.schema.json' -o -name 'run-ltools.sh' \) -delete
+            \( -name 'ltools-*.AppImage' -o -name 'ltools-*.tar.gz' \
+            -o -name 'ltools-*.zip' -o -name 'ltools-*.exe' \
+            -o -name 'ltools-*.json' -o -name 'ltools-*.schema.json' \
+            -o -name 'run-ltools.sh' -o -name 'SHA256SUMS.txt' \
+            -o -name 'SHA256SUMS.txt.sig' \) -delete
     fi
 
     copy_to_release() {
@@ -758,13 +785,16 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
         while IFS= read -r -d '' file; do copy_to_release "$file"; done < <(
             find "$ROOT_DIR/dist/windows" -maxdepth 1 -type f \
                 \( -name "ltools-$VERSION-windows-*" -o -name 'ltools-capabilities.json' \
-                -o -name 'ltools-terminal.json' -o -name 'ltools-*.schema.json' \) -print0
+                -o -name 'ltools-terminal.json' -o -name 'ltools-capabilities-windows.json' \
+                -o -name 'ltools-terminal-windows.json' -o -name 'ltools-*.schema.json' \) -print0
         )
     fi
     if [[ "$WINDOWS_WINE" -eq 1 && -d "$WINDOWS_WINE_ARTIFACT_DIR" ]]; then
         while IFS= read -r -d '' file; do copy_to_release "$file"; done < <(
             find "$WINDOWS_WINE_ARTIFACT_DIR" -maxdepth 1 -type f \
-                \( -name "ltools-$VERSION-windows-*.exe" \) -print0
+                \( -name "ltools-$VERSION-windows-*.exe" \
+                -o -name 'ltools-capabilities-windows.json' \
+                -o -name 'ltools-terminal-windows.json' \) -print0
         )
         ok 'perfiles Windows GUI y CLI bajo Wine publicados en release/'
     fi

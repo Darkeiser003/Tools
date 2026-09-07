@@ -22,10 +22,19 @@
     "license": { "type": "string", "minLength": 1 },
     "integration": {
       "type": "object",
-      "required": ["optional", "descriptor", "hosts", "standalone_releases_require_it"],
+      "required": ["optional", "descriptor", "descriptors", "hosts", "standalone_releases_require_it"],
       "properties": {
         "optional": { "const": true },
         "descriptor": { "const": "ltools-terminal.json" },
+        "descriptors": {
+          "type": "object",
+          "required": ["linux", "windows"],
+          "properties": {
+            "linux": { "const": "ltools-terminal.json" },
+            "windows": { "const": "ltools-terminal-windows.json" }
+          },
+          "additionalProperties": false
+        },
         "hosts": { "const": ["LTerminal", "WinSlim Terminal"] },
         "standalone_releases_require_it": { "const": false }
       },

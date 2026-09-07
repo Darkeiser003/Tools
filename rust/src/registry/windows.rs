@@ -1,4 +1,4 @@
-use crate::common::{command_exists, Context};
+use crate::common::{ask, command_exists, Context};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -42,11 +42,50 @@ fn export(ctx: &Context, args: &[String]) -> Result<(), String> {
     let output = option(args, "--out")
         .map(PathBuf::from)
         .unwrap_or_else(|| ctx.home.join("Documents/LTools/registry-backup.reg"));
+    if ctx.dry_run {
+        println!(
+            "Simulación: se exportaría {} a {}; no se modificaría el Registro ni el sistema de archivos.",
+            key,
+            output.display()
+        );
+        if let Some(plan) = &ctx.plan {
+            plan.record(
+                "registry-export",
+                &output,
+                "planned",
+                false,
+                &key,
+                "dry-run",
+            )
+            .map_err(|error| error.to_string())?;
+        }
+        return Ok(());
+    }
+    if output.exists()
+        && !ask(&format!(
+            "El archivo {} ya existe. ¿Sobrescribirlo?",
+            output.display()
+        ))
+    {
+        println!("Exportación cancelada; no se sobrescribió ningún archivo.");
+        return Ok(());
+    }
     if let Some(parent) = output.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
     let output_text = output.to_string_lossy().to_string();
     run_reg(&["export", &key, &output_text, "/y"])?;
+    if let Some(plan) = &ctx.plan {
+        plan.record(
+            "registry-export",
+            &output,
+            "executed",
+            false,
+            &key,
+            "backup",
+        )
+        .map_err(|error| error.to_string())?;
+    }
     println!("Respaldo exportado: {}", output.display());
     Ok(())
 }

@@ -13,6 +13,10 @@
   "integration": {
     "optional": true,
     "descriptor": "ltools-terminal.json",
+    "descriptors": {
+      "linux": "ltools-terminal.json",
+      "windows": "ltools-terminal-windows.json"
+    },
     "hosts": ["LTerminal", "WinSlim Terminal"],
     "standalone_releases_require_it": false
   },

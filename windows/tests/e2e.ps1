@@ -82,6 +82,18 @@ try {
     if ($storageStatus -notmatch 'Almacenamiento Windows') { throw 'El estado de almacenamiento Windows falló.' }
     $storagePartitions = Run @('storage', 'partitions')
     if ($storagePartitions -notmatch 'Discos y particiones Windows') { throw 'El inventario de particiones Windows falló.' }
+    $nativeTools = Run @('native', 'tools')
+    foreach ($toolName in @('ssh', 'scp', 'sftp', 'adb', 'docker', 'kubectl')) {
+        if ($nativeTools -notmatch [regex]::Escape($toolName)) {
+            throw "El inventario Windows de herramientas nativas no mostró $toolName."
+        }
+    }
+    $diskGuide = Run @('storage', 'guide')
+    foreach ($guideMarker in @('list disk', 'select disk', 'detail disk', 'clean all', 'C:')) {
+        if ($diskGuide -notmatch [regex]::Escape($guideMarker)) {
+            throw "La guía DiskPart Windows no contiene el paso protegido esperado: $guideMarker"
+        }
+    }
     $registryOutput = Run @('registry', 'status')
     if ($registryOutput -notmatch 'Registro Windows') { throw 'El módulo Windows de registro falló.' }
     $storesOutput = Run @('software', 'stores')

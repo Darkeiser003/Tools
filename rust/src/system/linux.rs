@@ -778,11 +778,8 @@ fn export_report(ctx: &Context, args: &[String]) -> Result<(), String> {
     let path = option_value(args, "--out")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| {
-            ctx.home.join(".local/state/ltools/reports").join(format!(
-                "system-{}.{}",
-                crate::common::timestamp(),
-                format
-            ))
+            crate::common::default_report_dir(ctx.home.as_path(), "system")
+                .join(format!("services.{format}"))
         });
     let rows = if requested_scope == "both" {
         let mut rows = query_services(false)?;

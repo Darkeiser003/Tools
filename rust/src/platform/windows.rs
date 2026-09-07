@@ -41,6 +41,17 @@ pub fn command_exists(name: &str) -> bool {
 }
 
 pub fn host_tool_available(tool: &super::HostTool) -> bool {
+    // Wine puede exponer nombres de Windows integrados aunque no tenga
+    // PowerShell real. Intentar cada cmdlet con `Get-Command` en ese entorno
+    // puede quedar esperando indefinidamente; el ejecutable nativo debe
+    // informar esos cmdlets como no disponibles y conservar la validación
+    // completa en Windows real.
+    if running_under_wine() && (tool.command.starts_with("Get-") || tool.id == "powershell") {
+        return false;
+    }
+    if tool.id == "nsudo" {
+        return nsudo_path().is_some();
+    }
     if tool.id == "docker-compose" {
         return command_exists("docker-compose")
             || (command_exists("docker")
@@ -90,7 +101,27 @@ pub fn host_tool_available(tool: &super::HostTool) -> bool {
 }
 
 pub fn host_tool_version(tool: &super::HostTool) -> Option<String> {
+    // Los ejecutables integrados de Wine (por ejemplo sc.exe) pueden no
+    // terminar al recibir una opción de versión. El contrato bajo Wine se
+    // valida por disponibilidad y esquema; las versiones se consultan en
+    // Windows nativo, donde las herramientas sí tienen su comportamiento
+    // documentado.
+    if running_under_wine() {
+        return None;
+    }
     if !host_tool_available(tool) || tool.command.starts_with("Get-") {
+        return None;
+    }
+    if matches!(
+        tool.id,
+        "diskmgmt.msc"
+            | "lusrmgr.msc"
+            | "services.msc"
+            | "eventvwr.msc"
+            | "taskmgr.exe"
+            | "perfmon.exe"
+            | "msinfo32.exe"
+    ) {
         return None;
     }
     let default_args: &[&str] = match tool.id {
@@ -108,7 +139,7 @@ pub fn host_tool_version(tool: &super::HostTool) -> Option<String> {
         output
             .lines()
             .find(|line| !line.trim().is_empty())
-            .map(|line| line.trim().chars().take(240).collect())
+            .map(super::sanitize_version)
     })
 }
 
@@ -119,6 +150,24 @@ pub fn run_with_privilege(program: &str, args: &[String], dry_run: bool) -> io::
     }
     if is_elevated() {
         return Ok(Command::new(program).args(args).status()?.success());
+    }
+    // NSudo nunca se usa silenciosamente. Solo se activa desde la superficie
+    // WinSlim después de que el usuario lo haya elegido para esta sesión.
+    if std::env::var_os("LTOOLS_USE_NSUDO").is_some_and(|value| value == "1") {
+        if let Some(nsudo) = nsudo_path() {
+            let mut nsudo_args = vec![
+                "-U:E".into(),
+                "-P:E".into(),
+                "-Wait".into(),
+                "-UseCurrentConsole".into(),
+                program.to_string(),
+            ];
+            nsudo_args.extend_from_slice(args);
+            println!("  > {} {}", nsudo.display(), nsudo_args.join(" "));
+            return Ok(Command::new(nsudo).args(nsudo_args).status()?.success());
+        }
+        eprintln!("Se solicitó NSudo para esta sesión, pero no se encontró en WinSlim ni en PATH.");
+        return Ok(false);
     }
     let shell = if command_exists("powershell") {
         "powershell"
@@ -249,6 +298,152 @@ static HOST_TOOLS: &[super::HostTool] = &[
         false,
         false,
         "",
+    ),
+    tool(
+        "ssh",
+        "remote",
+        "OpenSSH-remote-shell-client",
+        false,
+        true,
+        "OpenSSH.Client",
+    ),
+    tool(
+        "scp",
+        "remote",
+        "OpenSSH-remote-copy-client",
+        false,
+        true,
+        "OpenSSH.Client",
+    ),
+    tool(
+        "sftp",
+        "remote",
+        "OpenSSH-file-transfer-client",
+        false,
+        true,
+        "OpenSSH.Client",
+    ),
+    tool("git", "git", "Git-version-control", false, true, "Git.Git"),
+    tool("gh", "git", "GitHub-CLI", false, true, "GitHub.cli"),
+    tool(
+        "adb",
+        "mobile",
+        "Android-device-bridge",
+        false,
+        true,
+        "Android.PlatformTools",
+    ),
+    tool(
+        "ssh-keygen",
+        "remote",
+        "OpenSSH-key-generation",
+        false,
+        true,
+        "OpenSSH.Client",
+    ),
+    tool(
+        "ssh-keyscan",
+        "remote",
+        "OpenSSH-host-key-discovery",
+        false,
+        true,
+        "OpenSSH.Client",
+    ),
+    tool(
+        "curl.exe",
+        "utilities",
+        "HTTP-and-API-client",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "tar.exe",
+        "utilities",
+        "archive-management",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "where.exe",
+        "utilities",
+        "executable-discovery",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "certutil.exe",
+        "security",
+        "certificate-and-hash-tools",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "nslookup.exe",
+        "network",
+        "DNS-query-client",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "tracert.exe",
+        "network",
+        "route-diagnostics",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "robocopy.exe",
+        "utilities",
+        "resilient-file-copy",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "wsl.exe",
+        "compatibility",
+        "Windows-Subsystem-for-Linux",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "dism.exe",
+        "system",
+        "Windows-image-and-feature-management",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "bcdedit.exe",
+        "boot",
+        "Windows-boot-configuration",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "msiexec.exe",
+        "system",
+        "Windows-installer",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "7z.exe",
+        "utilities",
+        "archive-management",
+        false,
+        true,
+        "7zip.7zip",
     ),
     tool(
         "powercfg",
@@ -556,6 +751,321 @@ static HOST_TOOLS: &[super::HostTool] = &[
         false,
         "",
     ),
+    tool(
+        "nsudo",
+        "winslim",
+        "elevated-user-script-launcher",
+        false,
+        false,
+        "",
+    ),
+    // Diagnóstico, reparación y recuperación nativos de Windows. Las
+    // herramientas integradas se detectan sin instalar nada; las acciones
+    // mutables se mantienen en flujos explícitos y con elevación.
+    tool(
+        "chkdsk.exe",
+        "storage",
+        "filesystem-check-and-repair",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "fsutil.exe",
+        "storage",
+        "filesystem-and-volume-administration",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "diskshadow.exe",
+        "storage",
+        "volume-shadow-copy-management",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "manage-bde.exe",
+        "storage",
+        "BitLocker-management",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "repair-bde.exe",
+        "recovery",
+        "BitLocker-data-recovery",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "cipher.exe",
+        "security",
+        "NTFS-encryption-management",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "defrag.exe",
+        "storage",
+        "volume-optimization",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "sfc.exe",
+        "system",
+        "Windows-system-file-checker",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "reagentc.exe",
+        "recovery",
+        "Windows-recovery-environment",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "pnputil.exe",
+        "hardware",
+        "driver-package-management",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "driverquery.exe",
+        "hardware",
+        "installed-driver-inventory",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "systeminfo.exe",
+        "system",
+        "Windows-system-inventory",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "msinfo32.exe",
+        "system",
+        "graphical-system-information",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "perfmon.exe",
+        "system",
+        "performance-monitor",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "schtasks.exe",
+        "system",
+        "scheduled-task-management",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "gpupdate.exe",
+        "system",
+        "Group-Policy-refresh",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "gpresult.exe",
+        "system",
+        "Group-Policy-report",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "services.msc",
+        "system",
+        "graphical-service-manager",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "eventvwr.msc",
+        "system",
+        "graphical-event-viewer",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "taskmgr.exe",
+        "system",
+        "graphical-process-manager",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "netsh.exe",
+        "network",
+        "Windows-network-configuration",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "arp.exe",
+        "network",
+        "ARP-cache-management",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "pathping.exe",
+        "network",
+        "path-latency-and-loss-diagnostics",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "getmac.exe",
+        "network",
+        "network-adapter-MAC-inventory",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "hostname.exe",
+        "network",
+        "host-name-query",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "telnet.exe",
+        "network",
+        "TCP-connectivity-diagnostic",
+        false,
+        true,
+        "Telnet.Client",
+    ),
+    tool(
+        "icacls.exe",
+        "security",
+        "NTFS-permission-management",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "takeown.exe",
+        "security",
+        "file-ownership-management",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "auditpol.exe",
+        "security",
+        "Windows-audit-policy-management",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "secedit.exe",
+        "security",
+        "Windows-security-policy-management",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "vssadmin.exe",
+        "backup",
+        "volume-shadow-copy-administration",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "wbadmin.exe",
+        "backup",
+        "Windows-backup-administration",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "runas.exe",
+        "security",
+        "alternate-user-process-launch",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "python.exe",
+        "development",
+        "Python-runtime",
+        false,
+        true,
+        "Python.Python.3.12",
+    ),
+    tool(
+        "node.exe",
+        "development",
+        "JavaScript-runtime",
+        false,
+        true,
+        "OpenJS.NodeJS.LTS",
+    ),
+    tool(
+        "npm.cmd",
+        "development",
+        "JavaScript-package-manager",
+        false,
+        true,
+        "OpenJS.NodeJS",
+    ),
+    tool(
+        "java.exe",
+        "development",
+        "Java-runtime",
+        false,
+        true,
+        "EclipseAdoptium.Temurin.21.JDK",
+    ),
+    tool(
+        "dotnet.exe",
+        "development",
+        ".NET-runtime-and-SDK",
+        false,
+        true,
+        "Microsoft.DotNet.SDK.8",
+    ),
 ];
 
 const fn tool(
@@ -593,6 +1103,46 @@ pub fn install_tool(id: &str, dry_run: bool) -> Result<bool, String> {
         );
         return Ok(false);
     }
+    if matches!(id, "ssh" | "scp" | "sftp" | "ssh-keygen" | "ssh-keyscan") {
+        let Some(shell) = ["powershell", "pwsh"]
+            .into_iter()
+            .find(|candidate| command_exists(candidate))
+        else {
+            println!("No se encontró PowerShell para habilitar OpenSSH Client.");
+            return Ok(false);
+        };
+        let args = [
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0",
+        ];
+        println!(
+            "Falta la dependencia OpenSSH Client para SSH/SCP/SFTP. Se propone habilitarla mediante {}.",
+            shell
+        );
+        let question = crate::common::dependency_confirmation(
+            "OpenSSH Client",
+            "SSH, SCP y SFTP",
+            "OpenSSH.Client~~~~0.0.1.0",
+            "Windows",
+            &format!(
+                "{} -Command Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0",
+                shell
+            ),
+        );
+        if !crate::common::ask(&question) {
+            println!(
+                "Instalación cancelada para la dependencia «OpenSSH Client»; no se modifica el sistema."
+            );
+            return Ok(false);
+        }
+        let ok = crate::platform::run_with_privilege(shell, &args.map(str::to_owned), dry_run)
+            .map_err(|error| error.to_string())?;
+        return Ok(ok && (dry_run || host_tool_available(tool)));
+    }
     let manager = ["winget", "choco", "scoop"]
         .into_iter()
         .find(|manager| command_exists(manager));
@@ -622,6 +1172,14 @@ pub fn install_tool(id: &str, dry_run: bool) -> Result<bool, String> {
         "scoop" => vec!["install".into(), package.into()],
         _ => unreachable!(),
     };
+    let command_line = format!(
+        "{} {}",
+        manager,
+        args.iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
     println!(
         "Falta {} para {}. Se propone usar {}: {} {}",
         tool.command,
@@ -633,8 +1191,18 @@ pub fn install_tool(id: &str, dry_run: bool) -> Result<bool, String> {
             .collect::<Vec<_>>()
             .join(" ")
     );
-    if !crate::common::ask("¿Instalar esta dependencia ahora?") {
-        println!("Instalación cancelada; no se modifica el sistema.");
+    let question = crate::common::dependency_confirmation(
+        tool.command,
+        tool.feature,
+        package,
+        manager,
+        &command_line,
+    );
+    if !crate::common::ask(&question) {
+        println!(
+            "Instalación cancelada para la dependencia «{}» ({}); no se modifica el sistema.",
+            tool.command, package
+        );
         return Ok(false);
     }
     let ok = crate::platform::run_with_privilege(manager, &args, dry_run)
@@ -644,14 +1212,27 @@ pub fn install_tool(id: &str, dry_run: bool) -> Result<bool, String> {
 
 fn package_for(tool: &super::HostTool, manager: &str) -> &'static str {
     match (tool.id, manager) {
+        ("git", "winget") => "Git.Git",
+        ("git", "choco") => "git",
+        ("git", "scoop") => "git",
+        ("gh", "winget") => "GitHub.cli",
+        ("gh", "choco") => "gh",
+        ("gh", "scoop") => "gh",
         ("docker-compose", "winget") => "Docker.DockerCompose",
         ("docker-compose", "choco") => "docker-compose",
         ("docker-compose", "scoop") => "docker-compose",
         ("kubectl", "winget") => "Kubernetes.kubectl",
         ("kubectl", "choco") => "kubernetes-cli",
         ("kubectl", "scoop") => "kubectl",
+        ("7z.exe", "winget") => "7zip.7zip",
+        ("7z.exe", "choco") => "7zip",
+        ("7z.exe", "scoop") => "7zip",
         _ => tool.install_package,
     }
+}
+
+fn running_under_wine() -> bool {
+    std::env::var_os("WINEPREFIX").is_some() || std::env::var_os("WINELOADERNOEXEC").is_some()
 }
 
 pub fn fuse_available() -> bool {
@@ -661,6 +1242,70 @@ pub fn fuse_available() -> bool {
 pub fn winslim_root() -> Option<PathBuf> {
     let root = PathBuf::from(r"C:\WSCore");
     root.is_dir().then_some(root)
+}
+
+pub fn nsudo_path() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(root) = winslim_root() {
+        for directory in [
+            root.clone(),
+            root.join("NSudo"),
+            root.join("Tools").join("NSudo"),
+            root.join("tools").join("NSudo"),
+            root.join("bin"),
+        ] {
+            for name in ["NSudoLC.exe", "NSudoLG.exe", "NSudo.exe"] {
+                candidates.push(directory.join(name));
+            }
+        }
+        if let Some(found) = find_nsudo(&root, 0) {
+            candidates.push(found);
+        }
+    }
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+        .or_else(|| {
+            ["NSudoLC.exe", "NSudoLG.exe", "NSudo.exe"]
+                .into_iter()
+                .find_map(|name| command_path(name))
+        })
+}
+
+fn find_nsudo(directory: &Path, depth: usize) -> Option<PathBuf> {
+    if depth > 4 {
+        return None;
+    }
+    let entries = std::fs::read_dir(directory)
+        .ok()?
+        .flatten()
+        .collect::<Vec<_>>();
+    for entry in &entries {
+        let path = entry.path();
+        if path.is_file()
+            && path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    let lower = name.to_ascii_lowercase();
+                    lower.starts_with("nsudo") && lower.ends_with(".exe")
+                })
+        {
+            return Some(path);
+        }
+    }
+    entries
+        .into_iter()
+        .filter(|entry| entry.path().is_dir())
+        .find_map(|entry| find_nsudo(&entry.path(), depth + 1))
+}
+
+fn command_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os("PATH").and_then(|path| {
+        std::env::split_paths(&path)
+            .map(|directory| directory.join(name))
+            .find(|candidate| candidate.is_file())
+    })
 }
 
 fn command_output(program: &str, args: &[&str]) -> Option<String> {

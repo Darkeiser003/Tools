@@ -284,6 +284,11 @@ if [[ "$#" -eq 0 && "${LTOOLS_DISABLE_GUI:-0}" != 1 &&
         printf 'Registro GUI: %s\n' "$gui_log"
         exit 0
     fi
+    if [[ "${LTOOLS_GUI_REQUIRED:-0}" == 1 ]]; then
+        printf 'La GUI nativa de LTools no pudo iniciarse (código=%s).\n' "$gui_status" >&2
+        printf 'Registro GUI: %s\n' "$gui_log" >&2
+        exit "$gui_status"
+    fi
     printf '[%s] GUI no disponible: código=%s; se activa fallback de terminal\n' \
         "$(date --iso-8601=seconds 2>/dev/null || date)" "$gui_status" >>"$gui_log"
     launch_menu_in_terminal

@@ -4,7 +4,6 @@ use std::io::Read;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone)]
 pub struct Context {
@@ -17,35 +16,64 @@ pub struct Context {
 #[derive(Debug, Clone)]
 pub struct Plan {
     pub path: PathBuf,
+    explicit: bool,
 }
 
 impl Plan {
     pub fn create(path: Option<PathBuf>, module: &str) -> io::Result<Self> {
+        let explicit = path.is_some();
         let path = path.unwrap_or_else(|| {
             let base = std::env::var_os("XDG_STATE_HOME")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| home_dir().join(".local/state"))
                 .join("ltools/plans");
-            let unique = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|duration| duration.as_nanos())
-                .unwrap_or_default();
-            base.join(format!(
-                "plan-{}-{}-{}.tsv",
-                timestamp(),
-                unique,
-                std::process::id()
-            ))
+            base.join(format!("{}.tsv", stable_plan_name(module)))
         });
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let mut file = File::create(&path)?;
-        writeln!(file, "# ltools-plan-v1")?;
-        writeln!(file, "# module={module}")?;
-        writeln!(file, "# created={}", timestamp())?;
-        writeln!(file, "operation\ttarget\tstatus\treversible\tdata1\tdata2")?;
-        Ok(Self { path })
+        let reusable_explicit_plan = explicit
+            && path.is_file()
+            && File::open(&path)
+                .ok()
+                .and_then(|file| BufReader::new(file).lines().next())
+                .and_then(Result::ok)
+                .is_some_and(|line| line == "# ltools-plan-v1");
+        if !reusable_explicit_plan {
+            let mut file = File::create(&path)?;
+            writeln!(file, "# ltools-plan-v1")?;
+            writeln!(file, "# module={module}")?;
+            writeln!(file, "# created={}", timestamp())?;
+            writeln!(file, "operation\ttarget\tstatus\treversible\tdata1\tdata2")?;
+        }
+        Ok(Self { path, explicit })
+    }
+
+    /// Indicates that the user explicitly requested a plan file. Automatic
+    /// plans are an internal transaction boundary for menus and are removed
+    /// when the action did not record a real step.
+    pub fn is_explicit(&self) -> bool {
+        self.explicit
+    }
+
+    /// Explicit plans remain available for rollback and can be reused by an
+    /// interactive session without truncating earlier operations. Automatic
+    /// plans are retained only when an action actually recorded a reversible
+    /// step, so a read-only menu does not leave an empty state file behind.
+    pub fn finalize(&self) -> io::Result<bool> {
+        if self.explicit || self.has_records()? {
+            return Ok(true);
+        }
+        match fs::remove_file(&self.path) {
+            Ok(()) => Ok(false),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn has_records(&self) -> io::Result<bool> {
+        let file = File::open(&self.path)?;
+        Ok(BufReader::new(file).lines().nth(4).transpose()?.is_some())
     }
 
     pub fn record(
@@ -71,12 +99,80 @@ impl Plan {
     }
 }
 
+fn stable_plan_name(module: &str) -> String {
+    let mut name = String::from("plan");
+    for character in module.chars() {
+        if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+            name.push(character.to_ascii_lowercase());
+        } else {
+            name.push('-');
+        }
+    }
+    name.trim_end_matches('-').to_string()
+}
+
 pub fn home_dir() -> PathBuf {
     crate::platform::home_dir()
 }
 
 pub fn timestamp() -> String {
     crate::platform::timestamp()
+}
+
+/// Directory used for generated reports when the user does not provide
+/// `--out`. Reports are reusable state, not project files: keep one current
+/// directory per module under the platform's state directory.
+pub fn default_report_dir(home: &Path, module: &str) -> PathBuf {
+    let state = if cfg!(windows) {
+        std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join("AppData/Local"))
+    } else {
+        std::env::var_os("XDG_STATE_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".local/state"))
+    };
+    state
+        .join(if cfg!(windows) {
+            "LTools/reports"
+        } else {
+            "ltools/reports"
+        })
+        .join(module)
+}
+
+/// Remove only the files directly generated in LTools' managed report folder.
+/// Explicit `--out` paths never pass through this helper.
+pub fn reset_default_report_dir(path: &Path) -> io::Result<()> {
+    let module = path.file_name().and_then(|value| value.to_str());
+    let reports = path.parent();
+    let app_dir = reports.and_then(Path::parent);
+    let managed = matches!(module, Some("audit" | "games" | "packages" | "system"))
+        && reports
+            .and_then(Path::file_name)
+            .and_then(|value| value.to_str())
+            == Some("reports")
+        && matches!(
+            app_dir
+                .and_then(Path::file_name)
+                .and_then(|value| value.to_str()),
+            Some("ltools" | "LTools")
+        );
+    if !managed {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "ruta de informe predeterminada no gestionada",
+        ));
+    }
+    fs::create_dir_all(path)?;
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        if file_type.is_file() || file_type.is_symlink() {
+            fs::remove_file(entry.path())?;
+        }
+    }
+    Ok(())
 }
 
 pub fn clean(value: &str) -> String {
@@ -89,6 +185,19 @@ pub fn command_exists(name: &str) -> bool {
 
 pub fn platform_tools() -> &'static [crate::platform::HostTool] {
     crate::platform::host_tools()
+}
+
+pub fn dependency_confirmation(
+    command: &str,
+    feature: &str,
+    package: &str,
+    manager: &str,
+    invocation: &str,
+) -> String {
+    format!(
+        "Falta la dependencia «{}».\n\nNecesaria para: {}\nPaquete que se instalará: {}\nGestor seleccionado: {}\nComando: {}\n\n¿Instalarla ahora?",
+        command, feature, package, manager, invocation
+    )
 }
 
 pub fn ensure_tool(ctx: &Context, id: &str) -> Result<bool, String> {
@@ -108,7 +217,7 @@ pub fn ensure_tool(ctx: &Context, id: &str) -> Result<bool, String> {
     }
     let installed = crate::platform::install_tool(id, false)?;
     if installed {
-        if let Some(plan) = &ctx.plan {
+        let record = |plan: &Plan| {
             plan.record(
                 "dependency-install",
                 Path::new(id),
@@ -117,7 +226,23 @@ pub fn ensure_tool(ctx: &Context, id: &str) -> Result<bool, String> {
                 tool.install_package,
                 tool.feature,
             )
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| error.to_string())
+        };
+        if let Some(plan) = &ctx.plan {
+            record(plan)?;
+        } else {
+            // A read-only query may offer an installation after the user
+            // explicitly accepts it. Keep that real mutation auditable
+            // without creating a plan for the preceding query itself.
+            let plan = Plan::create(None, "rust-dependencies")
+                .map_err(|error| format!("no se pudo crear el plan de dependencia: {error}"))?;
+            if let Err(error) = record(&plan) {
+                let _ = plan.finalize();
+                return Err(error);
+            }
+            plan.finalize()
+                .map_err(|error| format!("no se pudo cerrar el plan de dependencia: {error}"))?;
+            println!("Plan: {}", plan.path.display());
         }
         Ok(true)
     } else {
@@ -261,6 +386,12 @@ pub fn critical_path(path: &Path) -> bool {
 }
 
 pub fn ask(question: &str) -> bool {
+    if std::env::var_os("LTOOLS_FRONTEND").is_some_and(|value| value == "gui") {
+        #[cfg(any(target_os = "linux", windows))]
+        {
+            return crate::gui::confirm(question);
+        }
+    }
     print!("{} [y/N] ", question);
     let _ = io::stdout().flush();
     let mut answer = String::new();
