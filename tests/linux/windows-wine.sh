@@ -215,6 +215,20 @@ fi
 
 WINEXE="$CARGO_TARGET_DIR/$TARGET/release/ltools.exe"
 [[ -f "$WINEXE" ]] || die "no existe el ejecutable Windows: $WINEXE"
+WINEXE_GUI="$CARGO_TARGET_DIR/$TARGET/release/ltools-gui.exe"
+WINEXE_CLI="$CARGO_TARGET_DIR/$TARGET/release/ltools-cli.exe"
+if [[ "$DO_BUILD" -eq 1 ]]; then
+    cp -a -- "$WINEXE" "$WINEXE_GUI"
+    printf '$ cargo build --manifest-path rust/Cargo.toml --release --target %s --features cli --jobs %s\n' "$TARGET" "$JOBS" | tee -a "$LOG_PATH"
+    cargo build --manifest-path "$ROOT_DIR/rust/Cargo.toml" "${cargo_args[@]}" --release --target "$TARGET" --features cli --jobs "$JOBS" 2>&1 |
+        tee -a "$LOG_PATH"
+    [[ -f "$WINEXE" ]] || die "no se generó el perfil CLI Windows: $WINEXE"
+    cp -a -- "$WINEXE" "$WINEXE_CLI"
+    cp -a -- "$WINEXE_GUI" "$WINEXE"
+else
+    [[ -f "$WINEXE_GUI" ]] || cp -a -- "$WINEXE" "$WINEXE_GUI"
+    [[ -f "$WINEXE_CLI" ]] || die "no existe el perfil CLI Windows: $WINEXE_CLI"
+fi
 
 RUNNER_NAME="$(basename -- "$RUNNER")"
 RUNNER_MODE="wine"
@@ -282,17 +296,27 @@ install_mono_if_needed() {
 
 package_windows_artifact() {
     [[ "$DO_PACKAGE" -eq 1 && -n "$ARTIFACT_DIR" ]] || return 0
+    ARTIFACT_DIR="$(realpath -m -- "$ARTIFACT_DIR")"
     mkdir -p -- "$ARTIFACT_DIR"
     local package_arch="${TARGET%%-*}"
     local artifact="$ARTIFACT_DIR/ltools-$VERSION-windows-$package_arch.exe"
     local cli_artifact="$ARTIFACT_DIR/ltools-$VERSION-windows-$package_arch-cli.exe"
+    local package_zip="$ARTIFACT_DIR/ltools-$VERSION-windows-$package_arch.zip"
     local metadata="$ARTIFACT_DIR/ltools-$VERSION-windows-$package_arch-wine.json"
+    command -v zip >/dev/null 2>&1 || die 'zip es necesario para generar el paquete portable Windows'
     cp -a -- "$WINEXE" "$artifact"
-    # El perfil CLI comparte el backend Rust, pero su nombre de distribución
-    # permite a Windows/WinSlim Terminal seleccionarlo sin depender de un
-    # wrapper Bash o de una variable de entorno. Es el mismo modelo que usa
-    # el builder nativo Windows.
-    cp -a -- "$WINEXE" "$cli_artifact"
+    cp -a -- "$WINEXE_CLI" "$cli_artifact"
+    local portable_dir
+    portable_dir="$(mktemp -d "${TMPDIR:-/tmp}/ltools-windows-package.XXXXXX")"
+    cp -a -- "$WINEXE" "$portable_dir/ltools.exe"
+    cp -a -- "$WINEXE_CLI" "$portable_dir/ltools-cli.exe"
+    for launcher in ltools.ps1 ltools.cmd ltools-cli.ps1 ltools-cli.cmd; do
+        [[ -f "$ROOT_DIR/windows/$launcher" ]] || {
+            rm -rf -- "$portable_dir"
+            die "falta el lanzador Windows $launcher para el ZIP portable"
+        }
+        cp -a -- "$ROOT_DIR/windows/$launcher" "$portable_dir/$launcher"
+    done
     # Una release combinada puede tener el descriptor Linux como canónico;
     # publica además la variante Windows para WinSlim Terminal.
     if [[ -z "${CAPABILITIES:-}" ]]; then
@@ -305,6 +329,24 @@ package_windows_artifact() {
     fi
     printf '%s\n' "$CAPABILITIES" > "$ARTIFACT_DIR/ltools-capabilities-windows.json"
     printf '%s\n' "$TERMINAL_JSON" > "$ARTIFACT_DIR/ltools-terminal-windows.json"
+    cp -a -- "$ARTIFACT_DIR/ltools-capabilities-windows.json" "$portable_dir/"
+    cp -a -- "$ARTIFACT_DIR/ltools-terminal-windows.json" "$portable_dir/"
+    cp -a -- "$ROOT_DIR/appimage/ltools-capabilities.schema.json" "$portable_dir/"
+    cp -a -- "$ROOT_DIR/appimage/ltools-terminal.schema.json" "$portable_dir/"
+    cp -a -- "$ROOT_DIR/README.md" "$portable_dir/"
+    cat > "$portable_dir/BUILD-INFO.txt" <<EOF
+WinSlim-Tools $VERSION
+Platform: Windows
+Target: $TARGET
+GUI: ltools.exe
+CLI: ltools-cli.exe
+Validated: Wine/Proton
+EOF
+    (cd "$portable_dir" && zip -q -r "$package_zip" .) || {
+        rm -rf -- "$portable_dir"
+        die 'no se pudo crear el ZIP portable Windows'
+    }
+    rm -rf -- "$portable_dir"
     cat > "$metadata" <<EOF
 {
   "application": "WinSlim-Tools",
@@ -313,12 +355,13 @@ package_windows_artifact() {
   "architecture": "$package_arch",
   "artifact": "$(basename -- "$artifact")",
   "cli_artifact": "$(basename -- "$cli_artifact")",
+  "portable_artifact": "$(basename -- "$package_zip")",
   "validation": "wine-proton",
   "runner": "$(basename -- "$RUNNER")",
   "target": "$TARGET"
 }
 EOF
-    ok "artefactos Windows bajo Wine copiados: $artifact y $cli_artifact"
+    ok "artefactos Windows bajo Wine copiados: $artifact, $cli_artifact y $package_zip"
 }
 
 run_windows_timeout() {
@@ -326,6 +369,14 @@ run_windows_timeout() {
         timeout 30 "$RUNNER" run "$WINEXE" "$@"
     else
         timeout 30 "$RUNNER" "$WINEXE" "$@"
+    fi
+}
+
+run_cli_timeout() {
+    if [[ "$RUNNER_MODE" == "proton" ]]; then
+        timeout 30 "$RUNNER" run "$WINEXE_CLI" "$@"
+    else
+        timeout 30 "$RUNNER" "$WINEXE_CLI" "$@"
     fi
 }
 
@@ -363,6 +414,19 @@ else
 
     run_case 'version' --version
     run_case 'help' --help
+    cli_version_output="$(run_cli_timeout --version 2>>"$LOG_PATH")" ||
+        die 'el perfil CLI Windows no respondió a --version'
+    grep -Fq 'ltools-rs' <<<"$cli_version_output" ||
+        die 'el perfil CLI Windows no devolvió su versión'
+    cli_help_output="$(run_cli_timeout --help 2>>"$LOG_PATH")" ||
+        die 'el perfil CLI Windows no respondió a --help'
+    grep -Fq 'Uso: ltools' <<<"$cli_help_output" ||
+        die 'el ejecutable CLI Windows publicado no muestra la ayuda'
+    cli_noargs_output="$(run_cli_timeout 2>>"$LOG_PATH")" ||
+        die 'el perfil CLI Windows no respondió sin argumentos'
+    grep -Fq 'Uso: ltools' <<<"$cli_noargs_output" ||
+        die 'el ejecutable CLI Windows sin argumentos no muestra la ayuda'
+    ok 'perfil CLI Windows separado abre en modo consola y sin argumentos no inicia la GUI'
     CAPABILITIES="$(run_windows_timeout capabilities --format json 2>>"$LOG_PATH")" ||
         die 'capabilities --format json falló'
     printf '%s\n' "$CAPABILITIES" | tee -a "$LOG_PATH" >/dev/null

@@ -5,14 +5,15 @@ edition = "2021"
 description = "Núcleo nativo y seguro para LTools"
 license = "MIT"
 
+[features]
+default = []
+cli = []
+
 [dependencies]
 base64 = "0.22"
 ed25519-dalek = { version = "2.2", features = ["pem"] }
 libc = "0.2"
 sha2 = "0.10"
-
-[features]
-default = []
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = [

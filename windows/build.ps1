@@ -39,6 +39,8 @@ $TargetDir = Join-Path $Root "rust\target\windows"
 $env:CARGO_TARGET_DIR = $TargetDir
 $CargoReleaseDir = Join-Path $TargetDir "$Target\release"
 $Binary = Join-Path $CargoReleaseDir "ltools.exe"
+$GuiBinary = Join-Path $CargoReleaseDir "ltools-gui.exe"
+$CliBinary = Join-Path $CargoReleaseDir "ltools-cli.exe"
 $PackageArch = if ($Target -match '^aarch64') { 'arm64' } elseif ($Target -match '^i686') { 'x86' } else { 'x86_64' }
 $StatePath = Join-Path $OutputDir ".build-state.json"
 $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -265,7 +267,7 @@ if (Test-Path $StatePath) {
 $newSignatures = Get-Signatures
 $oldSignatures = if ($oldState) { $oldState.files } else { $null }
 $classes = Get-ChangeClass $oldSignatures $newSignatures
-$needCompile = $Force -or $Clean -or -not (Test-Path $Binary) -or $classes.Rust.Count -gt 0
+$needCompile = $Force -or $Clean -or -not (Test-Path $Binary) -or -not (Test-Path $GuiBinary) -or -not (Test-Path $CliBinary) -or $classes.Rust.Count -gt 0
 $existingZip = Join-Path $OutputDir "ltools-$Version-windows-$PackageArch.zip"
 $existingCli = Join-Path $OutputDir "ltools-$Version-windows-$PackageArch-cli.exe"
 $publishedExe = Join-Path $PublishDir "ltools-$Version-windows-$PackageArch.exe"
@@ -285,6 +287,10 @@ if ($needCompile) {
     $cargoArgs = @('build', '--manifest-path', $CargoManifest, '--release', '--target', $Target)
     if ($Fast) { $env:CARGO_PROFILE_RELEASE_LTO = 'false'; $env:CARGO_PROFILE_RELEASE_CODEGEN_UNITS = '256'; $env:CARGO_PROFILE_RELEASE_INCREMENTAL = 'true' }
     Invoke-Step "Compilando backend Rust Windows" { Invoke-Cargo $cargoArgs }
+    Copy-Item -LiteralPath $Binary -Destination $GuiBinary -Force
+    Invoke-Step "Compilando perfil CLI Rust Windows" { Invoke-Cargo ($cargoArgs + @('--features', 'cli')) }
+    Copy-Item -LiteralPath $Binary -Destination $CliBinary -Force
+    Copy-Item -LiteralPath $GuiBinary -Destination $Binary -Force
 } else { Write-Log "    SKIP: backend Rust sin cambios relevantes." }
 
 if ($needTests) {
@@ -293,7 +299,7 @@ if ($needTests) {
         $smoke = Join-Path $Root 'windows\tests\smoke.ps1'
         if (Test-Path $smoke) {
         Invoke-Step "Ejecutando smoke Windows" {
-                $exitCode = Invoke-NativeCommand 'powershell.exe' @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $smoke, '-Binary', $Binary, '-Version', $Version)
+                $exitCode = Invoke-NativeCommand 'powershell.exe' @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $smoke, '-Binary', $Binary, '-CliBinary', $CliBinary, '-Version', $Version)
                 if ($exitCode -ne 0) { throw "smoke Windows terminó con código $exitCode" }
             }
         }
@@ -320,12 +326,12 @@ if ($needPackage -and -not $NoPackage) {
     $ExecutableArtifact = Join-Path $OutputDir "ltools-$Version-windows-$PackageArch.exe"
     Copy-Item -LiteralPath $Binary -Destination $ExecutableArtifact -Force
     $CliExecutableArtifact = Join-Path $OutputDir "ltools-$Version-windows-$PackageArch-cli.exe"
-    Copy-Item -LiteralPath $Binary -Destination $CliExecutableArtifact -Force
+    Copy-Item -LiteralPath $CliBinary -Destination $CliExecutableArtifact -Force
     $portable = Join-Path $OutputDir "ltools-$Version-windows-$PackageArch"
     Remove-Item -LiteralPath $portable -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force -Path $portable | Out-Null
     Copy-Item -LiteralPath $Binary -Destination (Join-Path $portable 'ltools.exe')
-    Copy-Item -LiteralPath $Binary -Destination (Join-Path $portable 'ltools-cli.exe')
+    Copy-Item -LiteralPath $CliBinary -Destination (Join-Path $portable 'ltools-cli.exe')
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'ltools.ps1') -Destination $portable
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'ltools.cmd') -Destination $portable
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'ltools-cli.ps1') -Destination $portable

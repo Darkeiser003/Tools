@@ -10,6 +10,8 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
         "hardware" | "hw" => hardware(ctx, sub(args, area)),
         "power" | "energy" => power(ctx, sub(args, area)),
         "security" | "firewall" => security(ctx, sub(args, area)),
+        "utilities" | "utility" => utilities_dispatch(ctx, args),
+        "install-utility" => install_utility(ctx, args),
         "tools" | "devtools" | "tooling" => tools(ctx, sub(args, area), args),
         "containers" | "container" => {
             let action = sub(args, area);
@@ -20,7 +22,7 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
             if action == "menu" { kubernetes_menu(ctx) } else { kubernetes(ctx, action) }
         }
         "menu" => menu(ctx),
-        _ => Err("native admite network, hardware, power, security, tools, containers, kubernetes o menu".into()),
+        _ => Err("native admite network, hardware, power, security, utilities, tools, containers, kubernetes o menu".into()),
     }
 }
 fn first(args: &[String]) -> Option<&str> {
@@ -148,6 +150,8 @@ fn tools(ctx: &Context, action: &str, args: &[String]) -> Result<(), String> {
         ),
         "compose" => container_compose_menu(ctx),
         "kubernetes" | "k8s" => kubernetes_menu(ctx),
+        "utilities" | "utility" => utilities_dispatch(ctx, args),
+        "install-utility" => install_utility(ctx, args),
         "adb-status" => {
             if !offer(ctx, "adb") {
                 return Err("ADB no está disponible".into());
@@ -246,7 +250,7 @@ fn tools(ctx: &Context, action: &str, args: &[String]) -> Result<(), String> {
         | "kubernetes-port-forward" => tools_direct(ctx, action, args),
         "status" | "list" | "overview" => tools_status(),
         "install" | "install-dependency" => tools_install(ctx, args),
-        _ => Err("tools admite status, install, menu, ssh, adb, containers, images, volumes, networks, compose o kubernetes".into()),
+        _ => Err("tools admite status, install, menu, utilities, ssh, adb, containers, images, volumes, networks, compose o kubernetes".into()),
     }
 }
 
@@ -930,7 +934,81 @@ fn tools_status() -> Result<(), String> {
     Ok(())
 }
 
+fn utilities_dispatch(ctx: &Context, args: &[String]) -> Result<(), String> {
+    let action = args
+        .iter()
+        .position(|value| value == "utilities" || value == "utility")
+        .and_then(|index| args.get(index + 1))
+        .filter(|value| !value.starts_with('-'))
+        .map(String::as_str)
+        .unwrap_or("menu");
+    match action {
+        "menu" => utilities_menu(ctx),
+        "status" | "list" | "overview" => utilities_status(),
+        "install" | "install-dependency" => tools_install(ctx, args),
+        _ => Err("utilities admite menu, status o install".into()),
+    }
+}
+
+fn install_utility(ctx: &Context, args: &[String]) -> Result<(), String> {
+    let mut scoped = args.to_vec();
+    scoped.extend(["--category".into(), "utilities".into()]);
+    tools_install(ctx, &scoped)
+}
+
+fn utilities_status() -> Result<(), String> {
+    println!("=== Utilidades del sistema Windows ===");
+    println!("Consulta e instalación explícita por utilidad; no se inicia ningún servicio.");
+    for tool in crate::platform::host_tools()
+        .iter()
+        .filter(|tool| tool.category == "utilities")
+    {
+        let state = if crate::platform::host_tool_available(tool) {
+            "disponible"
+        } else if tool.installable && !tool.install_package.is_empty() {
+            "ausente (instalable desde LTools)"
+        } else {
+            "ausente (componente del sistema o instalación manual)"
+        };
+        println!("{:<18} {:<45} {}", tool.id, state, tool.feature);
+    }
+    Ok(())
+}
+
+fn utilities_menu(ctx: &Context) -> Result<(), String> {
+    loop {
+        crate::clear_screen();
+        println!("=== Utilidades del sistema Windows ===");
+        println!("  1) Detectar estado y versiones\n  2) Instalar una utilidad\n  q) Volver");
+        let answer = crate::menu_input("Elige una opción: ").unwrap_or_default();
+        let result = match answer.as_str() {
+            "1" => utilities_status(),
+            "2" => tools_install(
+                ctx,
+                &[
+                    "utilities".into(),
+                    "install".into(),
+                    "--category".into(),
+                    "utilities".into(),
+                ],
+            ),
+            "" | "q" | "Q" => return Ok(()),
+            _ => {
+                println!("Opción no válida.");
+                Ok(())
+            }
+        };
+        if let Err(error) = result {
+            println!("Error: {error}");
+        }
+        if !answer.is_empty() {
+            let _ = crate::menu_input("Pulsa Enter para continuar...");
+        }
+    }
+}
+
 fn tools_install(ctx: &Context, args: &[String]) -> Result<(), String> {
+    let category = option_value(args, "--category");
     let requested = option_value(args, "--tool")
         .or_else(|| option_value(args, "--id"))
         .or_else(|| {
@@ -948,7 +1026,10 @@ fn tools_install(ctx: &Context, args: &[String]) -> Result<(), String> {
         println!("=== Instalar dependencia Windows ===");
         println!("Selecciona una herramienta ausente. No se instala nada sin confirmación.");
         for tool in crate::platform::host_tools().iter().filter(|tool| {
-            !crate::platform::host_tool_available(tool)
+            category
+                .as_deref()
+                .is_none_or(|value| tool.category == value)
+                && !crate::platform::host_tool_available(tool)
                 && tool.installable
                 && !tool.install_package.is_empty()
         }) {
@@ -1953,7 +2034,7 @@ fn menu(ctx: &Context) -> Result<(), String> {
     loop {
         crate::clear_screen();
         println!("=== Red, hardware, energía y seguridad Windows ===");
-        println!("  1) Estado de red, rutas, DNS y puertos\n  2) Vaciar caché DNS\n  3) Hardware\n  4) Planes de energía\n  5) Firewall y Defender\n  6) SSH, Android, contenedores y Kubernetes\n  7) Gestionar contenedores Docker/Podman\n  8) Gestionar Kubernetes\n  q) Volver");
+        println!("  1) Estado de red, rutas, DNS y puertos\n  2) Vaciar caché DNS\n  3) Hardware\n  4) Planes de energía\n  5) Firewall y Defender\n  q) Volver");
         print!("Elige una opción (Enter para volver): ");
         let _ = io::stdout().flush();
         let mut input = String::new();
@@ -1966,9 +2047,6 @@ fn menu(ctx: &Context) -> Result<(), String> {
             "3" => hardware(ctx, "status"),
             "4" => power(ctx, "plans"),
             "5" => security(ctx, "status"),
-            "6" => tools_menu(ctx),
-            "7" => container_menu(ctx),
-            "8" => kubernetes_menu(ctx),
             "" | "q" | "Q" => return Ok(()),
             _ => {
                 println!("Opción no válida.");

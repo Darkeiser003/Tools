@@ -1,5 +1,5 @@
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -138,6 +138,49 @@ pub fn run_with_privilege(program: &str, args: &[String], dry_run: bool) -> io::
     }
     eprintln!("Se necesita sudo para esta operación.");
     Ok(false)
+}
+
+pub fn run_with_privilege_input(
+    program: &str,
+    args: &[String],
+    input: &[u8],
+    dry_run: bool,
+) -> io::Result<bool> {
+    if dry_run {
+        return run_command(program, args, true);
+    }
+    let (executable, mut command_args) = if geteuid() == 0 {
+        (program.to_owned(), args.to_vec())
+    } else if std::env::var_os("LTOOLS_FRONTEND").is_some_and(|value| value == "gui") {
+        if sudo_available_without_prompt() {
+            ("sudo".to_owned(), build_privileged_args(program, args))
+        } else if command_exists("pkexec") {
+            let mut values = vec![program.to_owned()];
+            values.extend_from_slice(args);
+            ("pkexec".to_owned(), values)
+        } else {
+            eprintln!("No hay un agente de autorización gráfica disponible para esta acción.");
+            return Ok(false);
+        }
+    } else {
+        // El CLI debe conservar el stdin de la terminal para que sudo/passwd
+        // pueda pedir la contraseña del usuario de forma normal.
+        return Err(io::Error::other(
+            "esta acción requiere una terminal interactiva; usa passwd desde el CLI",
+        ));
+    };
+    // Mantener el mismo formato visible que el resto de acciones privilegiadas.
+    if executable == "sudo" || executable == "pkexec" {
+        command_args.shrink_to_fit();
+    }
+    let mut child = Command::new(executable)
+        .args(&command_args)
+        .stdin(Stdio::piped())
+        .spawn()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(input)?;
+    }
+    Ok(child.wait()?.success())
 }
 
 fn sudo_available_without_prompt() -> bool {
@@ -714,6 +757,178 @@ static HOST_TOOLS: &[super::HostTool] = &[
         false,
         true,
         "mdadm",
+    ),
+    // Utilidades que LTools puede ejecutar desde el flujo operativo de
+    // almacenamiento. Mantenerlas en el catálogo hace que una ausencia se
+    // explique y ofrezca instalación contextual en vez de terminar como
+    // "dependencia no gestionada".
+    tool(
+        "mkfs",
+        "storage",
+        "filesystem-creation",
+        false,
+        true,
+        "util-linux",
+    ),
+    tool(
+        "mkfs.ext4",
+        "storage",
+        "ext-filesystem-creation",
+        false,
+        true,
+        "e2fsprogs",
+    ),
+    tool(
+        "mkfs.btrfs",
+        "storage",
+        "btrfs-filesystem-creation",
+        false,
+        true,
+        "btrfs-progs",
+    ),
+    tool(
+        "mkfs.xfs",
+        "storage",
+        "xfs-filesystem-creation",
+        false,
+        true,
+        "xfsprogs",
+    ),
+    tool(
+        "mkfs.ntfs",
+        "storage",
+        "ntfs-filesystem-creation",
+        false,
+        true,
+        "ntfs-3g",
+    ),
+    tool(
+        "mkfs.vfat",
+        "storage",
+        "fat-filesystem-creation",
+        false,
+        true,
+        "dosfstools",
+    ),
+    tool(
+        "mkfs.exfat",
+        "storage",
+        "exfat-filesystem-creation",
+        false,
+        true,
+        "exfatprogs",
+    ),
+    tool(
+        "mkswap",
+        "storage",
+        "swap-formatting",
+        false,
+        true,
+        "util-linux",
+    ),
+    tool(
+        "resize2fs",
+        "storage",
+        "ext-filesystem-resize",
+        false,
+        true,
+        "e2fsprogs",
+    ),
+    tool(
+        "xfs_admin",
+        "storage",
+        "xfs-filesystem-label",
+        false,
+        true,
+        "xfsprogs",
+    ),
+    tool(
+        "fatlabel",
+        "storage",
+        "fat-filesystem-label",
+        false,
+        true,
+        "dosfstools",
+    ),
+    tool(
+        "ntfslabel",
+        "storage",
+        "ntfs-filesystem-label",
+        false,
+        true,
+        "ntfs-3g",
+    ),
+    tool(
+        "exfatlabel",
+        "storage",
+        "exfat-filesystem-label",
+        false,
+        true,
+        "exfatprogs",
+    ),
+    tool(
+        "pvcreate",
+        "storage",
+        "lvm-physical-volume-create",
+        false,
+        true,
+        "lvm2",
+    ),
+    tool(
+        "pvremove",
+        "storage",
+        "lvm-physical-volume-remove",
+        false,
+        true,
+        "lvm2",
+    ),
+    tool(
+        "vgcreate",
+        "storage",
+        "lvm-volume-group-create",
+        false,
+        true,
+        "lvm2",
+    ),
+    tool(
+        "vgremove",
+        "storage",
+        "lvm-volume-group-remove",
+        false,
+        true,
+        "lvm2",
+    ),
+    tool(
+        "lvcreate",
+        "storage",
+        "lvm-logical-volume-create",
+        false,
+        true,
+        "lvm2",
+    ),
+    tool(
+        "lvremove",
+        "storage",
+        "lvm-logical-volume-remove",
+        false,
+        true,
+        "lvm2",
+    ),
+    tool(
+        "lvextend",
+        "storage",
+        "lvm-logical-volume-extend",
+        false,
+        true,
+        "lvm2",
+    ),
+    tool(
+        "lvreduce",
+        "storage",
+        "lvm-logical-volume-reduce",
+        false,
+        true,
+        "lvm2",
     ),
     tool(
         "nvme",

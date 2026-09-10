@@ -390,6 +390,8 @@ mod linux {
         fn gtk_widget_set_tooltip_text(widget: *mut Widget, text: *const c_char);
         fn gtk_entry_new() -> *mut Widget;
         fn gtk_entry_set_placeholder_text(entry: *mut Widget, text: *const c_char);
+        fn gtk_entry_set_text(entry: *mut Widget, text: *const c_char);
+        fn gtk_entry_set_visibility(entry: *mut Widget, visible: c_int);
         fn gtk_entry_get_text(entry: *mut Widget) -> *const c_char;
         fn gtk_check_button_new_with_label(label: *const c_char) -> *mut Widget;
         fn gtk_toggle_button_get_active(button: *mut Widget) -> c_int;
@@ -594,21 +596,27 @@ mod linux {
         status: *mut Widget,
     }
 
-    struct AutomationNameActionData {
-        field: *mut Widget,
+    struct AutomationEntryActionData {
+        name: String,
+        action: u8,
         buffer: *mut Widget,
         status: *mut Widget,
-        command: &'static str,
-        label: &'static str,
+    }
+
+    struct AutomationRefreshData {
+        navigation: *mut NavigationData,
+        buffer: *mut Widget,
+        status: *mut Widget,
     }
 
     type OutputTargets = (*mut Widget, *mut Widget);
 
     struct NavigationData {
         main: *mut Widget,
+        content_box: *mut Widget,
         context: *mut Widget,
-        context_titles: [&'static str; 18],
-        pages: [*mut Widget; 18],
+        context_titles: [&'static str; 27],
+        pages: [*mut Widget; 27],
         category_buttons: [*mut Widget; 7],
         current_page: isize,
         history: [usize; 16],
@@ -646,6 +654,27 @@ mod linux {
 
     struct NativeActionData {
         action: &'static str,
+        label: &'static str,
+        fields: &'static [NativeField],
+        buffer: *mut Widget,
+        status: *mut Widget,
+    }
+
+    struct AccountActionData {
+        action: &'static str,
+        label: &'static str,
+        fields: &'static [NativeField],
+        buffer: *mut Widget,
+        status: *mut Widget,
+    }
+
+    struct AccountPasswordData {
+        buffer: *mut Widget,
+        status: *mut Widget,
+    }
+
+    struct StorageActionData {
+        operation: &'static str,
         label: &'static str,
         fields: &'static [NativeField],
         buffer: *mut Widget,
@@ -1058,6 +1087,13 @@ mod linux {
                     "open-gparted" | "open-disk-management" | "open-diskpart"
                 )
             });
+        let is_storage_operation = command == "storage"
+            && args.iter().any(|arg| {
+                matches!(
+                    *arg,
+                    "operate" | "operation" | "partition-actions" | "storage-actions"
+                )
+            });
         let is_git_mutation = command == "git"
             && matches!(
                 args.first().copied(),
@@ -1074,9 +1110,71 @@ mod linux {
                         | "gh-login"
                 )
             );
+        let is_account_mutation = command == "accounts"
+            && matches!(
+                args.first().copied(),
+                Some(
+                    "create"
+                        | "add"
+                        | "modify"
+                        | "edit"
+                        | "password"
+                        | "passwd"
+                        | "lock"
+                        | "unlock"
+                        | "enable"
+                        | "disable"
+                        | "delete"
+                        | "remove"
+                        | "expire"
+                        | "group-create"
+                        | "group-delete"
+                        | "group-add"
+                        | "group-remove"
+                        | "set-primary-group"
+                )
+            );
         if is_storage_manager {
             let message =
                 CString::new(crate::i18n::gui_text("confirm_storage_manager")).unwrap_or_default();
+            let dialog = gtk_message_dialog_new(null_mut(), 1, 1, 4, message.as_ptr());
+            if dialog.is_null() {
+                return false;
+            }
+            let response = gtk_dialog_run(dialog);
+            gtk_widget_destroy(dialog);
+            return response == -8;
+        }
+        if is_storage_operation {
+            let command = args
+                .iter()
+                .map(|arg| crate::common::shell_display(arg))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let message = CString::new(format!(
+                "Esta acción puede modificar o destruir datos.\n\nComando: ltools storage {command}\n\nRevisa el objetivo y confirma para continuar.",
+            ))
+            .unwrap_or_default();
+            let dialog = gtk_message_dialog_new(null_mut(), 1, 1, 4, message.as_ptr());
+            if dialog.is_null() {
+                return false;
+            }
+            let response = gtk_dialog_run(dialog);
+            gtk_widget_destroy(dialog);
+            return response == -8;
+        }
+        if is_account_mutation {
+            let target = args
+                .iter()
+                .skip(1)
+                .filter(|arg| **arg != "--yes")
+                .map(|arg| crate::common::shell_display(arg))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let message = CString::new(format!(
+                "Esta acción modificará cuentas o grupos del sistema.\n\nObjetivo: {target}\n\nRevisa los datos y confirma para continuar."
+            ))
+            .unwrap_or_default();
             let dialog = gtk_message_dialog_new(null_mut(), 1, 1, 4, message.as_ptr());
             if dialog.is_null() {
                 return false;
@@ -1116,6 +1214,7 @@ mod linux {
         let child = Command::new(executable)
             .env("LTOOLS_CLI", "1")
             .env("LTOOLS_FRONTEND", "gui")
+            .env("LTOOLS_ACCOUNT_GUI_PRECONFIRMED", "1")
             .env("LTOOLS_NO_AUTO_TERMINAL", "1")
             .arg(command)
             .args(args)
@@ -1395,6 +1494,159 @@ mod linux {
             required: false,
         },
     ];
+    static ACCOUNT_TARGET_FIELDS: [NativeField; 1] = [NativeField {
+        option: "--user",
+        prompt: "Usuario local",
+        required: true,
+    }];
+    static ACCOUNT_CREATE_FIELDS: [NativeField; 9] = [
+        NativeField {
+            option: "--user",
+            prompt: "Usuario local",
+            required: true,
+        },
+        NativeField {
+            option: "--comment",
+            prompt: "Descripción (opcional)",
+            required: false,
+        },
+        NativeField {
+            option: "--home",
+            prompt: "Home absoluto (opcional)",
+            required: false,
+        },
+        NativeField {
+            option: "--shell",
+            prompt: "Shell absoluto (opcional)",
+            required: false,
+        },
+        NativeField {
+            option: "--primary-group",
+            prompt: "Grupo principal (opcional)",
+            required: false,
+        },
+        NativeField {
+            option: "--groups",
+            prompt: "Grupos separados por coma (opcional)",
+            required: false,
+        },
+        NativeField {
+            option: "--uid",
+            prompt: "UID (opcional)",
+            required: false,
+        },
+        NativeField {
+            option: "--system",
+            prompt: "Escribe sí para cuenta de sistema",
+            required: false,
+        },
+        NativeField {
+            option: "--no-create-home",
+            prompt: "Escribe sí para no crear home",
+            required: false,
+        },
+    ];
+    static ACCOUNT_MODIFY_FIELDS: [NativeField; 10] = [
+        NativeField {
+            option: "--user",
+            prompt: "Usuario actual",
+            required: true,
+        },
+        NativeField {
+            option: "--login",
+            prompt: "Nuevo nombre (opcional)",
+            required: false,
+        },
+        NativeField {
+            option: "--home",
+            prompt: "Nuevo home absoluto (opcional)",
+            required: false,
+        },
+        NativeField {
+            option: "--shell",
+            prompt: "Nueva shell absoluta (opcional)",
+            required: false,
+        },
+        NativeField {
+            option: "--primary-group",
+            prompt: "Grupo principal (opcional)",
+            required: false,
+        },
+        NativeField {
+            option: "--groups",
+            prompt: "Grupos separados por coma (opcional)",
+            required: false,
+        },
+        NativeField {
+            option: "--comment",
+            prompt: "Nueva descripción (opcional)",
+            required: false,
+        },
+        NativeField {
+            option: "--append",
+            prompt: "Escribe sí para conservar grupos actuales",
+            required: false,
+        },
+        NativeField {
+            option: "--lock",
+            prompt: "Escribe sí para bloquear",
+            required: false,
+        },
+        NativeField {
+            option: "--unlock",
+            prompt: "Escribe sí para desbloquear",
+            required: false,
+        },
+    ];
+    static ACCOUNT_EXPIRE_FIELDS: [NativeField; 6] = [
+        NativeField {
+            option: "--user",
+            prompt: "Usuario local",
+            required: true,
+        },
+        NativeField {
+            option: "--date",
+            prompt: "Fecha YYYY-MM-DD (opcional)",
+            required: false,
+        },
+        NativeField {
+            option: "--inactive",
+            prompt: "Días inactivos (opcional)",
+            required: false,
+        },
+        NativeField {
+            option: "--mindays",
+            prompt: "Días mínimos (opcional)",
+            required: false,
+        },
+        NativeField {
+            option: "--maxdays",
+            prompt: "Días máximos (opcional)",
+            required: false,
+        },
+        NativeField {
+            option: "--warndays",
+            prompt: "Días de aviso (opcional)",
+            required: false,
+        },
+    ];
+    static ACCOUNT_GROUP_FIELDS: [NativeField; 1] = [NativeField {
+        option: "--group",
+        prompt: "Grupo local",
+        required: true,
+    }];
+    static ACCOUNT_MEMBERSHIP_FIELDS: [NativeField; 2] = [
+        NativeField {
+            option: "--user",
+            prompt: "Usuario local",
+            required: true,
+        },
+        NativeField {
+            option: "--group",
+            prompt: "Grupo local",
+            required: true,
+        },
+    ];
     static CONTAINER_IMAGE_FIELDS: [NativeField; 2] = [
         NativeField {
             option: "--engine",
@@ -1646,6 +1898,343 @@ mod linux {
         required: true,
     }];
 
+    static STORAGE_DEVICE_FIELDS: [NativeField; 1] = [NativeField {
+        option: "--device",
+        prompt: "Dispositivo /dev/...",
+        required: true,
+    }];
+    static STORAGE_MKPART_FIELDS: [NativeField; 6] = [
+        NativeField {
+            option: "--device",
+            prompt: "Disco completo /dev/...",
+            required: true,
+        },
+        NativeField {
+            option: "--kind",
+            prompt: "Tipo: primary, logical o extended",
+            required: false,
+        },
+        NativeField {
+            option: "--fs",
+            prompt: "Sistema de archivos (ext4, btrfs, xfs...)",
+            required: false,
+        },
+        NativeField {
+            option: "--start",
+            prompt: "Inicio (ej. 1MiB)",
+            required: true,
+        },
+        NativeField {
+            option: "--end",
+            prompt: "Fin (ej. 100%)",
+            required: true,
+        },
+        NativeField {
+            option: "--name",
+            prompt: "Nombre GPT (opcional)",
+            required: false,
+        },
+    ];
+    static STORAGE_PARTITION_NUMBER_FIELDS: [NativeField; 2] = [
+        NativeField {
+            option: "--device",
+            prompt: "Disco completo /dev/...",
+            required: true,
+        },
+        NativeField {
+            option: "--number",
+            prompt: "Número de partición",
+            required: true,
+        },
+    ];
+    static STORAGE_RESIZE_FIELDS: [NativeField; 3] = [
+        NativeField {
+            option: "--device",
+            prompt: "Disco completo /dev/...",
+            required: true,
+        },
+        NativeField {
+            option: "--number",
+            prompt: "Número de partición",
+            required: true,
+        },
+        NativeField {
+            option: "--end",
+            prompt: "Nuevo fin (ej. 100%)",
+            required: true,
+        },
+    ];
+    static STORAGE_NAME_FIELDS: [NativeField; 3] = [
+        NativeField {
+            option: "--device",
+            prompt: "Disco completo /dev/...",
+            required: true,
+        },
+        NativeField {
+            option: "--number",
+            prompt: "Número de partición",
+            required: true,
+        },
+        NativeField {
+            option: "--name",
+            prompt: "Nombre GPT",
+            required: true,
+        },
+    ];
+    static STORAGE_FLAG_FIELDS: [NativeField; 4] = [
+        NativeField {
+            option: "--device",
+            prompt: "Disco completo /dev/...",
+            required: true,
+        },
+        NativeField {
+            option: "--number",
+            prompt: "Número de partición",
+            required: true,
+        },
+        NativeField {
+            option: "--flag",
+            prompt: "Flag (boot, esp, lvm...)",
+            required: true,
+        },
+        NativeField {
+            option: "--state",
+            prompt: "Estado: on u off",
+            required: true,
+        },
+    ];
+    static STORAGE_RESCUE_FIELDS: [NativeField; 3] = [
+        NativeField {
+            option: "--device",
+            prompt: "Disco completo /dev/...",
+            required: true,
+        },
+        NativeField {
+            option: "--start",
+            prompt: "Inicio de búsqueda",
+            required: true,
+        },
+        NativeField {
+            option: "--end",
+            prompt: "Fin de búsqueda",
+            required: true,
+        },
+    ];
+    static STORAGE_ALIGN_FIELDS: [NativeField; 3] = [
+        NativeField {
+            option: "--device",
+            prompt: "Disco completo /dev/...",
+            required: true,
+        },
+        NativeField {
+            option: "--number",
+            prompt: "Número de partición",
+            required: true,
+        },
+        NativeField {
+            option: "--alignment",
+            prompt: "Alineación: minimal u optimal",
+            required: false,
+        },
+    ];
+    static STORAGE_DISK_FLAG_FIELDS: [NativeField; 3] = [
+        NativeField {
+            option: "--device",
+            prompt: "Disco completo /dev/...",
+            required: true,
+        },
+        NativeField {
+            option: "--flag",
+            prompt: "Flag de disco",
+            required: true,
+        },
+        NativeField {
+            option: "--state",
+            prompt: "Estado: on u off (disk-set)",
+            required: false,
+        },
+    ];
+    static STORAGE_MKFS_FIELDS: [NativeField; 3] = [
+        NativeField {
+            option: "--device",
+            prompt: "Partición /dev/...",
+            required: true,
+        },
+        NativeField {
+            option: "--fs",
+            prompt: "Tipo (ext4, btrfs, xfs, ntfs, vfat...)",
+            required: true,
+        },
+        NativeField {
+            option: "--label",
+            prompt: "Etiqueta (opcional)",
+            required: false,
+        },
+    ];
+    static STORAGE_LABEL_FIELDS: [NativeField; 3] = [
+        NativeField {
+            option: "--device",
+            prompt: "Partición /dev/...",
+            required: true,
+        },
+        NativeField {
+            option: "--fs",
+            prompt: "Tipo de sistema de archivos",
+            required: true,
+        },
+        NativeField {
+            option: "--label",
+            prompt: "Nueva etiqueta",
+            required: true,
+        },
+    ];
+    static STORAGE_FS_RESIZE_FIELDS: [NativeField; 3] = [
+        NativeField {
+            option: "--target",
+            prompt: "Dispositivo /dev/... o montaje absoluto",
+            required: true,
+        },
+        NativeField {
+            option: "--fs",
+            prompt: "Tipo ext4, xfs, btrfs o ntfs",
+            required: true,
+        },
+        NativeField {
+            option: "--size",
+            prompt: "Nuevo tamaño (opcional)",
+            required: false,
+        },
+    ];
+    static STORAGE_MOUNT_FIELDS: [NativeField; 2] = [
+        NativeField {
+            option: "--device",
+            prompt: "Partición /dev/...",
+            required: true,
+        },
+        NativeField {
+            option: "--mountpoint",
+            prompt: "Punto de montaje absoluto",
+            required: true,
+        },
+    ];
+    static STORAGE_TARGET_FIELDS: [NativeField; 1] = [NativeField {
+        option: "--target",
+        prompt: "Dispositivo o ruta absoluta",
+        required: true,
+    }];
+    static STORAGE_LUKS_OPEN_FIELDS: [NativeField; 2] = [
+        NativeField {
+            option: "--device",
+            prompt: "Dispositivo /dev/...",
+            required: true,
+        },
+        NativeField {
+            option: "--name",
+            prompt: "Nombre del mapeo",
+            required: true,
+        },
+    ];
+    static STORAGE_LUKS_HEADER_FIELDS: [NativeField; 2] = [
+        NativeField {
+            option: "--device",
+            prompt: "Dispositivo /dev/...",
+            required: true,
+        },
+        NativeField {
+            option: "--path",
+            prompt: "Archivo de cabecera",
+            required: true,
+        },
+    ];
+    static STORAGE_LUKS_CLOSE_FIELDS: [NativeField; 1] = [NativeField {
+        option: "--name",
+        prompt: "Nombre del mapeo",
+        required: true,
+    }];
+    static STORAGE_LVM_FIELDS: [NativeField; 5] = [
+        NativeField { option: "--operation", prompt: "Operación: pvcreate, pvremove, vgcreate, vgremove, lvcreate, lvremove, lvextend, lvreduce", required: true },
+        NativeField { option: "--device", prompt: "PV/dispositivo (si aplica)", required: false },
+        NativeField { option: "--vg", prompt: "Grupo de volúmenes", required: false },
+        NativeField { option: "--name", prompt: "Nombre VG/LV", required: false },
+        NativeField { option: "--size", prompt: "Tamaño (ej. 20G)", required: false },
+    ];
+    static STORAGE_BTRFS_FIELDS: [NativeField; 5] = [
+        NativeField {
+            option: "--operation",
+            prompt: "Operación Btrfs",
+            required: true,
+        },
+        NativeField {
+            option: "--target",
+            prompt: "Montaje o subvolumen absoluto",
+            required: true,
+        },
+        NativeField {
+            option: "--destination",
+            prompt: "Destino de snapshot (opcional)",
+            required: false,
+        },
+        NativeField {
+            option: "--device",
+            prompt: "Dispositivo secundario (opcional)",
+            required: false,
+        },
+        NativeField {
+            option: "--size",
+            prompt: "Nuevo tamaño (opcional)",
+            required: false,
+        },
+    ];
+    static STORAGE_ZFS_FIELDS: [NativeField; 3] = [
+        NativeField {
+            option: "--operation",
+            prompt: "Operación ZFS",
+            required: true,
+        },
+        NativeField {
+            option: "--name",
+            prompt: "Pool, dataset o snapshot",
+            required: true,
+        },
+        NativeField {
+            option: "--members",
+            prompt: "Dispositivos separados por coma (pool-create)",
+            required: false,
+        },
+    ];
+    static STORAGE_RAID_FIELDS: [NativeField; 6] = [
+        NativeField {
+            option: "--operation",
+            prompt: "Operación RAID: create, add, remove, fail, stop, grow",
+            required: true,
+        },
+        NativeField {
+            option: "--device",
+            prompt: "Dispositivo md /dev/mdX",
+            required: true,
+        },
+        NativeField {
+            option: "--level",
+            prompt: "Nivel RAID (create)",
+            required: false,
+        },
+        NativeField {
+            option: "--members",
+            prompt: "Dispositivos separados por coma",
+            required: false,
+        },
+        NativeField {
+            option: "--member",
+            prompt: "Miembro individual o número (opcional)",
+            required: false,
+        },
+        NativeField {
+            option: "--count",
+            prompt: "Número de dispositivos (grow, opcional)",
+            required: false,
+        },
+    ];
+
     unsafe fn native_action_dialog(
         title: &str,
         fields: &'static [NativeField],
@@ -1694,7 +2283,15 @@ mod linux {
                     gtk_widget_destroy(dialog);
                     return None;
                 }
-                if field.option == "--recursive" {
+                if matches!(
+                    field.option,
+                    "--recursive"
+                        | "--system"
+                        | "--no-create-home"
+                        | "--append"
+                        | "--lock"
+                        | "--unlock"
+                ) {
                     if value.eq_ignore_ascii_case("yes")
                         || value.eq_ignore_ascii_case("sí")
                         || value == "1"
@@ -1736,6 +2333,181 @@ mod linux {
         );
     }
 
+    unsafe extern "C" fn on_account_action(_button: *mut Widget, pointer: *mut c_void) {
+        let data = &*(pointer as *const AccountActionData);
+        let Some(values) = native_action_dialog(data.label, data.fields) else {
+            label(data.status, crate::i18n::gui_text("cancelled"));
+            return;
+        };
+        let mut args = vec![data.action.to_owned()];
+        args.extend(values);
+        let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+        if !confirm_gui_action("accounts", &refs) {
+            label(data.status, crate::i18n::gui_text("cancelled"));
+            return;
+        }
+        if !begin_action() {
+            return;
+        }
+        // La confirmación se ha realizado en el hilo GTK. El backend no debe
+        // volver a pedirla desde el hilo de trabajo ni bloquear la interfaz.
+        args.push("--yes".to_owned());
+        label(data.status, crate::i18n::gui_text("running"));
+        show_running(data.buffer, data.label);
+        let mut command = vec!["accounts".to_owned()];
+        command.extend(args);
+        enqueue_action(
+            data.buffer,
+            data.status,
+            data.label.to_owned(),
+            "accounts".to_owned(),
+            command.split_off(1),
+        );
+    }
+
+    unsafe fn account_password_dialog() -> Option<(String, String)> {
+        let dialog = gtk_dialog_new();
+        if dialog.is_null() {
+            return None;
+        }
+        let title = CString::new("Cambiar contraseña").unwrap_or_default();
+        gtk_window_set_title(dialog, title.as_ptr());
+        gtk_window_set_modal(dialog, 1);
+        let parent = GUI_WINDOW.load(Ordering::Acquire) as *mut Widget;
+        if !parent.is_null() {
+            gtk_window_set_transient_for(dialog, parent);
+        }
+        gtk_window_set_default_size(dialog, 520, 210);
+        let content = gtk_dialog_get_content_area(dialog);
+        let grid = gtk_grid_new();
+        gtk_grid_set_row_spacing(grid, 10);
+        gtk_grid_set_column_spacing(grid, 10);
+        gtk_container_set_border_width(grid, 14);
+        let labels = ["Usuario local", "Contraseña nueva", "Repite la contraseña"];
+        let mut entries = Vec::with_capacity(labels.len());
+        for (row, label_text) in labels.iter().enumerate() {
+            let prompt = CString::new(*label_text).unwrap_or_default();
+            let label = gtk_label_new(prompt.as_ptr());
+            gtk_label_set_xalign(label, 0.0);
+            let entry = gtk_entry_new();
+            gtk_entry_set_placeholder_text(entry, prompt.as_ptr());
+            gtk_widget_set_hexpand(entry, 1);
+            if row > 0 {
+                gtk_entry_set_visibility(entry, 0);
+            }
+            gtk_grid_attach(grid, label, 0, row as c_int, 1, 1);
+            gtk_grid_attach(grid, entry, 1, row as c_int, 1, 1);
+            entries.push(entry);
+        }
+        gtk_container_add(content, grid);
+        let cancel = CString::new(crate::i18n::gui_action_text("cancel")).unwrap_or_default();
+        let execute = CString::new("Cambiar contraseña").unwrap_or_default();
+        gtk_dialog_add_button(dialog, cancel.as_ptr(), -6);
+        gtk_dialog_add_button(dialog, execute.as_ptr(), -8);
+        gtk_widget_show_all(dialog);
+        let response = gtk_dialog_run(dialog);
+        let result = if response == -8 {
+            let user = entry_text(entries[0]);
+            let password = entry_text(entries[1]);
+            let repeat = entry_text(entries[2]);
+            if user.trim().is_empty() || password.is_empty() || password != repeat {
+                None
+            } else {
+                Some((user, password))
+            }
+        } else {
+            None
+        };
+        gtk_widget_destroy(dialog);
+        result
+    }
+
+    unsafe extern "C" fn on_account_password(_button: *mut Widget, pointer: *mut c_void) {
+        let data = &*(pointer as *const AccountPasswordData);
+        let Some((user, password)) = account_password_dialog() else {
+            label(data.status, crate::i18n::gui_text("cancelled"));
+            return;
+        };
+        let refs = vec!["password", "--user", user.as_str()];
+        if !confirm_gui_action("accounts", &refs) {
+            label(data.status, crate::i18n::gui_text("cancelled"));
+            return;
+        }
+        if !begin_action() {
+            return;
+        }
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|value| value.as_nanos())
+            .unwrap_or_default();
+        let password_file = std::env::temp_dir().join(format!(
+            "ltools-account-password-{}-{nonce}.txt",
+            std::process::id()
+        ));
+        if let Err(error) = std::fs::write(&password_file, password) {
+            label(
+                data.status,
+                &format!("No se pudo preparar la contraseña: {error}"),
+            );
+            finish_action();
+            return;
+        }
+        #[cfg(unix)]
+        if let Ok(metadata) = std::fs::metadata(&password_file) {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = metadata.permissions();
+            permissions.set_mode(0o600);
+            let _ = std::fs::set_permissions(&password_file, permissions);
+        }
+        let args = vec![
+            "password".to_owned(),
+            "--user".to_owned(),
+            user,
+            "--password-file".to_owned(),
+            password_file.display().to_string(),
+            "--yes".to_owned(),
+        ];
+        label(data.status, crate::i18n::gui_text("running"));
+        show_running(data.buffer, "Cambiar contraseña");
+        enqueue_action(
+            data.buffer,
+            data.status,
+            "Cambiar contraseña".to_owned(),
+            "accounts".to_owned(),
+            args,
+        );
+    }
+
+    unsafe extern "C" fn on_storage_action(_button: *mut Widget, pointer: *mut c_void) {
+        let data = &*(pointer as *const StorageActionData);
+        let Some(values) = native_action_dialog(data.label, data.fields) else {
+            label(data.status, crate::i18n::gui_text("cancelled"));
+            return;
+        };
+        let mut args = vec!["operate".to_owned(), data.operation.to_owned()];
+        args.extend(values);
+        let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+        if !confirm_gui_action("storage", &refs) {
+            label(data.status, crate::i18n::gui_text("cancelled"));
+            return;
+        }
+        if !begin_action() {
+            return;
+        }
+        // La confirmación ya se ha mostrado en el diálogo de la GUI. --yes
+        // evita que el proceso hijo abra un segundo diálogo sin propietario.
+        args.push("--yes".to_owned());
+        label(data.status, crate::i18n::gui_text("running"));
+        show_running(data.buffer, data.label);
+        enqueue_action(
+            data.buffer,
+            data.status,
+            data.label.to_owned(),
+            "storage".to_owned(),
+            args,
+        );
+    }
+
     unsafe extern "C" fn trigger_smoke_action(_data: *mut c_void) -> c_int {
         let button = GUI_SMOKE_ACTION_BUTTON.load(Ordering::Acquire) as *mut Widget;
         if !button.is_null() {
@@ -1771,8 +2543,8 @@ mod linux {
         let page = *Box::from_raw(pointer as *mut usize);
         let navigation = GUI_NAVIGATION.load(Ordering::Acquire) as *mut NavigationData;
         if !navigation.is_null() {
-            show_page(&*navigation, (page < 18).then_some(page));
-            smoke_event(if page < 18 {
+            show_page(&*navigation, (page < 27).then_some(page));
+            smoke_event(if page < 27 {
                 "navigation-page"
             } else {
                 "navigation-main"
@@ -1874,25 +2646,191 @@ mod linux {
             args,
         );
     }
-    unsafe extern "C" fn on_automation_name_action(_button: *mut Widget, pointer: *mut c_void) {
-        let data = &*(pointer as *const AutomationNameActionData);
-        let name = entry_text(data.field);
-        if name.trim().is_empty() {
-            label(data.status, crate::i18n::gui_text("required"));
-            return;
+    unsafe fn automation_edit_dialog(
+        entry: &crate::automation::Automation,
+    ) -> Option<(String, String, String, String)> {
+        let dialog = gtk_dialog_new();
+        if dialog.is_null() {
+            return None;
         }
+        let title = CString::new(format!("Editar automatización: {}", entry.name)).ok()?;
+        gtk_window_set_title(dialog, title.as_ptr());
+        gtk_window_set_modal(dialog, 1);
+        let parent = GUI_WINDOW.load(Ordering::Acquire) as *mut Widget;
+        if !parent.is_null() {
+            gtk_window_set_transient_for(dialog, parent);
+        }
+        gtk_window_set_default_size(dialog, 560, 310);
+        let content = gtk_dialog_get_content_area(dialog);
+        let grid = gtk_grid_new();
+        gtk_grid_set_row_spacing(grid, 8);
+        gtk_grid_set_column_spacing(grid, 10);
+        gtk_container_set_border_width(grid, 14);
+        let fields = [
+            ("Nombre", entry.name.as_str()),
+            ("Programa o ruta", entry.program.as_str()),
+            (
+                "Directorio (vacío conserva; - elimina)",
+                entry.working_directory.as_deref().unwrap_or(""),
+            ),
+            ("Argumentos (vacío conserva; - elimina)", ""),
+        ];
+        let mut controls = Vec::new();
+        for (row, (prompt, value)) in fields.iter().enumerate() {
+            let label_text = CString::new(*prompt).ok()?;
+            let label = gtk_label_new(label_text.as_ptr());
+            gtk_label_set_xalign(label, 0.0);
+            let control = gtk_entry_new();
+            let initial = if row == 3 {
+                entry
+                    .args
+                    .iter()
+                    .map(|arg| crate::common::shell_display(arg))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            } else {
+                (*value).to_owned()
+            };
+            let initial = CString::new(initial).ok()?;
+            gtk_entry_set_text(control, initial.as_ptr());
+            gtk_grid_attach(grid, label, 0, row as c_int, 1, 1);
+            gtk_grid_attach(grid, control, 1, row as c_int, 1, 1);
+            controls.push(control);
+        }
+        gtk_container_add(content, grid);
+        let cancel = CString::new(crate::i18n::gui_action_text("cancel")).ok()?;
+        let execute = CString::new("Guardar cambios").ok()?;
+        gtk_dialog_add_button(dialog, cancel.as_ptr(), -6);
+        gtk_dialog_add_button(dialog, execute.as_ptr(), -8);
+        gtk_widget_show_all(dialog);
+        let response = gtk_dialog_run(dialog);
+        let result = if response == -8 {
+            let values = controls
+                .iter()
+                .map(|control| entry_text(*control))
+                .collect::<Vec<_>>();
+            if values[0].trim().is_empty() || values[1].trim().is_empty() {
+                None
+            } else {
+                Some((
+                    values[0].clone(),
+                    values[1].clone(),
+                    values[2].clone(),
+                    values[3].clone(),
+                ))
+            }
+        } else {
+            None
+        };
+        gtk_widget_destroy(dialog);
+        result
+    }
+
+    unsafe fn confirm_automation_change(action: &str, name: &str) -> bool {
+        let message = CString::new(format!(
+            "La acción «{action}» modificará el registro de automatizaciones.\n\nScript: {name}\n\n¿Quieres continuar?"
+        ))
+        .unwrap_or_default();
+        let dialog = gtk_message_dialog_new(null_mut(), 1, 1, 4, message.as_ptr());
+        if dialog.is_null() {
+            return false;
+        }
+        let response = gtk_dialog_run(dialog);
+        gtk_widget_destroy(dialog);
+        response == -8
+    }
+
+    unsafe extern "C" fn on_automation_entry_action(_button: *mut Widget, pointer: *mut c_void) {
+        let data = &*(pointer as *const AutomationEntryActionData);
+        let entry = match crate::automation::load()
+            .ok()
+            .and_then(|entries| entries.into_iter().find(|item| item.name == data.name))
+        {
+            Some(entry) => entry,
+            None => {
+                label(data.status, "El script ya no existe; recarga el listado.");
+                return;
+            }
+        };
+        let mut args = match data.action {
+            0 => vec!["run".to_owned(), entry.name.clone()],
+            1 => {
+                if !confirm_automation_change("borrar", &entry.name) {
+                    label(data.status, crate::i18n::gui_text("cancelled"));
+                    return;
+                }
+                vec!["remove".to_owned(), entry.name.clone()]
+            }
+            2 => {
+                let Some((name, program, directory, raw_args)) = automation_edit_dialog(&entry)
+                else {
+                    label(data.status, crate::i18n::gui_text("cancelled"));
+                    return;
+                };
+                if !confirm_automation_change("editar", &entry.name) {
+                    label(data.status, crate::i18n::gui_text("cancelled"));
+                    return;
+                }
+                let mut values = vec![
+                    "modify".into(),
+                    "--name".into(),
+                    entry.name.clone(),
+                    "--new-name".into(),
+                    name,
+                    "--program".into(),
+                    program,
+                ];
+                if directory.trim() == "-" {
+                    values.push("--clear-working-directory".into());
+                } else if !directory.trim().is_empty() {
+                    values.extend(["--cwd".into(), directory]);
+                }
+                if raw_args.trim() == "-" {
+                    values.extend(["--args".into(), String::new()]);
+                } else if !raw_args.trim().is_empty() {
+                    values.extend(["--args".into(), raw_args]);
+                }
+                values
+            }
+            _ => return,
+        };
         if !begin_action() {
             return;
         }
         label(data.status, crate::i18n::gui_text("running"));
-        show_running(data.buffer, data.label);
+        let title = match data.action {
+            0 => "Ejecutar script",
+            1 => "Borrar script",
+            _ => "Editar script",
+        };
+        show_running(data.buffer, title);
         enqueue_action(
             data.buffer,
             data.status,
-            data.label.to_owned(),
+            title.to_owned(),
             "automation".into(),
-            vec![data.command.to_owned(), name],
+            std::mem::take(&mut args),
         );
+    }
+
+    unsafe extern "C" fn on_automation_refresh(_button: *mut Widget, pointer: *mut c_void) {
+        let data = &*(pointer as *const AutomationRefreshData);
+        let navigation = &mut *data.navigation;
+        let old_page = navigation.pages[25];
+        let new_page = gtk_grid_new();
+        gtk_grid_set_row_spacing(new_page, 8);
+        gtk_grid_set_column_spacing(new_page, 8);
+        gtk_grid_set_column_homogeneous(new_page, 1);
+        gtk_widget_set_hexpand(new_page, 1);
+        gtk_widget_set_no_show_all(new_page, 1);
+        gtk_widget_hide(new_page);
+        gtk_box_pack_start(navigation.content_box, new_page, 0, 0, 0);
+        navigation.pages[25] = new_page;
+        if !old_page.is_null() {
+            gtk_widget_destroy(old_page);
+        }
+        build_scripts_page(new_page, data.navigation, data.buffer, data.status);
+        show_page(navigation, Some(25));
     }
 
     unsafe extern "C" fn on_git_action(_button: *mut Widget, pointer: *mut c_void) {
@@ -2432,6 +3370,69 @@ mod linux {
         gtk_grid_attach(grid, button, 0, row, 2, 1);
     }
 
+    unsafe fn add_account_action_button(
+        grid: *mut Widget,
+        row: c_int,
+        label_text: &'static str,
+        action: &'static str,
+        fields: &'static [NativeField],
+        buffer: *mut Widget,
+        status: *mut Widget,
+    ) {
+        let label = CString::new(label_text).unwrap_or_default();
+        let button = gtk_button_new_with_label(label.as_ptr());
+        gtk_widget_set_size_request(button, 250, 36);
+        gtk_widget_set_halign(button, 3);
+        let data = Box::into_raw(Box::new(AccountActionData {
+            action,
+            label: label_text,
+            fields,
+            buffer,
+            status,
+        }));
+        connect(button, "clicked", on_account_action, data.cast());
+        gtk_grid_attach(grid, button, 0, row, 2, 1);
+    }
+
+    unsafe fn add_account_password_button(
+        grid: *mut Widget,
+        row: c_int,
+        buffer: *mut Widget,
+        status: *mut Widget,
+    ) {
+        let label = CString::new("Cambiar contraseña").unwrap_or_default();
+        let button = gtk_button_new_with_label(label.as_ptr());
+        gtk_widget_set_size_request(button, 250, 36);
+        gtk_widget_set_halign(button, 3);
+        let data = Box::into_raw(Box::new(AccountPasswordData { buffer, status }));
+        connect(button, "clicked", on_account_password, data.cast());
+        gtk_grid_attach(grid, button, 0, row, 2, 1);
+    }
+
+    unsafe fn add_storage_action_button(
+        grid: *mut Widget,
+        row: c_int,
+        label_text: &'static str,
+        operation: &'static str,
+        fields: &'static [NativeField],
+        buffer: *mut Widget,
+        status: *mut Widget,
+    ) {
+        let label = CString::new(label_text).unwrap_or_default();
+        let button = gtk_button_new_with_label(label.as_ptr());
+        gtk_widget_set_size_request(button, 250, 36);
+        gtk_widget_set_halign(button, 3);
+        let data = Box::into_raw(Box::new(StorageActionData {
+            operation,
+            label: label_text,
+            fields,
+            buffer,
+            status,
+        }));
+        connect(button, "clicked", on_storage_action, data.cast());
+        gtk_grid_attach(grid, button, 0, row, 2, 1);
+    }
+
     unsafe fn add_dashboard_navigation_button(
         grid: *mut Widget,
         row: c_int,
@@ -2520,28 +3521,96 @@ mod linux {
         gtk_grid_attach(grid, button, 0, row, 2, 1);
     }
 
-    unsafe fn add_automation_name_action(
+    unsafe fn add_automation_entry_action(
         grid: *mut Widget,
-        column: c_int,
         row: c_int,
-        label_text: &'static str,
-        command: &'static str,
-        field: *mut Widget,
-        output: OutputTargets,
+        entry: &crate::automation::Automation,
+        action: u8,
+        buffer: *mut Widget,
+        status: *mut Widget,
     ) {
-        let label_c = CString::new(label_text).unwrap_or_default();
-        let button = gtk_button_new_with_label(label_c.as_ptr());
-        gtk_widget_set_size_request(button, 250, 44);
+        let label = match action {
+            0 => format!("Ejecutar: {}", entry.name),
+            1 => format!("Borrar: {}", entry.name),
+            _ => format!("Editar: {}", entry.name),
+        };
+        let label = CString::new(label).unwrap_or_default();
+        let button = gtk_button_new_with_label(label.as_ptr());
+        gtk_widget_set_size_request(button, 230, 36);
         gtk_widget_set_halign(button, 3);
-        let data = Box::into_raw(Box::new(AutomationNameActionData {
-            field,
-            buffer: output.0,
-            status: output.1,
-            command,
-            label: label_text,
+        let data = Box::into_raw(Box::new(AutomationEntryActionData {
+            name: entry.name.clone(),
+            action,
+            buffer,
+            status,
         }));
-        connect(button, "clicked", on_automation_name_action, data.cast());
-        gtk_grid_attach(grid, button, column, row, 1, 1);
+        connect(button, "clicked", on_automation_entry_action, data.cast());
+        gtk_grid_attach(grid, button, 0, row, 2, 1);
+    }
+
+    unsafe fn add_automation_refresh_button(
+        grid: *mut Widget,
+        row: c_int,
+        navigation: *mut NavigationData,
+        buffer: *mut Widget,
+        status: *mut Widget,
+    ) {
+        let label = CString::new("Recargar listado").unwrap_or_default();
+        let button = gtk_button_new_with_label(label.as_ptr());
+        gtk_widget_set_size_request(button, 230, 36);
+        gtk_widget_set_halign(button, 3);
+        let data = Box::into_raw(Box::new(AutomationRefreshData {
+            navigation,
+            buffer,
+            status,
+        }));
+        connect(button, "clicked", on_automation_refresh, data.cast());
+        gtk_grid_attach(grid, button, 0, row, 2, 1);
+    }
+
+    unsafe fn build_scripts_page(
+        scripts_page: *mut Widget,
+        navigation: *mut NavigationData,
+        buffer: *mut Widget,
+        status: *mut Widget,
+    ) {
+        add_section_heading(scripts_page, 0, "Scripts registrados");
+        add_automation_refresh_button(scripts_page, 1, navigation, buffer, status);
+        let mut scripts_back_row = 3;
+        match crate::automation::load() {
+            Ok(entries) if entries.is_empty() => {
+                let none = CString::new("No hay scripts registrados.").unwrap();
+                let label = gtk_label_new(none.as_ptr());
+                gtk_label_set_xalign(label, 0.0);
+                gtk_grid_attach(scripts_page, label, 0, 2, 2, 1);
+            }
+            Ok(entries) => {
+                let mut row = 2;
+                for entry in entries {
+                    let summary = format!("{}  →  {}", entry.name, entry.program);
+                    let summary = CString::new(summary).unwrap_or_default();
+                    let label = gtk_label_new(summary.as_ptr());
+                    gtk_label_set_xalign(label, 0.0);
+                    gtk_label_set_line_wrap(label, 1);
+                    gtk_grid_attach(scripts_page, label, 0, row, 2, 1);
+                    row += 1;
+                    add_automation_entry_action(scripts_page, row, &entry, 0, buffer, status);
+                    add_automation_entry_action(scripts_page, row, &entry, 2, buffer, status);
+                    row += 1;
+                    add_automation_entry_action(scripts_page, row, &entry, 1, buffer, status);
+                    row += 1;
+                }
+                scripts_back_row = row;
+            }
+            Err(error) => {
+                let message = CString::new(format!("No se pudo leer el registro: {error}"))
+                    .unwrap_or_default();
+                let label = gtk_label_new(message.as_ptr());
+                gtk_label_set_xalign(label, 0.0);
+                gtk_grid_attach(scripts_page, label, 0, 2, 2, 1);
+            }
+        }
+        add_back_button_at(scripts_page, navigation, scripts_back_row);
     }
 
     unsafe fn add_settings_bar_button(
@@ -2749,7 +3818,7 @@ mod linux {
                 CString::new("ltools-dashboard").unwrap().as_ptr(),
             );
             gtk_box_pack_start(content_box, main_grid, 0, 0, 0);
-            let mut pages = [null_mut(); 18];
+            let mut pages = [null_mut(); 27];
             for page in &mut pages {
                 *page = gtk_grid_new();
                 gtk_grid_set_row_spacing(*page, 8);
@@ -2768,6 +3837,7 @@ mod linux {
             }
             let navigation = Box::into_raw(Box::new(NavigationData {
                 main: main_grid,
+                content_box,
                 context,
                 context_titles: [
                     crate::i18n::category_text("audit_inventory"),
@@ -2776,7 +3846,7 @@ mod linux {
                     crate::i18n::category_text("defaults"),
                     crate::i18n::category_text("installable_tools"),
                     crate::i18n::category_text("automation"),
-                    crate::i18n::tools_text("install"),
+                    crate::i18n::tools_text("software_title"),
                     crate::i18n::gui_text("settings_title"),
                     crate::i18n::tools_text("git_menu"),
                     crate::i18n::gui_family_text("installable_connectivity"),
@@ -2788,6 +3858,15 @@ mod linux {
                     crate::i18n::gui_family_text("images"),
                     crate::i18n::gui_family_text("volumes_networks"),
                     crate::i18n::gui_family_text("compose_diagnostics"),
+                    crate::i18n::gui_family_text("installable_ssh"),
+                    crate::i18n::gui_family_text("installable_android"),
+                    crate::i18n::gui_family_text("installable_utilities"),
+                    "Particionado y tablas",
+                    "Sistemas de archivos",
+                    "Cifrado y volúmenes",
+                    "Usuarios, grupos y sesiones",
+                    "Scripts registrados",
+                    "Registrar script",
                 ],
                 pages,
                 category_buttons: [null_mut(); 7],
@@ -3097,9 +4176,18 @@ mod linux {
                 buffer,
                 status,
             );
-            add_action(
+            add_submenu_button(
                 storage_page,
                 4,
+                "Particionado y tablas (parted)",
+                navigation,
+                21,
+            );
+            add_submenu_button(storage_page, 5, "Sistemas de archivos", navigation, 22);
+            add_submenu_button(storage_page, 6, "Cifrado y volúmenes", navigation, 23);
+            add_action(
+                storage_page,
+                7,
                 crate::i18n::storage_action_text("tools"),
                 "storage",
                 &["tools"],
@@ -3108,7 +4196,7 @@ mod linux {
             );
             add_action(
                 storage_page,
-                5,
+                8,
                 crate::i18n::storage_action_text("manager"),
                 "storage",
                 &["open-gparted", "--yes"],
@@ -3117,7 +4205,7 @@ mod linux {
             );
             add_action(
                 storage_page,
-                6,
+                9,
                 crate::i18n::storage_action_text("clean"),
                 "clean",
                 &["--preview"],
@@ -3126,14 +4214,483 @@ mod linux {
             );
             add_action(
                 storage_page,
-                7,
+                10,
                 crate::i18n::storage_action_text("guide"),
                 "storage",
                 &["guide"],
                 buffer,
                 status,
             );
-            add_back_button_at(storage_page, navigation, 8);
+            add_back_button_at(storage_page, navigation, 11);
+
+            let partition_page = (*navigation).pages[21];
+            add_section_heading(partition_page, 0, "Particionado y tablas (parted)");
+            add_storage_action_button(
+                partition_page,
+                1,
+                "Consultar tabla de un disco",
+                "print",
+                &STORAGE_DEVICE_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                partition_page,
+                2,
+                "Consultar espacio libre",
+                "print-free",
+                &STORAGE_DEVICE_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                partition_page,
+                3,
+                "Inspeccionar dispositivo (probe)",
+                "probe",
+                &STORAGE_DEVICE_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                partition_page,
+                4,
+                "Crear tabla GPT",
+                "mklabel-gpt",
+                &STORAGE_DEVICE_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                partition_page,
+                5,
+                "Crear tabla MBR / msdos",
+                "mklabel-msdos",
+                &STORAGE_DEVICE_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                partition_page,
+                6,
+                "Crear partición",
+                "mkpart",
+                &STORAGE_MKPART_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                partition_page,
+                7,
+                "Borrar partición",
+                "rm",
+                &STORAGE_PARTITION_NUMBER_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                partition_page,
+                8,
+                "Redimensionar partición",
+                "resizepart",
+                &STORAGE_RESIZE_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                partition_page,
+                9,
+                "Nombrar partición GPT",
+                "name",
+                &STORAGE_NAME_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                partition_page,
+                10,
+                "Activar / desactivar flag",
+                "flag",
+                &STORAGE_FLAG_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                partition_page,
+                11,
+                "Buscar y rescatar partición",
+                "rescue",
+                &STORAGE_RESCUE_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                partition_page,
+                12,
+                "Comprobar alineación",
+                "align-check",
+                &STORAGE_ALIGN_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                partition_page,
+                13,
+                "Cambiar flag del disco",
+                "disk-set",
+                &STORAGE_DISK_FLAG_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                partition_page,
+                14,
+                "Alternar flag del disco",
+                "disk-toggle",
+                &STORAGE_DISK_FLAG_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                partition_page,
+                15,
+                "Borrar firmas (wipefs)",
+                "wipefs",
+                &STORAGE_DEVICE_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                partition_page,
+                16,
+                "Descartar bloques",
+                "discard",
+                &STORAGE_DEVICE_FIELDS,
+                buffer,
+                status,
+            );
+            add_back_button_at(partition_page, navigation, 17);
+
+            let filesystem_page = (*navigation).pages[22];
+            add_section_heading(filesystem_page, 0, "Sistemas de archivos");
+            add_storage_action_button(
+                filesystem_page,
+                1,
+                "Crear / formatear sistema de archivos",
+                "mkfs",
+                &STORAGE_MKFS_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                filesystem_page,
+                2,
+                "Cambiar etiqueta",
+                "filesystem-label",
+                &STORAGE_LABEL_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                filesystem_page,
+                3,
+                "Comprobar sin reparar",
+                "fsck-check",
+                &STORAGE_DEVICE_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                filesystem_page,
+                4,
+                "Comprobar y reparar automáticamente",
+                "fsck-repair",
+                &STORAGE_DEVICE_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                filesystem_page,
+                5,
+                "Redimensionar sistema de archivos",
+                "filesystem-resize",
+                &STORAGE_FS_RESIZE_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                filesystem_page,
+                6,
+                "Montar partición",
+                "mount",
+                &STORAGE_MOUNT_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                filesystem_page,
+                7,
+                "Desmontar dispositivo o ruta",
+                "unmount",
+                &STORAGE_TARGET_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                filesystem_page,
+                8,
+                "Activar swap",
+                "swap-on",
+                &STORAGE_DEVICE_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                filesystem_page,
+                9,
+                "Desactivar swap",
+                "swap-off",
+                &STORAGE_DEVICE_FIELDS,
+                buffer,
+                status,
+            );
+            add_back_button_at(filesystem_page, navigation, 10);
+
+            let volumes_page = (*navigation).pages[23];
+            add_section_heading(volumes_page, 0, "Cifrado y volúmenes");
+            add_storage_action_button(
+                volumes_page,
+                1,
+                "Crear contenedor LUKS",
+                "luks-format",
+                &STORAGE_DEVICE_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                volumes_page,
+                2,
+                "Abrir contenedor LUKS",
+                "luks-open",
+                &STORAGE_LUKS_OPEN_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                volumes_page,
+                3,
+                "Cerrar contenedor LUKS",
+                "luks-close",
+                &STORAGE_LUKS_CLOSE_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                volumes_page,
+                4,
+                "Copiar cabecera LUKS",
+                "luks-header-backup",
+                &STORAGE_LUKS_HEADER_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                volumes_page,
+                5,
+                "Restaurar cabecera LUKS",
+                "luks-header-restore",
+                &STORAGE_LUKS_HEADER_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                volumes_page,
+                6,
+                "Operación LVM",
+                "lvm",
+                &STORAGE_LVM_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                volumes_page,
+                7,
+                "Operación Btrfs",
+                "btrfs",
+                &STORAGE_BTRFS_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                volumes_page,
+                8,
+                "Operación ZFS",
+                "zfs",
+                &STORAGE_ZFS_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_action_button(
+                volumes_page,
+                9,
+                "Operación RAID mdadm",
+                "raid",
+                &STORAGE_RAID_FIELDS,
+                buffer,
+                status,
+            );
+            add_back_button_at(volumes_page, navigation, 10);
+
+            let accounts_page = (*navigation).pages[24];
+            add_section_heading(accounts_page, 0, "Usuarios, grupos y sesiones");
+            add_account_action_button(
+                accounts_page,
+                1,
+                "Listar cuentas locales",
+                "list",
+                &[],
+                buffer,
+                status,
+            );
+            add_account_action_button(
+                accounts_page,
+                2,
+                "Listar grupos y miembros",
+                "groups",
+                &[],
+                buffer,
+                status,
+            );
+            add_account_action_button(
+                accounts_page,
+                3,
+                "Ver mi identidad y grupos",
+                "identity",
+                &[],
+                buffer,
+                status,
+            );
+            add_account_action_button(
+                accounts_page,
+                4,
+                "Ver sesiones abiertas",
+                "sessions",
+                &[],
+                buffer,
+                status,
+            );
+            add_account_action_button(
+                accounts_page,
+                5,
+                "Inspeccionar una cuenta",
+                "inspect",
+                &ACCOUNT_TARGET_FIELDS,
+                buffer,
+                status,
+            );
+            add_section_heading(accounts_page, 6, "Gestionar cuentas");
+            add_account_action_button(
+                accounts_page,
+                7,
+                "Crear cuenta",
+                "create",
+                &ACCOUNT_CREATE_FIELDS,
+                buffer,
+                status,
+            );
+            add_account_action_button(
+                accounts_page,
+                8,
+                "Editar cuenta y grupos",
+                "modify",
+                &ACCOUNT_MODIFY_FIELDS,
+                buffer,
+                status,
+            );
+            add_account_password_button(accounts_page, 9, buffer, status);
+            add_account_action_button(
+                accounts_page,
+                10,
+                "Bloquear cuenta",
+                "lock",
+                &ACCOUNT_TARGET_FIELDS,
+                buffer,
+                status,
+            );
+            add_account_action_button(
+                accounts_page,
+                11,
+                "Desbloquear cuenta",
+                "unlock",
+                &ACCOUNT_TARGET_FIELDS,
+                buffer,
+                status,
+            );
+            add_account_action_button(
+                accounts_page,
+                12,
+                "Eliminar cuenta",
+                "delete",
+                &ACCOUNT_TARGET_FIELDS,
+                buffer,
+                status,
+            );
+            add_account_action_button(
+                accounts_page,
+                13,
+                "Configurar caducidad",
+                "expire",
+                &ACCOUNT_EXPIRE_FIELDS,
+                buffer,
+                status,
+            );
+            add_section_heading(accounts_page, 14, "Gestionar grupos y membresías");
+            add_account_action_button(
+                accounts_page,
+                15,
+                "Crear grupo",
+                "group-create",
+                &ACCOUNT_GROUP_FIELDS,
+                buffer,
+                status,
+            );
+            add_account_action_button(
+                accounts_page,
+                16,
+                "Eliminar grupo",
+                "group-delete",
+                &ACCOUNT_GROUP_FIELDS,
+                buffer,
+                status,
+            );
+            add_account_action_button(
+                accounts_page,
+                17,
+                "Añadir usuario a grupo",
+                "group-add",
+                &ACCOUNT_MEMBERSHIP_FIELDS,
+                buffer,
+                status,
+            );
+            add_account_action_button(
+                accounts_page,
+                18,
+                "Retirar usuario de grupo",
+                "group-remove",
+                &ACCOUNT_MEMBERSHIP_FIELDS,
+                buffer,
+                status,
+            );
+            add_account_action_button(
+                accounts_page,
+                19,
+                "Cambiar grupo principal",
+                "set-primary-group",
+                &ACCOUNT_MEMBERSHIP_FIELDS,
+                buffer,
+                status,
+            );
+            add_back_button_at(accounts_page, navigation, 20);
 
             let system_page = (*navigation).pages[11];
             add_section_heading(
@@ -3150,14 +4707,12 @@ mod linux {
                 buffer,
                 status,
             );
-            add_action(
+            add_submenu_button(
                 system_page,
                 2,
-                crate::i18n::accounts_label(),
-                "accounts",
-                &["list"],
-                buffer,
-                status,
+                "Usuarios, grupos y sesiones",
+                navigation,
+                24,
             );
             add_action(
                 system_page,
@@ -3231,25 +4786,16 @@ mod linux {
                 buffer,
                 status,
             );
-            add_action(
-                (*navigation).pages[2],
-                2,
-                crate::i18n::gui_text("stores"),
-                "software",
-                &["stores"],
-                buffer,
-                status,
-            );
             add_submenu_button(
                 (*navigation).pages[2],
-                3,
+                2,
                 crate::i18n::tools_text("install"),
                 navigation,
                 6,
             );
             add_native_action_button(
                 (*navigation).pages[2],
-                4,
+                3,
                 crate::i18n::native_action_text("tools_install"),
                 "install-dependency",
                 &TOOL_INSTALL_FIELDS,
@@ -3258,22 +4804,40 @@ mod linux {
             );
             add_action(
                 (*navigation).pages[2],
-                5,
+                4,
                 crate::i18n::diagnostics_label(),
                 "diagnostics",
                 &["health"],
                 buffer,
                 status,
             );
-            add_back_button_at((*navigation).pages[2], navigation, 6);
-            let native_page = (*navigation).pages[9];
+            add_back_button_at((*navigation).pages[2], navigation, 5);
+            let connectivity_page = (*navigation).pages[9];
             add_section_heading(
-                native_page,
+                connectivity_page,
                 0,
                 crate::i18n::gui_family_text("installable_connectivity"),
             );
+            add_submenu_button(
+                connectivity_page,
+                1,
+                crate::i18n::gui_family_text("installable_ssh"),
+                navigation,
+                18,
+            );
+            add_submenu_button(
+                connectivity_page,
+                2,
+                crate::i18n::gui_family_text("installable_android"),
+                navigation,
+                19,
+            );
+            add_back_button_at(connectivity_page, navigation, 3);
+
+            let ssh_page = (*navigation).pages[18];
+            add_section_heading(ssh_page, 0, crate::i18n::gui_family_text("installable_ssh"));
             add_native_action_button(
-                native_page,
+                ssh_page,
                 1,
                 "Conectar por SSH",
                 "ssh-connect",
@@ -3282,7 +4846,7 @@ mod linux {
                 status,
             );
             add_native_action_button(
-                native_page,
+                ssh_page,
                 2,
                 "Copiar con SCP",
                 "scp-copy",
@@ -3291,7 +4855,7 @@ mod linux {
                 status,
             );
             add_native_action_button(
-                native_page,
+                ssh_page,
                 3,
                 "Abrir SFTP",
                 "sftp",
@@ -3299,10 +4863,17 @@ mod linux {
                 buffer,
                 status,
             );
-            add_section_heading(native_page, 4, "Android (ADB)");
+            add_back_button_at(ssh_page, navigation, 4);
+
+            let android_page = (*navigation).pages[19];
+            add_section_heading(
+                android_page,
+                0,
+                crate::i18n::gui_family_text("installable_android"),
+            );
             add_native_action_button(
-                native_page,
-                5,
+                android_page,
+                1,
                 "Abrir shell ADB",
                 "adb-shell",
                 &ADB_SHELL_FIELDS,
@@ -3310,8 +4881,8 @@ mod linux {
                 status,
             );
             add_native_action_button(
-                native_page,
-                6,
+                android_page,
+                2,
                 "Instalar APK",
                 "adb-install",
                 &ADB_INSTALL_FIELDS,
@@ -3319,8 +4890,8 @@ mod linux {
                 status,
             );
             add_native_action_button(
-                native_page,
-                7,
+                android_page,
+                3,
                 "Enviar archivo ADB",
                 "adb-push",
                 &ADB_TRANSFER_FIELDS,
@@ -3328,8 +4899,8 @@ mod linux {
                 status,
             );
             add_native_action_button(
-                native_page,
-                8,
+                android_page,
+                4,
                 "Extraer archivo ADB",
                 "adb-pull",
                 &ADB_TRANSFER_FIELDS,
@@ -3337,15 +4908,40 @@ mod linux {
                 status,
             );
             add_native_action_button(
-                native_page,
-                9,
+                android_page,
+                5,
                 "Reiniciar dispositivo ADB",
                 "adb-reboot",
                 &ADB_REBOOT_FIELDS,
                 buffer,
                 status,
             );
-            add_back_button_at(native_page, navigation, 10);
+            add_back_button_at(android_page, navigation, 6);
+            let utilities_page = (*navigation).pages[20];
+            add_section_heading(
+                utilities_page,
+                0,
+                crate::i18n::gui_family_text("installable_utilities"),
+            );
+            add_action(
+                utilities_page,
+                1,
+                crate::i18n::native_action_text("tools_status"),
+                "native",
+                &["utilities", "status"],
+                buffer,
+                status,
+            );
+            add_native_action_button(
+                utilities_page,
+                2,
+                crate::i18n::native_action_text("tools_install"),
+                "install-utility",
+                &TOOL_INSTALL_FIELDS,
+                buffer,
+                status,
+            );
+            add_back_button_at(utilities_page, navigation, 3);
             let container_page = (*navigation).pages[12];
             add_submenu_button(
                 container_page,
@@ -3845,19 +5441,33 @@ mod linux {
             add_submenu_button(
                 (*navigation).pages[4],
                 1,
+                crate::i18n::tools_text("software_menu"),
+                navigation,
+                6,
+            );
+            add_submenu_button(
+                (*navigation).pages[4],
+                2,
                 crate::i18n::gui_family_text("installable_connectivity"),
                 navigation,
                 9,
             );
             add_submenu_button(
                 (*navigation).pages[4],
-                2,
+                3,
                 crate::i18n::gui_family_text("installable_docker"),
                 navigation,
                 12,
             );
-            add_submenu_button((*navigation).pages[4], 3, "Kubernetes", navigation, 13);
-            add_back_button_at((*navigation).pages[4], navigation, 4);
+            add_submenu_button((*navigation).pages[4], 4, "Kubernetes", navigation, 13);
+            add_submenu_button(
+                (*navigation).pages[4],
+                5,
+                crate::i18n::gui_family_text("installable_utilities"),
+                navigation,
+                20,
+            );
+            add_back_button_at((*navigation).pages[4], navigation, 6);
             let git_page = (*navigation).pages[8];
             let git_title = CString::new(crate::i18n::tools_text("git_title")).unwrap_or_default();
             let git_title_widget = gtk_label_new(git_title.as_ptr());
@@ -4029,16 +5639,32 @@ mod linux {
                 (buffer, status),
             );
             add_back_button_at(git_page, navigation, 18);
-            add_back_button((*navigation).pages[5], navigation);
-            add_action(
+            add_section_heading(
                 (*navigation).pages[5],
                 0,
-                crate::i18n::automation_text("list"),
-                "automation",
-                &["list"],
-                buffer,
-                status,
+                crate::i18n::automation_text("menu"),
             );
+            add_submenu_button(
+                (*navigation).pages[5],
+                1,
+                "Scripts registrados",
+                navigation,
+                25,
+            );
+            add_submenu_button(
+                (*navigation).pages[5],
+                2,
+                "Registrar nuevo script",
+                navigation,
+                26,
+            );
+            add_back_button_at((*navigation).pages[5], navigation, 3);
+
+            let scripts_page = (*navigation).pages[25];
+            build_scripts_page(scripts_page, navigation, buffer, status);
+
+            let registration_page = (*navigation).pages[26];
+            add_section_heading(registration_page, 0, "Registrar nuevo script");
             let mut registration_fields = [null_mut(); 4];
             for (index, key) in [
                 "automation_name",
@@ -4052,7 +5678,7 @@ mod linux {
                 let field = gtk_entry_new();
                 let placeholder = CString::new(crate::i18n::gui_text(key)).unwrap_or_default();
                 gtk_entry_set_placeholder_text(field, placeholder.as_ptr());
-                gtk_grid_attach((*navigation).pages[5], field, 0, (index + 1) as c_int, 2, 1);
+                gtk_grid_attach(registration_page, field, 0, (index + 1) as c_int, 2, 1);
                 registration_fields[index] = field;
             }
             let register_label =
@@ -4064,25 +5690,8 @@ mod linux {
                 status,
             }));
             connect(register_button, "clicked", on_register, registration.cast());
-            gtk_grid_attach((*navigation).pages[5], register_button, 0, 5, 2, 1);
-            add_automation_name_action(
-                (*navigation).pages[5],
-                0,
-                6,
-                crate::i18n::automation_text("run"),
-                "run",
-                registration_fields[0],
-                (buffer, status),
-            );
-            add_automation_name_action(
-                (*navigation).pages[5],
-                1,
-                6,
-                crate::i18n::automation_text("remove"),
-                "remove",
-                registration_fields[0],
-                (buffer, status),
-            );
+            gtk_grid_attach(registration_page, register_button, 0, 5, 2, 1);
+            add_back_button_at(registration_page, navigation, 8);
             add_back_button((*navigation).pages[6], navigation);
             let install_title =
                 CString::new(crate::i18n::tools_text("search_title")).unwrap_or_default();
@@ -4191,8 +5800,7 @@ mod windows {
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use windows_sys::Win32::Graphics::Gdi::{
         CreateSolidBrush, DeleteObject, DrawTextW, FillRect, FrameRect, InvalidateRect, SetBkColor,
-        SetBkMode, SetTextColor, UpdateWindow, DT_CENTER, DT_END_ELLIPSIS, DT_NOPREFIX,
-        DT_SINGLELINE, DT_VCENTER, TRANSPARENT,
+        SetBkMode, SetTextColor, UpdateWindow, DT_CENTER, DT_NOPREFIX, DT_VCENTER, TRANSPARENT,
     };
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::UI::Controls::SetWindowTheme;
@@ -4204,15 +5812,19 @@ mod windows {
     const CATEGORY_BASE: i32 = 1000;
     const ACTION_BASE: i32 = 1100;
     const ACTION_STRIDE: i32 = 16;
+    const ACTION_COUNT: usize = 16;
     const BACK_BASE: i32 = 1200;
     const FIELD_BASE: i32 = 1300;
-    const PAGE_COUNT: usize = 8;
+    // Categorías 0..7 más la página dedicada de cuentas/usuarios (8).
+    const PAGE_COUNT: usize = 9;
     const CATEGORY_COUNT: usize = 8;
     const SETTINGS_PAGE: usize = 6;
     const WINSLIM_PAGE: usize = 7;
+    const ACCOUNT_PAGE: usize = 8;
     const SETTINGS_APPLY_ID: i32 = 1400;
     const SETTINGS_THEME_ID: i32 = 1401;
     const SETTINGS_LANGUAGE_ID: i32 = 1402;
+    const EM_SETPASSWORDCHAR: u32 = 0x00cc;
     const SETTINGS_VISIBILITY_BASE: i32 = 1420;
     const WINDOWS_CATEGORY_KEYS: [&str; 6] = [
         "audit_inventory",
@@ -4229,6 +5841,7 @@ mod windows {
     // SS_CENTER es el estilo Win32 de centrado para controles STATIC. La
     // versión de windows-sys usada por el proyecto no lo exporta.
     const STATIC_CENTER: u32 = 0x0001;
+    const DT_WORDBREAK: u32 = 0x0010;
     fn wide(value: &str) -> Vec<u16> {
         OsStr::new(value).encode_wide().chain(once(0)).collect()
     }
@@ -4282,16 +5895,18 @@ mod windows {
             text.as_ptr(),
             -1,
             &mut rect,
-            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
+            DT_CENTER | DT_VCENTER | DT_WORDBREAK | DT_NOPREFIX,
         );
         1
     }
     struct WindowState {
         main_buttons: [HWND; CATEGORY_COUNT],
         pages: [HWND; PAGE_COUNT],
-        fields: [HWND; 4],
-        field_labels: [HWND; 4],
-        action_buttons: [[HWND; 11]; PAGE_COUNT],
+        fields: [HWND; 5],
+        field_labels: [HWND; 5],
+        account_fields: [HWND; 4],
+        account_field_labels: [HWND; 4],
+        action_buttons: [[HWND; ACTION_COUNT]; PAGE_COUNT],
         back_buttons: [HWND; PAGE_COUNT],
         subtitle: HWND,
         settings_theme: HWND,
@@ -4330,6 +5945,7 @@ mod windows {
         match std::process::Command::new(executable)
             .env("LTOOLS_CLI", "1")
             .env("LTOOLS_FRONTEND", "gui")
+            .env("LTOOLS_ACCOUNT_GUI_PRECONFIRMED", "1")
             .args([command])
             .args(args)
             .output()
@@ -4364,6 +5980,7 @@ mod windows {
         match std::process::Command::new(executable)
             .env("LTOOLS_CLI", "1")
             .env("LTOOLS_FRONTEND", "gui")
+            .env("LTOOLS_ACCOUNT_GUI_PRECONFIRMED", "1")
             .arg(command)
             .args(args)
             .output()
@@ -4431,12 +6048,53 @@ mod windows {
             (4, 4) => Some(("native", &["tools", "adb-status"], "adb")),
             (5, 0) => Some(("automation", &["list"], "automation")),
             (5, 1) => Some(("automation", &[], "register")),
+            (5, 2) => Some(("automation", &[], "run")),
+            (5, 3) => Some(("automation", &[], "edit")),
+            (5, 4) => Some(("automation", &[], "remove")),
+            (ACCOUNT_PAGE, 0) => Some(("accounts", &["list"], "account_list")),
+            (ACCOUNT_PAGE, 1) => Some(("accounts", &["groups"], "account_groups")),
+            (ACCOUNT_PAGE, 2) => Some(("accounts", &["identity"], "account_identity")),
+            (ACCOUNT_PAGE, 3) => Some(("accounts", &["sessions"], "account_sessions")),
+            (ACCOUNT_PAGE, 4) => Some(("accounts", &["inspect"], "account_inspect")),
+            (ACCOUNT_PAGE, 5) => Some(("accounts", &["create"], "account_create")),
+            (ACCOUNT_PAGE, 6) => Some(("accounts", &["modify"], "account_modify")),
+            (ACCOUNT_PAGE, 7) => Some(("accounts", &["password"], "account_password")),
+            (ACCOUNT_PAGE, 8) => Some(("accounts", &["lock"], "account_lock")),
+            (ACCOUNT_PAGE, 9) => Some(("accounts", &["unlock"], "account_unlock")),
+            (ACCOUNT_PAGE, 10) => Some(("accounts", &["delete"], "account_delete")),
+            (ACCOUNT_PAGE, 11) => Some(("accounts", &["expire"], "account_expire")),
+            (ACCOUNT_PAGE, 12) => Some(("accounts", &["group-create"], "account_group_create")),
+            (ACCOUNT_PAGE, 13) => Some(("accounts", &["group-delete"], "account_group_delete")),
+            (ACCOUNT_PAGE, 14) => Some(("accounts", &["group-add"], "account_group_add")),
+            (ACCOUNT_PAGE, 15) => Some(("accounts", &["group-remove"], "account_group_remove")),
             (WINSLIM_PAGE, 0) => Some(("winslim", &[], "winslim")),
             _ => None,
         }
     }
 
     fn action_label_text(page: usize, index: usize, label: &str) -> String {
+        if page == ACCOUNT_PAGE {
+            return match index {
+                0 => "Listar cuentas locales",
+                1 => "Listar grupos y miembros",
+                2 => "Ver mi identidad y grupos",
+                3 => "Ver sesiones abiertas",
+                4 => "Inspeccionar cuenta",
+                5 => "Crear cuenta",
+                6 => "Editar cuenta",
+                7 => "Cambiar contraseña",
+                8 => "Bloquear cuenta",
+                9 => "Desbloquear cuenta",
+                10 => "Eliminar cuenta",
+                11 => "Configurar caducidad",
+                12 => "Crear grupo",
+                13 => "Eliminar grupo",
+                14 => "Añadir usuario a grupo",
+                15 => "Retirar usuario de grupo",
+                _ => label,
+            }
+            .to_owned();
+        }
         if page == 1 {
             let storage_key = match index {
                 0 => Some("status"),
@@ -4451,6 +6109,9 @@ mod windows {
         }
         if label == "native_tools" {
             return crate::i18n::category_text("native_tools").to_owned();
+        }
+        if page == 5 && index == 0 {
+            return crate::i18n::automation_text("list").to_owned();
         }
         crate::i18n::gui_text(label).to_owned()
     }
@@ -4558,29 +6219,29 @@ mod windows {
         GetClientRect(hwnd, &mut rect);
         let client_width = (rect.right - rect.left).max(320);
         let client_height = (rect.bottom - rect.top).max(280);
-        let sidebar_width = ((client_width as f32 * 0.24) as i32).clamp(170, 230);
-        let content_left = sidebar_width + 28;
-        let content_width = (client_width - content_left - 16).max(230);
+        let content_left = 24;
+        let content_width = (client_width - 48).max(230);
         let gap = 12;
         let column_width = ((content_width - 24 - gap) / 2).max(110);
-        let button_height = 36;
+        let button_height = 42;
 
         move_control(state.subtitle, 12, 12, client_width - 24, 28);
+        let dashboard_width = (client_width - 48).clamp(260, 430);
+        let dashboard_left = (client_width - dashboard_width) / 2;
         for (index, button) in state.main_buttons.iter().enumerate() {
             if button.is_null() {
                 continue;
             }
-            let row = index as i32;
             move_control(
                 *button,
-                12,
-                50 + row * (button_height + 7),
-                sidebar_width,
+                dashboard_left,
+                66 + (index as i32) * (button_height + 8),
+                dashboard_width,
                 button_height,
             );
         }
 
-        let page_top = 48;
+        let page_top = 52;
         let page_height = (client_height - page_top - 12).max(180);
         for page in 0..PAGE_COUNT {
             let page_window = state.pages[page];
@@ -4591,13 +6252,18 @@ mod windows {
                 content_width,
                 page_height,
             );
-            for index in 0..11 {
+            for index in 0..ACTION_COUNT {
                 let column = (index as i32) % 2;
                 let row = (index as i32) / 2;
+                let (top, row_gap) = if page == ACCOUNT_PAGE {
+                    (178, 8)
+                } else {
+                    (16, 10)
+                };
                 move_control(
                     state.action_buttons[page][index],
                     12 + column * (column_width + gap),
-                    16 + row * (button_height + 10),
+                    top + row * (button_height + row_gap),
                     column_width,
                     button_height,
                 );
@@ -4605,10 +6271,27 @@ mod windows {
             if page == 5 {
                 let edit_x = 168;
                 let edit_width = (content_width - edit_x - 18).max(120);
-                for index in 0..4 {
-                    let y = 84 + (index as i32) * 38;
+                for index in 0..5 {
+                    // Las acciones ocupan las tres primeras filas del panel;
+                    // el formulario empieza debajo para que listar/registrar/
+                    // ejecutar/editar/borrar nunca se dibujen encima de los
+                    // campos, también en ventanas Win32 estrechas.
+                    let y = 198 + (index as i32) * 38;
                     move_control(state.field_labels[index], 12, y, 145, 24);
                     move_control(state.fields[index], edit_x, y - 3, edit_width, 28);
+                }
+            }
+            if page == ACCOUNT_PAGE {
+                for index in 0..4 {
+                    let y = 32 + (index as i32) * 34;
+                    move_control(state.account_field_labels[index], 12, y, 145, 24);
+                    move_control(
+                        state.account_fields[index],
+                        168,
+                        y - 3,
+                        (content_width - 180).max(120),
+                        28,
+                    );
                 }
             }
             if page == SETTINGS_PAGE {
@@ -4645,9 +6328,9 @@ mod windows {
             }
             move_control(
                 state.back_buttons[page],
-                12,
+                (content_width - 240) / 2,
                 page_height - 48,
-                (content_width - 24).max(150),
+                240,
                 34,
             );
         }
@@ -4661,6 +6344,165 @@ mod windows {
         let mut buffer = vec![0_u16; length as usize + 1];
         let read = GetWindowTextW(control, buffer.as_mut_ptr(), buffer.len() as i32);
         String::from_utf16_lossy(&buffer[..read as usize])
+    }
+
+    fn account_confirm(hwnd: HWND, action: &str, target: &str) -> bool {
+        unsafe {
+            let message = format!(
+                "Esta acción modificará cuentas o grupos locales.\r\n\r\nAcción: {action}\r\nObjetivo: {target}\r\n\r\n¿Quieres continuar?"
+            );
+            MessageBoxW(
+                hwnd,
+                wide(&message).as_ptr(),
+                wide(crate::i18n::product_name()).as_ptr(),
+                MB_YESNO | MB_ICONWARNING,
+            ) == IDYES
+        }
+    }
+
+    unsafe fn account_field(
+        state: &WindowState,
+        index: usize,
+        label: &str,
+    ) -> Result<String, String> {
+        let value = control_text(state.account_fields[index]);
+        if value.trim().is_empty() {
+            Err(format!("{label} es obligatorio"))
+        } else {
+            Ok(value)
+        }
+    }
+
+    unsafe fn run_account_action(hwnd: HWND, state: &WindowState, index: usize) -> String {
+        let result = (|| {
+            let user = || account_field(state, 0, "El usuario");
+            let mut args = Vec::<String>::new();
+            let action = match index {
+                0 => "list",
+                1 => "groups",
+                2 => "identity",
+                3 => "sessions",
+                4 => {
+                    args.extend(["inspect".into(), "--user".into(), user()?]);
+                    "inspect"
+                }
+                5 => {
+                    args.extend(["create".into(), "--user".into(), user()?]);
+                    let description = control_text(state.account_fields[1]);
+                    let full_name = control_text(state.account_fields[2]);
+                    if !description.trim().is_empty() {
+                        args.extend(["--description".into(), description]);
+                    }
+                    if !full_name.trim().is_empty() {
+                        args.extend(["--full-name".into(), full_name]);
+                    }
+                    "create"
+                }
+                6 => {
+                    args.extend(["modify".into(), "--user".into(), user()?]);
+                    let description = control_text(state.account_fields[1]);
+                    let full_name = control_text(state.account_fields[2]);
+                    let password_never_expires = control_text(state.account_fields[3]);
+                    if !description.trim().is_empty() {
+                        args.extend(["--description".into(), description]);
+                    }
+                    if !full_name.trim().is_empty() {
+                        args.extend(["--full-name".into(), full_name]);
+                    }
+                    if !password_never_expires.trim().is_empty() {
+                        args.extend(["--password-never-expires".into(), password_never_expires]);
+                    }
+                    if args.len() == 3 {
+                        return Err("Indica al menos un campo que editar".into());
+                    }
+                    "modify"
+                }
+                7 => {
+                    let account = user()?;
+                    let password = account_field(state, 1, "La contraseña")?;
+                    let repeated = account_field(state, 2, "La confirmación")?;
+                    if password != repeated {
+                        return Err("Las contraseñas no coinciden".into());
+                    }
+                    let nonce = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|value| value.as_nanos())
+                        .unwrap_or_default();
+                    let path = std::env::temp_dir().join(format!(
+                        "ltools-account-password-{}-{nonce}.txt",
+                        std::process::id()
+                    ));
+                    std::fs::write(&path, password)
+                        .map_err(|error| format!("No se pudo preparar la contraseña: {error}"))?;
+                    args.extend([
+                        "password".into(),
+                        "--user".into(),
+                        account,
+                        "--password-file".into(),
+                        path.display().to_string(),
+                    ]);
+                    "password"
+                }
+                8 => {
+                    args.extend(["lock".into(), "--user".into(), user()?]);
+                    "lock"
+                }
+                9 => {
+                    args.extend(["unlock".into(), "--user".into(), user()?]);
+                    "unlock"
+                }
+                10 => {
+                    args.extend(["delete".into(), "--user".into(), user()?]);
+                    "delete"
+                }
+                11 => {
+                    args.extend(["expire".into(), "--user".into(), user()?]);
+                    let date = account_field(state, 1, "La fecha")?;
+                    args.extend(["--date".into(), date]);
+                    "expire"
+                }
+                12 => {
+                    args.extend(["group-create".into(), "--group".into(), user()?]);
+                    "group-create"
+                }
+                13 => {
+                    args.extend(["group-delete".into(), "--group".into(), user()?]);
+                    "group-delete"
+                }
+                14 => {
+                    args.extend([
+                        "group-add".into(),
+                        "--user".into(),
+                        user()?,
+                        "--group".into(),
+                        account_field(state, 1, "El grupo")?,
+                    ]);
+                    "group-add"
+                }
+                15 => {
+                    args.extend([
+                        "group-remove".into(),
+                        "--user".into(),
+                        user()?,
+                        "--group".into(),
+                        account_field(state, 1, "El grupo")?,
+                    ]);
+                    "group-remove"
+                }
+                _ => return Err("Acción de cuentas no reconocida".into()),
+            };
+            if args.is_empty() {
+                args.push(action.to_owned());
+            }
+            if matches!(index, 5..=15) {
+                let target = args.get(2).cloned().unwrap_or_default();
+                if !account_confirm(hwnd, action, &target) {
+                    return Ok("Operación cancelada; no se modificó ninguna cuenta.".into());
+                }
+            }
+            Ok(run_action_dynamic("accounts", &args))
+        })();
+        result.unwrap_or_else(|error| error)
     }
     unsafe extern "system" fn window_proc(
         hwnd: HWND,
@@ -4759,6 +6601,10 @@ mod windows {
                     let Some((command, args, label)) = action_spec(page, index) else {
                         return 0;
                     };
+                    if page == 1 && index == 6 {
+                        navigate_to(hwnd, ACCOUNT_PAGE);
+                        return 0;
+                    }
                     if page == 1 && index == 3 {
                         let message = wide(crate::i18n::gui_text("confirm_storage_manager"));
                         let title = wide(crate::i18n::product_name());
@@ -4772,31 +6618,94 @@ mod windows {
                             return 0;
                         }
                     }
-                    let result = if page == 5 && index == 1 {
+                    let result = if page == ACCOUNT_PAGE {
+                        let Some(state) = state(hwnd) else {
+                            return 0;
+                        };
+                        for field in state.account_fields.iter() {
+                            SendMessageW(
+                                *field,
+                                EM_SETPASSWORDCHAR,
+                                if index == 7 { '*' as usize } else { 0 },
+                                0,
+                            );
+                        }
+                        run_account_action(hwnd, state, index)
+                    } else if page == 5 && (1..=4).contains(&index) {
                         let Some(state) = state(hwnd) else {
                             return 0;
                         };
                         let name = control_text(state.fields[0]);
-                        let program = control_text(state.fields[1]);
-                        let cwd = control_text(state.fields[2]);
-                        let raw_args = control_text(state.fields[3]);
-                        if name.trim().is_empty() || program.trim().is_empty() {
+                        if name.trim().is_empty() {
                             crate::i18n::gui_text("required").into()
+                        } else if index == 1 {
+                            let program = control_text(state.fields[2]);
+                            let cwd = control_text(state.fields[3]);
+                            let raw_args = control_text(state.fields[4]);
+                            if program.trim().is_empty() {
+                                crate::i18n::gui_text("required").into()
+                            } else {
+                                let mut values = vec![
+                                    "add".into(),
+                                    "--name".into(),
+                                    name,
+                                    "--program".into(),
+                                    program,
+                                ];
+                                if !cwd.trim().is_empty() {
+                                    values.extend(["--cwd".into(), cwd]);
+                                }
+                                if !raw_args.trim().is_empty() {
+                                    values.extend(["--args".into(), raw_args]);
+                                }
+                                run_action_dynamic(command, &values)
+                            }
+                        } else if index == 2 {
+                            run_action_dynamic(command, &["run".into(), name])
+                        } else if index == 4 {
+                            let message = wide(&format!(
+                                "Se eliminará la automatización «{name}». ¿Continuar?"
+                            ));
+                            if MessageBoxW(
+                                hwnd,
+                                message.as_ptr(),
+                                wide(crate::i18n::product_name()).as_ptr(),
+                                MB_YESNO | MB_ICONWARNING,
+                            ) != IDYES
+                            {
+                                crate::i18n::gui_text("cancelled").into()
+                            } else {
+                                run_action_dynamic(command, &["remove".into(), name])
+                            }
                         } else {
-                            let mut values = vec![
-                                "add".into(),
-                                "--name".into(),
-                                name,
-                                "--program".into(),
-                                program,
-                            ];
-                            if !cwd.trim().is_empty() {
-                                values.extend(["--cwd".into(), cwd]);
+                            let new_name = control_text(state.fields[1]);
+                            let program = control_text(state.fields[2]);
+                            let cwd = control_text(state.fields[3]);
+                            let raw_args = control_text(state.fields[4]);
+                            if new_name.trim().is_empty() || program.trim().is_empty() {
+                                crate::i18n::gui_text("required").into()
+                            } else {
+                                let mut values = vec![
+                                    "modify".into(),
+                                    "--name".into(),
+                                    name,
+                                    "--new-name".into(),
+                                    new_name,
+                                    "--program".into(),
+                                    program,
+                                ];
+                                if cwd.trim() == "-" {
+                                    values.push("--clear-working-directory".into());
+                                } else if !cwd.trim().is_empty() {
+                                    values.extend(["--cwd".into(), cwd]);
+                                }
+                                if raw_args.trim() == "-" {
+                                    values.extend(["--args".into(), String::new()]);
+                                } else if !raw_args.trim().is_empty() {
+                                    values.extend(["--args".into(), raw_args]);
+                                }
+                                run_action_dynamic(command, &values)
                             }
-                            if !raw_args.trim().is_empty() {
-                                values.extend(["--args".into(), raw_args]);
-                            }
-                            run_action_dynamic(command, &values)
                         }
                     } else {
                         run_action(command, args)
@@ -4888,8 +6797,8 @@ mod windows {
                 WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
-                820,
-                600,
+                1040,
+                720,
                 null_mut(),
                 null_mut(),
                 instance,
@@ -4969,9 +6878,11 @@ mod windows {
             let state = Box::into_raw(Box::new(WindowState {
                 main_buttons,
                 pages,
-                fields: [null_mut(); 4],
-                field_labels: [null_mut(); 4],
-                action_buttons: [[null_mut(); 11]; PAGE_COUNT],
+                fields: [null_mut(); 5],
+                field_labels: [null_mut(); 5],
+                account_fields: [null_mut(); 4],
+                account_field_labels: [null_mut(); 4],
+                action_buttons: [[null_mut(); ACTION_COUNT]; PAGE_COUNT],
                 back_buttons: [null_mut(); PAGE_COUNT],
                 subtitle,
                 settings_theme: null_mut(),
@@ -5001,7 +6912,7 @@ mod windows {
                     null_mut(),
                 );
                 (*state).pages[page] = page_window;
-                for index in 0..11 {
+                for index in 0..ACTION_COUNT {
                     if let Some((_, _, label)) = action_spec(page, index) {
                         let button = CreateWindowExW(
                             0,
@@ -5168,6 +7079,7 @@ mod windows {
                 if page == 5 {
                     for (index, key) in [
                         "automation_name",
+                        "automation_new_name",
                         "automation_program",
                         "automation_cwd",
                         "automation_args",
@@ -5205,6 +7117,60 @@ mod windows {
                             null_mut(),
                         );
                         (*state).fields[index] = field;
+                    }
+                }
+                if page == ACCOUNT_PAGE {
+                    let account_labels = [
+                        "Usuario o grupo",
+                        "Descripción, contraseña o grupo",
+                        "Confirmación o nombre completo",
+                        "Opcional / verdadero-falso",
+                    ];
+                    CreateWindowExW(
+                        0,
+                        wide("STATIC").as_ptr(),
+                        wide("Usuarios, grupos y sesiones").as_ptr(),
+                        WS_CHILD | WS_VISIBLE,
+                        10,
+                        2,
+                        720,
+                        24,
+                        page_window,
+                        null_mut(),
+                        instance,
+                        null_mut(),
+                    );
+                    for (index, key) in account_labels.iter().enumerate() {
+                        let caption = CreateWindowExW(
+                            0,
+                            wide("STATIC").as_ptr(),
+                            wide(key).as_ptr(),
+                            WS_CHILD | WS_VISIBLE,
+                            10,
+                            16 + (index as i32) * 34,
+                            145,
+                            24,
+                            page_window,
+                            null_mut(),
+                            instance,
+                            null_mut(),
+                        );
+                        (*state).account_field_labels[index] = caption;
+                        let field = CreateWindowExW(
+                            0,
+                            wide("EDIT").as_ptr(),
+                            std::ptr::null(),
+                            WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL as u32,
+                            168,
+                            13 + (index as i32) * 34,
+                            540,
+                            28,
+                            page_window,
+                            null_mut(),
+                            instance,
+                            null_mut(),
+                        );
+                        (*state).account_fields[index] = field;
                     }
                 }
                 let back = CreateWindowExW(

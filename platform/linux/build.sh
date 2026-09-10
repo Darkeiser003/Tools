@@ -546,6 +546,7 @@ if [[ "$WINDOWS_WINE" -eq 1 ]]; then
     WINDOWS_WINE_CARGO_TARGET_DIR="$ROOT_DIR/rust/target/windows-wine"
     WINDOWS_WINE_ARTIFACT="$WINDOWS_WINE_ARTIFACT_DIR/ltools-$VERSION-windows-${WINDOWS_TARGET%%-*}.exe"
     WINDOWS_WINE_CLI_ARTIFACT="$WINDOWS_WINE_ARTIFACT_DIR/ltools-$VERSION-windows-${WINDOWS_TARGET%%-*}-cli.exe"
+    WINDOWS_WINE_ZIP_ARTIFACT="$WINDOWS_WINE_ARTIFACT_DIR/ltools-$VERSION-windows-${WINDOWS_TARGET%%-*}.zip"
     WINDOWS_WINE_LOG="$WINDOWS_WINE_ARTIFACT_DIR/windows-wine-$BUILD_ID.log"
     wine_args=(
         --target "$WINDOWS_TARGET"
@@ -566,6 +567,9 @@ if [[ "$WINDOWS_WINE" -eq 1 ]]; then
         "$ROOT_DIR/tests/linux/windows-wine.sh" "${wine_args[@]}"
     [[ -s "$WINDOWS_WINE_ARTIFACT" ]] || die 'la validación Windows no produjo el ejecutable principal'
     [[ -s "$WINDOWS_WINE_CLI_ARTIFACT" ]] || die 'la validación Windows no produjo el ejecutable CLI'
+    if [[ "$PACKAGE" -eq 1 ]]; then
+        [[ -s "$WINDOWS_WINE_ZIP_ARTIFACT" ]] || die 'la validación Windows no produjo el ZIP portable'
+    fi
     [[ -x "$BIN" ]] || die 'la fase Windows alteró el target Linux; se esperaba conservar el binario Linux'
     ok 'compilación y pruebas Windows bajo Wine/Proton correctas'
 fi
@@ -791,8 +795,9 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
     fi
     if [[ "$WINDOWS_WINE" -eq 1 && -d "$WINDOWS_WINE_ARTIFACT_DIR" ]]; then
         while IFS= read -r -d '' file; do copy_to_release "$file"; done < <(
-            find "$WINDOWS_WINE_ARTIFACT_DIR" -maxdepth 1 -type f \
-                \( -name "ltools-$VERSION-windows-*.exe" \
+        find "$WINDOWS_WINE_ARTIFACT_DIR" -maxdepth 1 -type f \
+            \( -name "ltools-$VERSION-windows-*.exe" \
+                -o -name "ltools-$VERSION-windows-*.zip" \
                 -o -name 'ltools-capabilities-windows.json' \
                 -o -name 'ltools-terminal-windows.json' \) -print0
         )
@@ -841,7 +846,13 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
     release_e2e_args=(--release-dir "$RELEASE_DIR" --version "$VERSION" --signature-verifier "$BIN")
     [[ "$APPIMAGE" -eq 0 ]] && release_e2e_args+=(--no-appimage)
     [[ "$PACKAGE" -eq 0 ]] && release_e2e_args+=(--no-package)
-    [[ "$WINDOWS_WINE" -eq 1 ]] && release_e2e_args+=(--require-windows-executables)
+    if [[ "$WINDOWS_WINE" -eq 1 ]]; then
+        if [[ "$PACKAGE" -eq 1 ]]; then
+            release_e2e_args+=(--require-windows)
+        else
+            release_e2e_args+=(--require-windows-executables)
+        fi
+    fi
     if [[ -r "$SIGNING_PUBLIC_KEY_FILE" ]]; then
         release_e2e_args+=(--signature-public-key-file "$SIGNING_PUBLIC_KEY_FILE")
     fi

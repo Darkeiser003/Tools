@@ -6,10 +6,9 @@ use std::io::{self, Write};
 pub fn menu(ctx: &Context) -> Result<(), String> {
     loop {
         crate::clear_screen();
-        println!("{}", crate::i18n::tools_text("title"));
-        println!("  1) {}", crate::i18n::tools_text("search"));
-        println!("  2) {}", crate::i18n::tools_text("install"));
-        println!("  3) {}", crate::i18n::tools_text("git_menu"));
+        println!("{}", crate::i18n::tools_text("menu"));
+        println!("  1) {}", crate::i18n::tools_text("software_menu"));
+        println!("  2) {}", crate::i18n::tools_text("git_menu"));
         println!("  q) {}", crate::i18n::text("menu.back"));
         print!("{}", crate::i18n::text("menu.prompt"));
         let _ = io::stdout().flush();
@@ -19,9 +18,18 @@ pub fn menu(ctx: &Context) -> Result<(), String> {
         }
         match answer.trim().to_lowercase().as_str() {
             "" | "q" | "quit" | "salir" => return Ok(()),
-            "1" => run_and_pause(ctx, &["search".into()]),
-            "2" => run_and_pause(ctx, &["install".into()]),
-            "3" => git_menu(ctx),
+            "1" => {
+                if let Err(error) = software_menu(ctx) {
+                    show_result(Err(error));
+                    pause();
+                }
+            }
+            "2" => {
+                if let Err(error) = git_menu(ctx) {
+                    show_result(Err(error));
+                    pause();
+                }
+            }
             _ => {
                 println!("{}", crate::i18n::text("menu.invalid"));
                 pause();
@@ -30,7 +38,36 @@ pub fn menu(ctx: &Context) -> Result<(), String> {
     }
 }
 
-fn git_menu(ctx: &Context) {
+/// Menú específico de gestores de paquetes y almacenes.
+///
+/// Se mantiene separado de Git porque ambos módulos tienen flujos y riesgos
+/// distintos: buscar/listar es informativo, instalar es explícito y Git opera
+/// sobre repositorios. El acceso antiguo `tools` sigue entrando aquí mediante
+/// el menú superior.
+pub fn software_menu(ctx: &Context) -> Result<(), String> {
+    loop {
+        crate::clear_screen();
+        println!("{}", crate::i18n::tools_text("software_title"));
+        println!("  1) {}", crate::i18n::tools_text("stores"));
+        println!("  2) {}", crate::i18n::tools_text("search"));
+        println!("  3) {}", crate::i18n::tools_text("install"));
+        println!("  q) {}", crate::i18n::text("menu.back"));
+        let answer = input(crate::i18n::text("menu.prompt"));
+        match answer.to_lowercase().as_str() {
+            "" | "q" | "quit" | "salir" => return Ok(()),
+            "1" => run_and_pause(ctx, &["stores".into()]),
+            "2" => run_and_pause(ctx, &["search".into()]),
+            "3" => run_and_pause(ctx, &["install".into()]),
+            _ => {
+                println!("{}", crate::i18n::text("menu.invalid"));
+                pause();
+            }
+        }
+    }
+}
+
+/// Menú completo de Git y GitHub, independiente de los gestores de paquetes.
+pub fn git_menu(ctx: &Context) -> Result<(), String> {
     loop {
         crate::clear_screen();
         println!("{}", crate::i18n::tools_text("git_title"));
@@ -53,7 +90,7 @@ fn git_menu(ctx: &Context) {
         println!("  q) {}", crate::i18n::text("menu.back"));
         let answer = input(crate::i18n::text("menu.prompt"));
         let result = match answer.as_str() {
-            "" | "q" | "quit" | "salir" => return,
+            "" | "q" | "quit" | "salir" => return Ok(()),
             "1" => crate::git::run(ctx, &["status".into()]),
             "2" => crate::git::run(ctx, &["log".into()]),
             "3" => run_clone_result(ctx),

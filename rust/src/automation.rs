@@ -12,11 +12,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Automation {
-    name: String,
-    program: String,
-    working_directory: Option<String>,
-    args: Vec<String>,
+pub(crate) struct Automation {
+    pub(crate) name: String,
+    pub(crate) program: String,
+    pub(crate) working_directory: Option<String>,
+    pub(crate) args: Vec<String>,
 }
 
 fn registry_path() -> PathBuf {
@@ -86,7 +86,7 @@ fn parse_line(line: &str) -> Option<Automation> {
     })
 }
 
-fn load() -> Result<Vec<Automation>, String> {
+pub(crate) fn load() -> Result<Vec<Automation>, String> {
     let path = registry_path();
     let content = match fs::read_to_string(&path) {
         Ok(content) => content,
@@ -143,7 +143,7 @@ fn save(entries: &[Automation]) -> Result<(), String> {
     })
 }
 
-fn split_arguments(input: &str) -> Result<Vec<String>, String> {
+pub(crate) fn split_arguments(input: &str) -> Result<Vec<String>, String> {
     let mut values = Vec::new();
     let mut current = String::new();
     let mut quote = None;
@@ -327,6 +327,47 @@ fn add(entry: Automation, ctx: &Context) -> Result<(), String> {
     Ok(())
 }
 
+fn modify(original_name: &str, entry: Automation, ctx: &Context) -> Result<(), String> {
+    validate(&entry)?;
+    let mut entries = load()?;
+    let index = entries
+        .iter()
+        .position(|old| old.name.eq_ignore_ascii_case(original_name))
+        .ok_or_else(|| format!("no existe una automatización llamada {original_name}"))?;
+    if entries
+        .iter()
+        .enumerate()
+        .any(|(current, old)| current != index && old.name.eq_ignore_ascii_case(&entry.name))
+    {
+        return Err(format!(
+            "ya existe una automatización llamada {}",
+            entry.name
+        ));
+    }
+    if ctx.dry_run {
+        println!(
+            "Simulación: se modificaría {} → {}",
+            original_name, entry.name
+        );
+        return Ok(());
+    }
+    let previous = entries[index].clone();
+    entries[index] = entry.clone();
+    save(&entries)?;
+    if let Some(plan) = &ctx.plan {
+        let _ = plan.record(
+            "automation-modify",
+            Path::new(&entry.program),
+            "executed",
+            true,
+            &format!("{} → {}", previous.name, entry.name),
+            &registry_path().display().to_string(),
+        );
+    }
+    println!("{}", crate::i18n::automation_text("updated"));
+    Ok(())
+}
+
 fn remove(name: &str, ctx: &Context) -> Result<(), String> {
     let mut entries = load()?;
     let old_len = entries.len();
@@ -339,6 +380,16 @@ fn remove(name: &str, ctx: &Context) -> Result<(), String> {
         return Ok(());
     }
     save(&entries)?;
+    if let Some(plan) = &ctx.plan {
+        let _ = plan.record(
+            "automation-remove",
+            &registry_path(),
+            "executed",
+            true,
+            name,
+            &registry_path().display().to_string(),
+        );
+    }
     println!("{}", crate::i18n::automation_text("removed"));
     Ok(())
 }
@@ -433,6 +484,7 @@ fn interactive_menu(ctx: &Context) -> Result<(), String> {
         println!("  2) {}", crate::i18n::automation_text("add"));
         println!("  3) {}", crate::i18n::automation_text("run"));
         println!("  4) {}", crate::i18n::automation_text("remove"));
+        println!("  5) Editar automatización");
         println!("  q) {}", crate::i18n::text("menu.back"));
         let Some(answer) = input(crate::i18n::text("menu.prompt")) else {
             return Ok(());
@@ -496,6 +548,42 @@ fn interactive_menu(ctx: &Context) -> Result<(), String> {
                     continue;
                 };
                 if let Err(error) = remove(&name, ctx) {
+                    eprintln!("Error: {error}");
+                }
+                let _ = input(crate::i18n::tools_text("pause"));
+            }
+            "5" => {
+                let Some(original) = input("Nombre actual: ") else {
+                    continue;
+                };
+                let Some(new_name) = input("Nuevo nombre (Enter conserva): ") else {
+                    continue;
+                };
+                let Some(program) = input("Programa/ruta (Enter conserva): ") else {
+                    continue;
+                };
+                let Some(directory) = input("Directorio (Enter conserva, - elimina): ") else {
+                    continue;
+                };
+                let Some(raw_args) = input("Argumentos (Enter conserva): ") else {
+                    continue;
+                };
+                let mut command = vec!["modify".to_owned(), "--name".to_owned(), original];
+                if !new_name.trim().is_empty() {
+                    command.extend(["--new-name".into(), new_name]);
+                }
+                if !program.trim().is_empty() {
+                    command.extend(["--program".into(), program]);
+                }
+                if directory.trim() == "-" {
+                    command.push("--clear-working-directory".into());
+                } else if !directory.trim().is_empty() {
+                    command.extend(["--cwd".into(), directory]);
+                }
+                if !raw_args.trim().is_empty() {
+                    command.extend(["--args".into(), raw_args]);
+                }
+                if let Err(error) = run(ctx, &command) {
                     eprintln!("Error: {error}");
                 }
                 let _ = input(crate::i18n::tools_text("pause"));
@@ -580,6 +668,72 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
                 },
                 ctx,
             )
+        }
+        "modify" | "edit" | "update" => {
+            let original = args
+                .iter()
+                .position(|value| value == "--name")
+                .and_then(|index| args.get(index + 1))
+                .ok_or("modify requiere --name NOMBRE")?
+                .clone();
+            let mut entry = load()?
+                .into_iter()
+                .find(|value| value.name.eq_ignore_ascii_case(&original))
+                .ok_or_else(|| format!("no existe una automatización llamada {original}"))?;
+            let mut index = 1;
+            let mut replace_args = false;
+            while index < args.len() {
+                match args[index].as_str() {
+                    "--name" => index += 1,
+                    "--new-name" => {
+                        index += 1;
+                        entry.name = args
+                            .get(index)
+                            .cloned()
+                            .ok_or("--new-name requiere un valor")?;
+                    }
+                    "--program" | "--script" => {
+                        index += 1;
+                        entry.program = args
+                            .get(index)
+                            .cloned()
+                            .ok_or("--program requiere un valor")?;
+                    }
+                    "--working-directory" | "--cwd" => {
+                        index += 1;
+                        entry.working_directory =
+                            Some(args.get(index).cloned().ok_or("--cwd requiere un valor")?);
+                    }
+                    "--clear-working-directory" => entry.working_directory = None,
+                    "--arg" => {
+                        index += 1;
+                        if !replace_args {
+                            entry.args.clear();
+                            replace_args = true;
+                        }
+                        entry
+                            .args
+                            .push(args.get(index).cloned().ok_or("--arg requiere un valor")?);
+                    }
+                    "--args" => {
+                        index += 1;
+                        if !replace_args {
+                            entry.args.clear();
+                            replace_args = true;
+                        }
+                        entry.args.extend(split_arguments(
+                            args.get(index).ok_or("--args requiere un valor")?,
+                        )?);
+                    }
+                    other => {
+                        return Err(format!(
+                            "opción desconocida para automation modify: {other}"
+                        ))
+                    }
+                }
+                index += 1;
+            }
+            modify(&original, entry, ctx)
         }
         "run" | "execute" => {
             let name = args.get(1).ok_or("falta el nombre de la automatización")?;

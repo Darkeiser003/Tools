@@ -213,9 +213,11 @@ run_menu main-packages-empty "1\n3\n\n" 'Pulsa Enter para volver:'
 ok 'opción 8 conserva la ventana cuando la ruta queda vacía'
 run_menu main-storage "3\n1\n11\n\nq\n" 'Herramientas de almacenamiento Linux'
 run_menu main-storage-guided "3\n1\n12\n\nq\nq\n" 'Selección segura de almacenamiento'
-run_menu main-clean "2\n9\nq\n" 'Limpieza protegida'
+run_menu main-clean "2\n6\nq\n" 'Limpieza protegida'
 run_menu main-registry "3\n6\n1\nq\n" 'Registros y configuración Linux'
-run_menu main-tools "4\n1\nq\nq\n" 'Paquetes, almacenes y Git'
+run_menu main-tools "4\n1\nq\nq\n" 'Operaciones Git y GitHub'
+run_menu main-software "4\n2\n1\nq\nq\nq\n" 'Stores de paquetes detectadas'
+run_menu main-utilities "4\n7\nq\n\nq\nq\n" 'Utilidades del sistema Linux'
 run_menu main-multi-session "1\n3\n$PKG_OUT\n\nq\n5\nq\nq\n" 'Operación terminada correctamente.'
 [[ "$(grep -o '=== LTools' "$TMP_DIR/main-multi-session.out" | wc -l)" -ge 2 ]] || die 'el menú no volvió a mostrarse tras una acción'
 grep -Fq $'\033[2J\033[H=== LTools' "$TMP_DIR/main-multi-session.out" || die 'el menú no limpió la pantalla al volver'
@@ -224,15 +226,15 @@ grep -Fq 'Informe de paquetes:' "$TMP_DIR/main-multi-session.out" || die 'la ses
 ok 'sesión múltiple: volver con Enter, cambiar de opción y no crear planes innecesarios'
 
 printf 'E2E: recorriendo todas las opciones principales del menú...\n'
-run_menu main-clean-empty "2\n9\n" 'LTools'
+run_menu main-clean-empty "2\n6\n" 'LTools'
 run_menu main-prefix "1\n4\n" 'Prefijos detectados:'
 run_menu main-defaults "6\n1\n" 'Defaults efectivos'
 run_menu main-system "3\n2\nq\n" 'Servicios, procesos y journal'
 run_menu main-accounts "3\n3\nq\n" 'Usuarios, grupos y sesiones Linux'
 run_menu main-native "3\n4\nq\n" 'Red, hardware, energía y seguridad Linux'
-run_menu main-native-tools "3\n4\n6\nq\n\nq\n\nq\n" 'Herramientas operativas Linux'
-run_menu main-native-containers "3\n4\n7\nq\n\nq\n\nq\n" 'Docker / Podman'
-run_menu main-native-kubernetes "3\n4\n8\nq\n\nq\n\nq\n" 'Kubernetes'
+run_menu main-native-tools "3\n4\nq\n\nq\n\nq\n" 'Red, hardware, energía y seguridad Linux'
+run_menu main-native-containers "4\n5\nq\n\nq\n\nq\n" 'Docker / Podman'
+run_menu main-native-kubernetes "4\n6\nq\n\nq\n\nq\n" 'Kubernetes'
 run_menu main-storage-guide "3\n1\n17\n\nq\nq\n" 'Guía de particionado Linux'
 run_menu main-services-doctor "2\n1\n" 'Diagnóstico'
 run_menu main-services-native-diagnostics "2\n7\n" 'Diagnóstico nativo del sistema'
@@ -310,9 +312,9 @@ PACKAGE_ONLY_OUT="$TMP_DIR/packages-only"
 run_bash packages --packages-only --out "$PACKAGE_ONLY_OUT" >/dev/null
 assert_file "$PACKAGE_ONLY_OUT/inventory.tsv"
 ok 'inventario de paquetes en modo solo paquetes'
-REPORT_VIEW_OUTPUT="$($BIN report view --path "$PACKAGE_ONLY_OUT/summary.txt")"
+REPORT_VIEW_OUTPUT="$("$BIN" report view --path "$PACKAGE_ONLY_OUT/summary.txt")"
 grep -Fq 'Inventario principal:' <<<"$REPORT_VIEW_OUTPUT" || die 'report view no leyó el resumen directamente'
-REPORT_MENU_OUTPUT="$(printf 'c\nq\n' | $BIN report menu --path "$PACKAGE_ONLY_OUT")"
+REPORT_MENU_OUTPUT="$(printf 'c\nq\n' | "$BIN" report menu --path "$PACKAGE_ONLY_OUT")"
 grep -Fq 'Informe:' <<<"$REPORT_MENU_OUTPUT" || die 'report menu no mostró los informes disponibles'
 grep -Fq 'Inventario principal:' <<<"$REPORT_MENU_OUTPUT" || die 'report menu no leyó el resumen seleccionado'
 ok 'lector integrado: resumen directo y menú de informe'
@@ -436,39 +438,39 @@ assert_file "$GAMES_OUT/rust-menu/configuration-validation.tsv"
 ok 'menú Rust ejecuta juegos, Wine, Proton y validación'
 
 RUST_CLEAN_OUTPUT="$TMP_DIR/rust-clean-menu.out"
-printf '2\n9\nq\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
+printf '2\n6\nq\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
     LTOOLS_NO_MOUNTS=1 "$BIN" menu >"$RUST_CLEAN_OUTPUT" 2>&1
 grep -Fq 'Limpieza protegida' "$RUST_CLEAN_OUTPUT" || die 'el menú Rust no abrió limpieza'
 [[ "$(grep -o '=== LTools' "$RUST_CLEAN_OUTPUT" | wc -l)" -ge 2 ]] || die 'q no volvió directamente al menú principal desde limpieza'
 ok 'menú Rust abre y cierra limpieza protegida'
 
 RUST_CLEAN_PATH_OUTPUT="$TMP_DIR/rust-clean-path-menu.out"
-printf '2\n9\n4\n%s\nn\nq\n' "$FIXTURE/duplicate-a.bin" | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
+printf '2\n6\n4\n%s\nn\nq\n' "$FIXTURE/duplicate-a.bin" | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
     LTOOLS_NO_MOUNTS=1 "$BIN" menu >"$RUST_CLEAN_PATH_OUTPUT" 2>&1
 grep -Fq 'Ruta:' "$RUST_CLEAN_PATH_OUTPUT" || die 'el submenú Rust clean no pidió una ruta'
 [[ "$(grep -o '=== LTools' "$RUST_CLEAN_PATH_OUTPUT" | wc -l)" -ge 2 ]] || die 'clean no volvió al menú principal tras cancelar'
 ok 'submenú Rust clean revisa y cancela una ruta'
 
 RUST_CLEAN_ORPHANS_OUTPUT="$TMP_DIR/rust-clean-orphans-menu.out"
-printf '2\n9\n1\nq\nq\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
+printf '2\n6\n1\nq\nq\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
     LTOOLS_NO_MOUNTS=1 "$BIN" menu >"$RUST_CLEAN_ORPHANS_OUTPUT" 2>&1
 grep -Fq 'paquetes huérfanos' "$RUST_CLEAN_ORPHANS_OUTPUT" || die 'el submenú Rust clean no ejecutó huérfanos'
 ok 'submenú Rust clean ejecuta revisión de huérfanos sin confirmar borrado'
 
 RUST_CLEAN_CACHE_OUTPUT="$TMP_DIR/rust-clean-cache-menu.out"
-printf '2\n9\n2\nq\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
+printf '2\n6\n2\nq\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
     LTOOLS_NO_MOUNTS=1 "$BIN" menu >"$RUST_CLEAN_CACHE_OUTPUT" 2>&1
 grep -Fq 'cachés' "$RUST_CLEAN_CACHE_OUTPUT" || die 'el submenú Rust clean no ejecutó cachés'
 ok 'submenú Rust clean ejecuta revisión de cachés sin confirmar borrado'
 
 RUST_CLEAN_FLATPAK_OUTPUT="$TMP_DIR/rust-clean-flatpak-menu.out"
-printf '2\n9\n3\nn\nq\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$HOME/.local/state" \
+printf '2\n6\n3\nn\nq\n' | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$HOME/.local/state" \
     LTOOLS_NO_MOUNTS=1 "$BIN" menu >"$RUST_CLEAN_FLATPAK_OUTPUT" 2>&1
 grep -Fq 'Limpieza protegida' "$RUST_CLEAN_FLATPAK_OUTPUT" || die 'el submenú Rust clean no ejecutó Flatpak'
 ok 'submenú Rust clean ofrece Flatpak sin confirmar borrado'
 
 RUST_CLEAN_PACKAGE_OUTPUT="$TMP_DIR/rust-clean-package-menu.out"
-printf '2\n9\n5\n%s\nn\nq\n' "$FIXTURE/example.deb" | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
+printf '2\n6\n5\n%s\nn\nq\n' "$FIXTURE/example.deb" | timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
     LTOOLS_NO_MOUNTS=1 "$BIN" menu >"$RUST_CLEAN_PACKAGE_OUTPUT" 2>&1
 grep -Fq 'Paquete:' "$RUST_CLEAN_PACKAGE_OUTPUT" || die 'el submenú Rust clean no pidió un paquete'
 ok 'submenú Rust clean revisa y cancela un paquete'

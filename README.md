@@ -43,7 +43,6 @@ admiten `--dry-run` y generan planes reversibles cuando corresponde.
 - [Build y distribución](#build-y-distribución)
 - [Descarga desde GitHub y manifiesto de release](#descarga-desde-github-y-manifiesto-de-release)
 - [Integración JSON y terminal](#integración-json-y-terminal)
-- [Contrato de integración con LTerminal](docs/lterminal-integration.md)
 - [Arquitectura](#arquitectura)
 - [Idiomas](#idiomas)
 - [Logs, planes y rollback](#logs-planes-y-rollback)
@@ -646,11 +645,24 @@ submenú permite consultar y gestionar el flujo habitual:
 ```
 
 `status`, `partitions`, `partition-table`, `mounts`, `inspect`, `health` y `check` son consultas;
-la comprobación usa `fsck -N` y nunca repara. `mount` y `unmount` piden
-confirmación, validan el objetivo y se anotan en el plan. `open-gparted` abre
-el gestor gráfico instalado, pero LTools no genera órdenes destructivas de
-particionado. Si falta una herramienta opcional, se ofrece su instalación
-puntual mediante `doctor --install`.
+la comprobación usa `fsck -N` y nunca repara. Además, Linux ofrece el menú
+`storage operate` y sus submenús GUI para ejecutar, con confirmación, las
+operaciones de `parted`, formateado/etiquetas/redimensionado, montajes, swap,
+LUKS, LVM, Btrfs, ZFS y RAID mdadm. Cada acción valida los argumentos, muestra
+el comando completo y admite `--dry-run` sobre objetivos sintéticos. `mount`,
+`unmount` y las operaciones mutables se anotan en el plan. `open-gparted` queda
+como alternativa externa, no como requisito. Si falta una herramienta, se
+ofrece su instalación puntual mediante `doctor --install`.
+
+Ejemplos seguros de simulación:
+
+```text
+ltools --dry-run storage operate mklabel-gpt --device /dev/sdX
+ltools --dry-run storage operate mkpart --device /dev/sdX --fs ext4 --start 1MiB --end 100% --name Datos
+ltools --dry-run storage operate mkfs --device /dev/sdX1 --fs ext4 --label Datos
+ltools --dry-run storage operate luks-format --device /dev/sdX2
+ltools --dry-run storage operate lvm --operation lvcreate --vg datos --name home --size 20G
+```
 
 `storage guide` documenta el flujo seguro de particionado. En Linux enumera
 `lsblk`, `parted print`, `fdisk -l` y `sfdisk --dump`; en Windows documenta

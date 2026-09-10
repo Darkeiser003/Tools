@@ -828,4 +828,21 @@ mod tests {
         assert!(parse_limit("0").is_err());
         assert!(parse_limit("1001").is_err());
     }
+
+    #[test]
+    fn search_options_after_query_are_not_skipped() {
+        let args = vec![
+            "tool".into(),
+            "--manager".into(),
+            "pacman".into(),
+            "--format=json".into(),
+            "--limit".into(),
+            "7".into(),
+        ];
+        let (query, manager, format, limit) = parse_search_args(&args).unwrap();
+        assert_eq!(query, "tool");
+        assert_eq!(manager.as_deref(), Some("pacman"));
+        assert_eq!(format, "json");
+        assert_eq!(limit, 7);
+    }
 }

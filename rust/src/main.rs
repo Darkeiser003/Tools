@@ -7,6 +7,8 @@ mod cli_ui;
 mod common;
 mod compat;
 mod diagnostics;
+#[cfg(not(windows))]
+mod formatting;
 mod games;
 mod git;
 #[cfg(any(target_os = "linux", windows))]
@@ -276,7 +278,19 @@ pub(crate) fn clear_screen() {
 /// Pure queries should not create a state file on every invocation. Keep a
 /// plan for mutations, simulations, and explicit `--plan` requests.
 fn command_needs_plan(command: &str, args: &[String], dry_run: bool, explicit: bool) -> bool {
-    if dry_run || explicit {
+    if explicit {
+        return true;
+    }
+    if dry_run {
+        // Una consulta explícitamente simulada sigue siendo una consulta:
+        // no necesita crear un fichero de transacción que no puede aplicar.
+        // Las operaciones de escritura simuladas sí conservan el plan para
+        // mantener la misma frontera de seguridad que una ejecución real.
+        if matches!(command, "storage" | "disks" | "partitions")
+            && storage_operation_is_read_only(args)
+        {
+            return false;
+        }
         return true;
     }
     if command.starts_with("menu-") {
@@ -294,6 +308,19 @@ fn command_needs_plan(command: &str, args: &[String], dry_run: bool, explicit: b
             "format",
             "resize",
             "partition",
+            "operate",
+            "operation",
+            "mklabel",
+            "mkpart",
+            "mkfs",
+            "wipefs",
+            "discard",
+            "luks",
+            "lvm",
+            "btrfs",
+            "zfs",
+            "raid",
+            "mdadm",
             "open-gparted",
             "open-disk-management",
             "open-diskpart",
@@ -322,7 +349,9 @@ fn command_needs_plan(command: &str, args: &[String], dry_run: bool, explicit: b
                 ])
             }
         }
-        "automation" | "automations" | "import" => has_any(&["add", "remove", "run"]),
+        "automation" | "automations" | "import" => {
+            has_any(&["add", "remove", "run", "modify", "edit", "update"])
+        }
         "actions" | "action-catalog" => actions::needs_plan(args),
         "tools" | "quick-actions" => false,
         "registry" | "records" => has_any(&["write", "apply", "import"]),
@@ -397,7 +426,7 @@ fn command_needs_plan(command: &str, args: &[String], dry_run: bool, explicit: b
             "--flatpak-unused",
         ]),
         #[cfg(not(windows))]
-        "wine" => has_any(&[
+        "prefix" | "wine" | "wine-audit" => has_any(&[
             "create",
             "migrate",
             "copy",
@@ -411,27 +440,21 @@ fn command_needs_plan(command: &str, args: &[String], dry_run: bool, explicit: b
         ]),
         #[cfg(windows)]
         "prefix" | "wine" | "wine-audit" => false,
-        #[cfg(not(windows))]
-        "prefix" | "wine-audit" => has_any(&[
-            "create",
-            "migrate",
-            "copy",
-            "remove",
-            "delete",
-            "activate",
-            "set-defaults",
-            "update-launchers",
-            "rewrite-configs",
-        ]),
         "accounts" | "users" | "user-management" => has_any(&[
             "create",
             "add",
             "remove",
             "delete",
             "modify",
+            "edit",
             "password",
+            "passwd",
+            "expire",
+            "group-create",
+            "group-delete",
             "group-add",
             "group-remove",
+            "set-primary-group",
             "lock",
             "unlock",
         ]),
@@ -442,6 +465,37 @@ fn command_needs_plan(command: &str, args: &[String], dry_run: bool, explicit: b
         // side effect.
         _ => false,
     }
+}
+
+fn storage_operation_is_read_only(args: &[String]) -> bool {
+    args.iter().any(|arg| {
+        matches!(
+            arg.as_str(),
+            "print" | "print-free" | "probe" | "status" | "partitions" | "mounts"
+        )
+    }) && !args.iter().any(|arg| {
+        matches!(
+            arg.as_str(),
+            "mount"
+                | "unmount"
+                | "format"
+                | "resize"
+                | "mklabel"
+                | "mkpart"
+                | "mkfs"
+                | "wipefs"
+                | "discard"
+                | "luks"
+                | "lvm"
+                | "btrfs"
+                | "zfs"
+                | "raid"
+                | "mdadm"
+                | "open-gparted"
+                | "open-disk-management"
+                | "open-diskpart"
+        )
+    })
 }
 
 fn finalize_failed_plan(ctx: &Context) {
@@ -1123,38 +1177,18 @@ fn dependencies_menu(ctx: &Context) -> Result<(), String> {
         cli_ui::group(i18n::category_text("dependencies"));
         println!("  1) {}", i18n::gui_text("doctor"));
         println!("  2) {}", i18n::native_action_text("tools_status"));
-        println!("  3) {}", i18n::gui_text("stores"));
-        println!("  4) {}", i18n::tools_text("search"));
-        println!("  5) {}", i18n::tools_text("install"));
-        println!("  6) {}", i18n::native_action_text("tools_install"));
-        println!("  7) {}", i18n::diagnostics_label());
-        println!("  8) {}", i18n::text("menu.system.dependencies"));
-        println!("  9) {}", i18n::text("menu.clean"));
+        println!("  3) {}", i18n::native_action_text("tools_install"));
+        println!("  4) {}", i18n::diagnostics_label());
+        println!("  5) {}", i18n::text("menu.system.dependencies"));
+        println!("  6) {}", i18n::text("menu.clean"));
         println!("  q) Volver");
         let answer = menu_input(i18n::text("menu.prompt")).unwrap_or_default();
         let result = match answer.as_str() {
             "1" => execute_action("doctor", ctx, &[]),
             "2" => execute_action("native", ctx, &["tools".into(), "status".into()]),
-            "3" => execute_action("software", ctx, &["stores".into()]),
-            "4" => {
-                let query = menu_input(i18n::gui_text("package_placeholder")).unwrap_or_default();
-                if query.is_empty() {
-                    Ok(())
-                } else {
-                    execute_action("software", ctx, &["search".into(), query])
-                }
-            }
+            "3" => execute_action("native", ctx, &["tools".into(), "install".into()]),
+            "4" => execute_action("diagnostics", ctx, &["health".into()]),
             "5" => {
-                let query = menu_input(i18n::gui_text("package_placeholder")).unwrap_or_default();
-                if query.is_empty() {
-                    Ok(())
-                } else {
-                    execute_action("software", ctx, &["install".into(), query])
-                }
-            }
-            "6" => execute_action("native", ctx, &["tools".into(), "install".into()]),
-            "7" => execute_action("diagnostics", ctx, &["health".into()]),
-            "8" => {
                 let prompt = format!("{}: ", i18n::text("menu.system.dependencies"));
                 let unit = menu_input(&prompt).unwrap_or_default();
                 if unit.is_empty() {
@@ -1167,7 +1201,7 @@ fn dependencies_menu(ctx: &Context) -> Result<(), String> {
                     )
                 }
             }
-            "9" => execute_action("clean", ctx, &["menu".into()]),
+            "6" => execute_action("clean", ctx, &["menu".into()]),
             "" | "q" | "Q" => return Ok(()),
             _ => {
                 println!("{}", i18n::text("menu.invalid"));
@@ -1218,18 +1252,22 @@ fn installable_tools_menu(ctx: &Context) -> Result<(), String> {
         cli_ui::header(Some("installable_tools"));
         cli_ui::group(i18n::category_text("installable_tools"));
         println!("  1) {}", i18n::tools_text("git_menu"));
-        println!("  2) {}", i18n::native_tools_label());
-        println!("  3) {}", i18n::native_action_text("adb_devices"));
-        println!("  4) {}", i18n::native_action_text("container_list"));
-        println!("  5) {}", i18n::native_action_text("kubernetes_contexts"));
+        println!("  2) {}", i18n::tools_text("software_menu"));
+        println!("  3) {}", i18n::gui_family_text("installable_ssh"));
+        println!("  4) {}", i18n::gui_family_text("installable_android"));
+        println!("  5) {}", i18n::gui_family_text("installable_docker"));
+        println!("  6) Kubernetes");
+        println!("  7) {}", i18n::gui_family_text("installable_utilities"));
         println!("  q) Volver");
         let answer = menu_input(i18n::text("menu.prompt")).unwrap_or_default();
         let result = match answer.as_str() {
-            "1" => execute_action("tools", ctx, &[]),
-            "2" => execute_action("native", ctx, &["tools".into(), "ssh".into()]),
-            "3" => execute_action("native", ctx, &["tools".into(), "adb".into()]),
-            "4" => execute_action("native", ctx, &["tools".into(), "containers".into()]),
-            "5" => execute_action("native", ctx, &["tools".into(), "kubernetes".into()]),
+            "1" => tools::git_menu(ctx),
+            "2" => tools::software_menu(ctx),
+            "3" => execute_action("native", ctx, &["tools".into(), "ssh".into()]),
+            "4" => execute_action("native", ctx, &["tools".into(), "adb".into()]),
+            "5" => execute_action("native", ctx, &["tools".into(), "containers".into()]),
+            "6" => execute_action("native", ctx, &["tools".into(), "kubernetes".into()]),
+            "7" => execute_action("native", ctx, &["utilities".into(), "menu".into()]),
             "" | "q" | "Q" => return Ok(()),
             _ => {
                 println!("{}", i18n::text("menu.invalid"));
@@ -1463,6 +1501,9 @@ fn apply_visual_options(raw: &[String]) {
 }
 
 fn cli_profile() -> bool {
+    if cfg!(feature = "cli") {
+        return true;
+    }
     if matches!(
         env::var("LTOOLS_CLI").ok().as_deref(),
         Some("1") | Some("true") | Some("yes") | Some("si") | Some("sí")
@@ -1724,9 +1765,48 @@ mod tests {
     }
 
     #[test]
+    fn every_account_mutation_has_a_transaction_boundary() {
+        for action in [
+            "create",
+            "add",
+            "modify",
+            "edit",
+            "password",
+            "passwd",
+            "expire",
+            "lock",
+            "unlock",
+            "delete",
+            "remove",
+            "group-create",
+            "group-delete",
+            "group-add",
+            "group-remove",
+            "set-primary-group",
+        ] {
+            assert!(
+                command_needs_plan("accounts", &args(&[action, "--user", "demo"]), false, false),
+                "accounts {action}"
+            );
+        }
+    }
+
+    #[test]
     fn simulation_and_explicit_plan_keep_the_transaction_boundary() {
         assert!(command_needs_plan("defaults", &[], true, false));
         assert!(command_needs_plan("packages", &[], false, true));
+        assert!(!command_needs_plan(
+            "storage",
+            &args(&["operate", "print", "--device", "/dev/synthetic0"]),
+            true,
+            false
+        ));
+        assert!(command_needs_plan(
+            "storage",
+            &args(&["operate", "mkfs", "--device", "/dev/synthetic0p1"]),
+            true,
+            false
+        ));
     }
 
     #[test]
@@ -1784,6 +1864,12 @@ mod tests {
         assert!(!command_needs_plan("wine", &args(&["list"]), false, false));
         assert!(command_needs_plan(
             "wine",
+            &args(&["migrate", "--source", "/tmp/a"]),
+            false,
+            false
+        ));
+        assert!(command_needs_plan(
+            "prefix",
             &args(&["migrate", "--source", "/tmp/a"]),
             false,
             false

@@ -301,6 +301,19 @@ pub fn run_with_sudo(program: &str, args: &[String], dry_run: bool) -> io::Resul
     crate::platform::run_with_privilege(program, args, dry_run)
 }
 
+/// Ejecuta una orden privilegiada alimentando su stdin sin convertir el
+/// contenido en argumentos, logs ni planes. Se usa únicamente para flujos
+/// guiados que ya obtuvieron el secreto en un diálogo propio.
+#[cfg(not(windows))]
+pub fn run_with_sudo_input(
+    program: &str,
+    args: &[String],
+    input: &[u8],
+    dry_run: bool,
+) -> io::Result<bool> {
+    crate::platform::run_with_privilege_input(program, args, input, dry_run)
+}
+
 pub fn shell_display(value: &str) -> String {
     if value
         .chars()

@@ -85,6 +85,16 @@ pub fn run_with_privilege(program: &str, args: &[String], dry_run: bool) -> io::
 }
 
 #[cfg(not(windows))]
+pub fn run_with_privilege_input(
+    program: &str,
+    args: &[String],
+    input: &[u8],
+    dry_run: bool,
+) -> io::Result<bool> {
+    current::run_with_privilege_input(program, args, input, dry_run)
+}
+
+#[cfg(not(windows))]
 pub fn critical_path(path: &Path) -> bool {
     current::critical_path(path)
 }

@@ -46,7 +46,7 @@ ok 'sintaxis de todos los scripts Bash'
 
 "$BIN" --version >/dev/null
 ok 'backend Rust responde a --version'
-HELP_OUTPUT="$($BIN --help)"
+HELP_OUTPUT="$("$BIN" --help)"
 grep -Fq 'doctor --install TOOL' <<<"$HELP_OUTPUT" || die 'la ayuda no documenta la instalación explícita'
 ok 'backend Rust responde a --help'
 CLI_HELP_OUTPUT="$(LTOOLS_CLI=1 "$BIN")"
@@ -82,12 +82,12 @@ if command -v xvfb-run >/dev/null 2>&1; then
 else
     skip 'GUI Rust Linux: xvfb-run no está disponible'
 fi
-CAPABILITIES_JSON="$($BIN capabilities --format json)"
+CAPABILITIES_JSON="$("$BIN" capabilities --format json)"
 grep -Fq '"schema": "ltools-capabilities-v1"' <<<"$CAPABILITIES_JSON" ||
     die 'el contrato JSON de capacidades no se pudo generar'
 grep -Fq 'lterminal-startup-v1' <<<"$CAPABILITIES_JSON" ||
     die 'el contrato JSON no declara integración de terminal'
-LEGACY_CAPABILITIES_JSON="$($BIN --ltools-capabilities --format json)"
+LEGACY_CAPABILITIES_JSON="$("$BIN" --ltools-capabilities --format json)"
 grep -Fq '"schema": "ltools-capabilities-v1"' <<<"$LEGACY_CAPABILITIES_JSON" ||
     die 'el alias de capacidades usado por la integración no funciona'
 ok 'alias de capacidades para AppRun y terminales anfitrionas'
@@ -101,7 +101,7 @@ if command -v jq >/dev/null 2>&1; then
 fi
 ok 'contrato JSON de capacidades e integración; catálogo nativo con instaladores operativos'
 
-ACTIONS_JSON="$($BIN actions list --format json)"
+ACTIONS_JSON="$("$BIN" actions list --format json)"
 if command -v jq >/dev/null 2>&1; then
     jq -e '.schema == "ltools-actions-v1" and .platform == "linux" and .safety.target_selection == "explicit-only" and (.actions | length >= 30) and any(.actions[]; .id == "storage.mount" and .targetPolicy == "explicit-only" and .mutating == true) and any(.actions[]; .id == "accounts.add" and .targetPolicy == "explicit-only" and .mutating == true and .confirmation != "none") and any(.actions[]; .id == "native.dns-flush" and .mutating == true and .confirmation != "none") and any(.actions[]; .id == "boot.status" and (.aliases | index("tboot status") != null) and .mutating == false) and all(.actions[]; (.command | IN("audit","packages","games","storage","system","accounts","native","defaults","clean","diagnostics","automation","boot")))' \
         <<<"$ACTIONS_JSON" >/dev/null || die 'el registro de acciones Linux no declara políticas o acciones válidas'
@@ -109,19 +109,25 @@ else
     grep -Fq 'ltools-actions-v1' <<<"$ACTIONS_JSON" || die 'el registro de acciones Linux no se pudo generar'
     grep -Fq 'explicit-only' <<<"$ACTIONS_JSON" || die 'las acciones sensibles no exigen objetivo explícito'
 fi
-ACTION_DRY_RUN="$($BIN --dry-run actions run storage.mount /dev/synthetic-ltools)"
+ACTION_DRY_RUN="$("$BIN" --dry-run actions run storage.mount /dev/synthetic-ltools)"
 grep -Fq 'udisksctl mount' <<<"$ACTION_DRY_RUN" || grep -Fq 'mount /dev/synthetic-ltools' <<<"$ACTION_DRY_RUN" || die 'actions run no delegó el montaje con dry-run'
 ok 'registro de acciones guiadas, política de objetivo explícito y dry-run'
 
-NATIVE_TOOLS_OUTPUT="$($BIN native tools)"
+NATIVE_TOOLS_OUTPUT="$("$BIN" native tools)"
 for native_tool in ssh scp sftp adb docker kubectl; do
     grep -Fq "$native_tool" <<<"$NATIVE_TOOLS_OUTPUT" || die "native tools no enumeró $native_tool"
 done
 ok 'catálogo de SSH, ADB, Docker y Kubernetes en la consulta nativa'
-DEPENDENCIES_MENU_OUTPUT="$($BIN menu-dependencies <<< 'q')"
+UTILITIES_OUTPUT="$("$BIN" native utilities status)"
+for utility in curl file openssl gpg; do
+    grep -Fq "$utility" <<<"$UTILITIES_OUTPUT" || die "native utilities no enumeró $utility"
+done
+printf 'q\n' | "$BIN" native utilities menu >/dev/null || die 'native utilities menu no volvió con q'
+ok 'catálogo y menú propio de utilidades del sistema'
+DEPENDENCIES_MENU_OUTPUT="$("$BIN" menu-dependencies <<< 'q')"
 grep -Eqi 'Instalar una dependencia|Install a dependency' <<<"$DEPENDENCIES_MENU_OUTPUT" ||
     die 'el menú central de dependencias no ofrece instalación guiada'
-if grep -Eqi 'Instalar una dependencia|Install a dependency' <(printf '%s\n' "$($BIN native tools menu <<< 'q')"); then
+if grep -Eqi 'Instalar una dependencia|Install a dependency' <(printf '%s\n' "$("$BIN" native tools menu <<< 'q')"); then
     die 'el menú operativo conserva un botón duplicado de instalación'
 fi
 ok 'dependencias centralizadas y menú operativo sin duplicados'
@@ -137,10 +143,10 @@ done
 grep -Fq 'compose up|down|start|stop|restart|ps|logs|pull|build|config|images|top|run|exec|rm|pause|unpause' "$ROOT_DIR/rust/src/native/mod.rs" || die 'ayuda nativa sin operaciones completas de Compose'
 ok 'acciones Docker/Podman y Compose cubren ciclo de vida, recursos y mantenimiento'
 
-PARTITION_GUIDE_OUTPUT="$($BIN storage guide)"
+PARTITION_GUIDE_OUTPUT="$("$BIN" storage guide)"
 grep -Fq 'parted print' <<<"$PARTITION_GUIDE_OUTPUT" || die 'la guía Linux no documentó parted print'
 grep -Fq 'Objetivos protegidos' <<<"$PARTITION_GUIDE_OUTPUT" || die 'la guía Linux no documentó objetivos protegidos'
-PARTITION_DRY_RUN="$($BIN --dry-run storage partition-table /dev/synthetic-ltools)"
+PARTITION_DRY_RUN="$("$BIN" --dry-run storage partition-table /dev/synthetic-ltools)"
 grep -Fq 'se consultarían lsblk, parted print, fdisk -l y sfdisk --dump' <<<"$PARTITION_DRY_RUN" || die 'partition-table dry-run no mostró el plan seguro'
 ok 'flujo guiado de tabla de particiones Linux y dry-run sin acceso al dispositivo'
 
@@ -160,7 +166,7 @@ set -e
 grep -Fq 'pacman -S --needed rsync' "$INSTALL_OUTPUT" || die 'doctor --install no mostró el comando concreto'
 grep -Fq 'Instalación cancelada para la dependencia «rsync» (rsync); no se modifica el sistema.' "$INSTALL_OUTPUT" || die 'doctor --install no identificó la dependencia cancelada de forma segura'
 ok 'instalación explícita muestra comando y respeta la cancelación'
-TERMINAL_JSON="$($BIN capabilities --format terminal-json)"
+TERMINAL_JSON="$("$BIN" capabilities --format terminal-json)"
 grep -Fq '"schema": "ltools-terminal-integration-v1"' <<<"$TERMINAL_JSON" ||
     die 'el descriptor específico de terminal no se pudo generar'
 grep -Fq '"required_terminal_capability": "lterminal-startup-v1"' <<<"$TERMINAL_JSON" ||
@@ -247,17 +253,30 @@ if "$BIN" storage inspect '/dev/synthetic;invalid' >"$TMP_DIR/storage-invalid.ou
 fi
 grep -Fq 'dispositivo' "$TMP_DIR/storage-invalid.out" || die 'storage no explicó el objetivo inválido'
 ok 'gestor de discos: montajes, particiones, simulación y validación'
-STORAGE_USAGE="$($BIN storage usage)"
+STORAGE_USAGE="$("$BIN" storage usage)"
 grep -Fq 'Uso de espacio' <<<"$STORAGE_USAGE" || die 'storage usage no responde'
-STORAGE_FILESYSTEMS="$($BIN storage filesystems)"
+STORAGE_FILESYSTEMS="$("$BIN" storage filesystems)"
 grep -Fq 'Sistemas de archivos' <<<"$STORAGE_FILESYSTEMS" || die 'storage filesystems no responde'
-STORAGE_STACK="$($BIN storage volume-stack)"
+STORAGE_STACK="$("$BIN" storage volume-stack)"
 grep -Fq 'Capas de almacenamiento' <<<"$STORAGE_STACK" || die 'storage volume-stack no responde'
 ok 'consultas avanzadas de almacenamiento y capas nativas'
-ACCOUNT_OUTPUT="$($BIN accounts identity)"
-grep -Fq 'uid=' <<<"$ACCOUNT_OUTPUT" || die 'accounts identity no responde'
-ACCOUNT_ACTIONS="$($BIN --dry-run actions run accounts.add ltools-e2e-user)"
+ACCOUNT_OUTPUT="$("$BIN" accounts identity)"
+grep -Eq '^UID[[:space:]]+' <<<"$ACCOUNT_OUTPUT" || die 'accounts identity no responde o no está tabulada'
+ACCOUNT_LIST_OUTPUT="$("$BIN" accounts list --human)"
+grep -Eq '^USUARIO[[:space:]]+' <<<"$ACCOUNT_LIST_OUTPUT" || die 'accounts list no está tabulada'
+ACCOUNT_GROUPS_OUTPUT="$("$BIN" accounts groups --user "$(id -un)")"
+grep -Eq '^USUARIO[[:space:]]+GRUPO' <<<"$ACCOUNT_GROUPS_OUTPUT" || die 'accounts groups no está tabulada'
+ACCOUNT_CREATE_DRY="$("$BIN" --dry-run accounts create --user ltools-e2e-user --home "$TMP_DIR/home-user" --shell /bin/bash --groups users,developers --system --no-create-home)"
+grep -Fq 'useradd' <<<"$ACCOUNT_CREATE_DRY" || die 'accounts create no expone su orden en dry-run'
+ACCOUNT_MODIFY_DRY="$("$BIN" --dry-run accounts modify --user ltools-e2e-user --shell /bin/zsh --groups developers --append --lock)"
+grep -Fq 'usermod' <<<"$ACCOUNT_MODIFY_DRY" || die 'accounts modify no expone su orden en dry-run'
+ACCOUNT_GROUP_DRY="$("$BIN" --dry-run accounts group-add --user ltools-e2e-user --group developers)"
+grep -Fq 'usermod --append --groups developers' <<<"$ACCOUNT_GROUP_DRY" || die 'accounts group-add no admite campos separados'
+ACCOUNT_EXPIRE_DRY="$("$BIN" --dry-run accounts expire --user ltools-e2e-user --date 2030-01-01 --maxdays 90)"
+grep -Fq 'chage' <<<"$ACCOUNT_EXPIRE_DRY" || die 'accounts expire no expone su orden en dry-run'
+ACCOUNT_ACTIONS="$("$BIN" --dry-run actions run accounts.add ltools-e2e-user)"
 grep -Fq 'Acción: accounts.add' <<<"$ACCOUNT_ACTIONS" || die 'accounts.add no se publica en el catálogo'
+ok 'usuarios, grupos, membresías, caducidad y salidas tabuladas'
 REGISTRY_OUTPUT="$("$BIN" registry status)"
 grep -Fq 'Registros y configuración Linux' <<<"$REGISTRY_OUTPUT" || die 'registry Linux no responde'
 ok 'módulos Linux de almacenamiento y configuración'
@@ -266,33 +285,33 @@ ok 'módulos Linux de almacenamiento y configuración'
 # pero estas comprobaciones garantizan además que cada subacción devuelve un
 # estado estable aunque una utilidad opcional esté ausente, enmascarada o
 # requiera privilegios para mostrar parte de su información.
-NATIVE_NETWORK="$($BIN native network status 2>&1)" || die 'native network status terminó con error'
+NATIVE_NETWORK="$("$BIN" native network status 2>&1)" || die 'native network status terminó con error'
 grep -Fq 'Red Linux' <<<"$NATIVE_NETWORK" || die 'native network status no mostró su sección Linux'
-NATIVE_HARDWARE="$($BIN native hardware status 2>&1)" || die 'native hardware status terminó con error'
+NATIVE_HARDWARE="$("$BIN" native hardware status 2>&1)" || die 'native hardware status terminó con error'
 grep -Fq 'Hardware Linux' <<<"$NATIVE_HARDWARE" || die 'native hardware status no mostró su sección Linux'
-NATIVE_POWER="$($BIN native power status 2>&1)" || die 'native power status terminó con error por una dependencia opcional'
+NATIVE_POWER="$("$BIN" native power status 2>&1)" || die 'native power status terminó con error por una dependencia opcional'
 grep -Fq 'Energía Linux' <<<"$NATIVE_POWER" || die 'native power status no mostró su sección Linux'
-NATIVE_SECURITY="$($BIN native security status 2>&1)" || die 'native security status terminó con error por permisos o herramienta opcional'
+NATIVE_SECURITY="$("$BIN" native security status 2>&1)" || die 'native security status terminó con error por permisos o herramienta opcional'
 grep -Fq 'Firewall Linux' <<<"$NATIVE_SECURITY" || die 'native security status no mostró su sección Linux'
-NATIVE_DNS_DRY_RUN="$($BIN --dry-run native network flush-dns 2>&1)" || die 'native network flush-dns dry-run terminó con error'
+NATIVE_DNS_DRY_RUN="$("$BIN" --dry-run native network flush-dns 2>&1)" || die 'native network flush-dns dry-run terminó con error'
 grep -Fq 'resolvectl flush-caches' <<<"$NATIVE_DNS_DRY_RUN" || die 'native network flush-dns no generó el plan esperado'
 ok 'acciones nativas Linux directas: red, hardware, energía, seguridad y DNS'
-BOOT_STATUS="$($BIN boot status 2>&1)" || die 'boot status Linux terminó con error'
+BOOT_STATUS="$("$BIN" boot status 2>&1)" || die 'boot status Linux terminó con error'
 grep -Fq 'Arranque Linux' <<<"$BOOT_STATUS" || die 'boot status Linux no mostró su sección nativa'
-BOOT_ALIAS="$($BIN tboot status 2>&1)" || die 'alias tboot status terminó con error'
+BOOT_ALIAS="$("$BIN" tboot status 2>&1)" || die 'alias tboot status terminó con error'
 grep -Fq 'Arranque Linux' <<<"$BOOT_ALIAS" || die 'tboot no se tradujo al módulo boot Linux'
-BOOT_PLAN="$($BIN --dry-run boot plan 2>&1)" || die 'boot plan Linux terminó con error'
+BOOT_PLAN="$("$BIN" --dry-run boot plan 2>&1)" || die 'boot plan Linux terminó con error'
 grep -Fq 'No se modificarán' <<<"$BOOT_PLAN" || die 'boot plan Linux no confirmó su modo de solo lectura'
 ok 'arranque Linux: estado, alias y plan sin modificaciones'
 
-DIAGNOSTICS_JSON="$($BIN diagnostics health --format json)"
+DIAGNOSTICS_JSON="$("$BIN" diagnostics health --format json)"
 if command -v jq >/dev/null 2>&1; then
     jq -e '.schema == "ltools-diagnostics-v1" and .platform == "linux" and (.probes | length >= 3) and all(.probes[]; .key and (.available | type == "boolean") and (.output | type == "string"))' \
         <<<"$DIAGNOSTICS_JSON" >/dev/null || die 'diagnostics no generó un JSON válido o incompleto'
 else
     grep -Fq 'ltools-diagnostics-v1' <<<"$DIAGNOSTICS_JSON" || die 'diagnostics no generó su esquema JSON'
 fi
-DIAGNOSTICS_TSV="$($BIN diagnostics network --format tsv)"
+DIAGNOSTICS_TSV="$("$BIN" diagnostics network --format tsv)"
 grep -Fq $'key\tcommand\tavailable\toutput' <<<"$DIAGNOSTICS_TSV" || die 'diagnostics no generó cabecera TSV'
 for diagnostic_action in health network hardware users; do
     "$BIN" diagnostics "$diagnostic_action" >/dev/null || die "diagnostics $diagnostic_action terminó con error"
