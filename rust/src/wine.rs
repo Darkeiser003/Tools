@@ -125,7 +125,7 @@ fn create(ctx: &Context, args: &[String]) -> Result<(), String> {
     validate_destination(&dest)?;
     let arch = value(args, "--arch").unwrap_or_else(|| "win64".into());
     println!("Se creará un prefijo {arch} en {}", dest.display());
-    if !ask("¿Crear el prefijo?") {
+    if !ctx.dry_run && !args.iter().any(|value| value == "--yes") && !ask("¿Crear el prefijo?") {
         return Ok(());
     }
     if let Some(plan) = &ctx.plan {
@@ -192,6 +192,8 @@ fn migrate(ctx: &Context, args: &[String]) -> Result<(), String> {
     }
     if has_locks(&source)
         && !args.iter().any(|a| a == "--force")
+        && !args.iter().any(|a| a == "--yes")
+        && !ctx.dry_run
         && !ask("Hay bloqueos posibles. ¿Has cerrado Wine, Steam, Lutris y Heroic?")
     {
         return Err("migración cancelada por posibles bloqueos".into());
@@ -281,7 +283,10 @@ fn migrate(ctx: &Context, args: &[String]) -> Result<(), String> {
             }
         }
     }
-    if !ask("¿Continuar con esta migración?") {
+    if !ctx.dry_run
+        && !args.iter().any(|value| value == "--yes")
+        && !ask("¿Continuar con esta migración?")
+    {
         return Ok(());
     }
     if let Some(plan) = &ctx.plan {
@@ -399,7 +404,8 @@ fn migrate(ctx: &Context, args: &[String]) -> Result<(), String> {
         rewrite_configs(ctx, &source, &dest)?;
     }
     if args.iter().any(|a| a == "--remove-source")
-        && ask("¿Mover el origen verificado a la papelera?")
+        && (args.iter().any(|value| value == "--yes")
+            || ask("¿Mover el origen verificado a la papelera?"))
         && move_to_trash(&source, false).map_err(|e| e.to_string())?
     {
         if let Some(plan) = &ctx.plan {

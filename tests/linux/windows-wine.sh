@@ -427,6 +427,53 @@ else
     grep -Fq 'Uso: ltools' <<<"$cli_noargs_output" ||
         die 'el ejecutable CLI Windows sin argumentos no muestra la ayuda'
     ok 'perfil CLI Windows separado abre en modo consola y sin argumentos no inicia la GUI'
+
+    # Validación real del gestor de alias dentro del prefijo Wine. Las rutas
+    # son Windows deliberadamente: el registro y el lanzador deben respetar
+    # APPDATA/LOCALAPPDATA y no reutilizar rutas POSIX.
+    windows_alias_home='C:\ltools-alias-config'
+    windows_alias_bin='C:\ltools-alias-bin'
+    windows_alias_ensure="$(LTOOLS_ALIAS_HOME="$windows_alias_home" \
+        LTOOLS_ALIAS_BIN="$windows_alias_bin" run_cli_timeout aliases ensure 2>>"$LOG_PATH")" ||
+        die 'aliases ensure Windows bajo Wine falló'
+    grep -Fq 'Alias predeterminados listos:' <<<"$windows_alias_ensure" ||
+        die 'aliases ensure Windows no creó el registro'
+    grep -Fq 'Lanzador creado:' <<<"$windows_alias_ensure" ||
+        die 'aliases ensure Windows no creó el lanzador'
+    windows_alias_list="$(LTOOLS_ALIAS_HOME="$windows_alias_home" run_cli_timeout aliases list 2>>"$LOG_PATH")" ||
+        die 'aliases list Windows bajo Wine falló'
+    grep -Fq 'tnet -> native network' <<<"$windows_alias_list" ||
+        die 'el registro Windows no contiene el alias nativo de red'
+    LTOOLS_ALIAS_HOME="$windows_alias_home" run_cli_timeout aliases add tguide guide gui storage >/dev/null 2>>"$LOG_PATH" ||
+        die 'aliases add Windows bajo Wine falló'
+    windows_alias_guide="$(LTOOLS_ALIAS_HOME="$windows_alias_home" run_cli_timeout tguide 2>>"$LOG_PATH")" ||
+        die 'la expansión de alias Windows bajo Wine falló'
+    grep -Fq 'GUÍA GRÁFICA' <<<"$windows_alias_guide" ||
+        die 'el alias Windows no conservó sus argumentos'
+    LTOOLS_ALIAS_HOME="$windows_alias_home" run_cli_timeout aliases disable tguide >/dev/null 2>>"$LOG_PATH" ||
+        die 'aliases disable Windows bajo Wine falló'
+    set +e
+    windows_disabled_status=0
+    LTOOLS_ALIAS_HOME="$windows_alias_home" run_cli_timeout tguide >/tmp/ltools-windows-disabled-alias-$$.log 2>&1 ||
+        windows_disabled_status=$?
+    set -e
+    (( windows_disabled_status != 0 )) || die 'un alias Windows desactivado se ejecutó inesperadamente'
+    rm -f -- "/tmp/ltools-windows-disabled-alias-$$.log"
+    ok 'gestor de alias Windows bajo Wine: registro, expansión y desactivación'
+    windows_map_output="$(LTOOLS_ALIAS_HOME="$windows_alias_home" run_cli_timeout storage map --path 'C:\Windows' --depth 0 2>>"$LOG_PATH")" ||
+        die 'storage map Windows bajo Wine falló'
+    grep -Fq 'MAPA DE DISCOS' <<<"$windows_map_output" ||
+        die 'storage map Windows no mostró su cabecera'
+    windows_map_json="$(LTOOLS_ALIAS_HOME="$windows_alias_home" run_cli_timeout storage map --path 'C:\Windows' --depth 0 --format json 2>>"$LOG_PATH")" ||
+        die 'storage map JSON Windows bajo Wine falló'
+    grep -Fq 'ltools-storage-map-v1' <<<"$windows_map_json" ||
+        die 'storage map JSON Windows no declaró su esquema'
+    windows_explain_output="$(LTOOLS_ALIAS_HOME="$windows_alias_home" run_cli_timeout storage explain --path 'C:\Windows' 2>>"$LOG_PATH")" ||
+        die 'storage explain Windows bajo Wine falló'
+    grep -Fq 'Windows' <<<"$windows_explain_output" ||
+        die 'storage explain Windows no explicó la ruta estándar'
+    ok 'mapa Windows bajo Wine: árbol, JSON y rutas estándar'
+
     CAPABILITIES="$(run_windows_timeout capabilities --format json 2>>"$LOG_PATH")" ||
         die 'capabilities --format json falló'
     printf '%s\n' "$CAPABILITIES" | tee -a "$LOG_PATH" >/dev/null
@@ -462,6 +509,25 @@ else
     ok 'descriptor declarativo WinSlim Terminal'
     ok 'contrato JSON Windows'
     run_case 'defaults' defaults
+    windows_network_guide="$(run_windows_timeout guide network 2>>"$LOG_PATH")" ||
+        die 'guide network Windows bajo Wine falló'
+    grep -Fq 'PERFIL WINDOWS' <<<"$windows_network_guide" ||
+        die 'guide network Windows no identificó el perfil Windows'
+    grep -Fq 'adaptadores' <<<"$windows_network_guide" ||
+        die 'guide network Windows no documentó sus objetivos nativos'
+    ! grep -Fq 'systemctl' <<<"$windows_network_guide" ||
+        die 'guide network Windows mezcló conceptos Linux'
+    windows_boot_guide="$(run_windows_timeout guide boot 2>>"$LOG_PATH")" ||
+        die 'guide boot Windows bajo Wine falló'
+    grep -Fq 'BCD/UEFI' <<<"$windows_boot_guide" ||
+        die 'guide boot Windows no documentó BCD/UEFI'
+    grep -Fq 'EFI/GRUB de Linux no aplican' <<<"$windows_boot_guide" ||
+        die 'guide boot Windows no marcó las opciones Linux como no aplicables'
+    windows_wine_guide="$(run_windows_timeout guide wine 2>>"$LOG_PATH")" ||
+        die 'guide wine Windows bajo Wine falló'
+    grep -Fq 'NO APLICA' <<<"$windows_wine_guide" ||
+        die 'guide wine Windows no marcó la incompatibilidad nativa'
+    ok 'guías Windows usan opciones nativas y rechazan supuestos Linux'
     native_tools_output="$(run_windows_timeout native tools 2>>"$LOG_PATH")" ||
         die 'native tools Windows bajo Wine falló'
     printf '%s\n' "$native_tools_output" | tee -a "$LOG_PATH" >/dev/null

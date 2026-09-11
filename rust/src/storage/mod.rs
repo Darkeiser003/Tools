@@ -12,6 +12,14 @@ mod windows;
 use crate::common::Context;
 
 pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
+    if args.iter().any(|arg| {
+        matches!(
+            arg.as_str(),
+            "map" | "tree" | "paths" | "explain" | "manage" | "files" | "file-manager"
+        )
+    }) {
+        return crate::storage_map::run(ctx, args);
+    }
     #[cfg(windows)]
     {
         windows::run(ctx, args)

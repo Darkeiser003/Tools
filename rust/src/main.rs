@@ -1,8 +1,10 @@
 mod accounts;
 mod actions;
+mod aliases;
 mod audit;
 mod automation;
 mod boot;
+mod cleaner;
 mod cli_ui;
 mod common;
 mod compat;
@@ -14,6 +16,7 @@ mod git;
 #[cfg(any(target_os = "linux", windows))]
 mod gui;
 mod gui_preferences;
+mod guides;
 mod i18n;
 mod native;
 mod packages;
@@ -25,6 +28,7 @@ mod shortcuts;
 mod signature;
 mod software;
 mod storage;
+mod storage_map;
 mod system;
 mod theme;
 mod tools;
@@ -143,10 +147,13 @@ fn usage() {
     println!("  report      Leer un informe con salida directa, paginador o editor");
     println!("  software    {}", software::help());
     println!("  git         {}", git::help());
+    println!("  guide       {}", guides::help());
     println!("  automation  {}", i18n::automation_text("help"));
+    println!("  aliases     {}", aliases::help());
     println!("  actions     {}", i18n::actions_text("help"));
     println!("  tools       {}", i18n::tools_text("help"));
     println!("  clean       {}", i18n::text("help.clean"));
+    println!("              {}", cleaner::help());
     println!("  prefix      {}", i18n::prefix_help());
     println!("  defaults    {}", i18n::defaults_help());
     println!("  system      {}", i18n::system_help());
@@ -160,6 +167,7 @@ fn usage() {
     println!("              doctor --install TOOL");
     println!("  rollback    {}", i18n::text("help.rollback"));
     println!("  storage     {}", i18n::storage_help());
+    println!("              {}", storage_map::help());
     println!("  registry    {}", i18n::registry_help());
     println!("  capabilities  {}", i18n::text("help.capabilities"));
     println!("  release-manifest  Genera el manifiesto verificable de una release de GitHub");
@@ -216,8 +224,10 @@ fn execute_action(command: &str, ctx: &Context, args: &[String]) -> Result<(), S
             software::run(ctx, args)
         }
         "git" | "git-tools" => git::run(ctx, args),
+        "guide" | "guides" => guides::run(ctx, args),
         "tools" | "quick-actions" => tools::menu(ctx),
         "automation" | "automations" | "import" => automation::run(ctx, args),
+        "aliases" | "alias" => aliases::run(args),
         "actions" | "action-catalog" => actions::run(ctx, args),
         "menu-audit-inventory" => category_menu(ctx, MenuCategory::AuditInventory),
         "menu-dependencies" => category_menu(ctx, MenuCategory::Dependencies),
@@ -300,6 +310,7 @@ fn command_needs_plan(command: &str, args: &[String], dry_run: bool, explicit: b
     }
     let has_any = |values: &[&str]| args.iter().any(|arg| values.contains(&arg.as_str()));
     match command {
+        "aliases" | "alias" => false,
         "audit" | "games" | "packages" | "defaults" | "paths" | "report" | "reports"
         | "diagnostics" | "diag" | "health" => false,
         "storage" | "disks" | "partitions" => has_any(&[
@@ -324,6 +335,14 @@ fn command_needs_plan(command: &str, args: &[String], dry_run: bool, explicit: b
             "open-gparted",
             "open-disk-management",
             "open-diskpart",
+            "delete",
+            "copy",
+            "move",
+            "zip",
+            "tar",
+            "open",
+            "manage",
+            "files",
         ]),
         "system" | "services" | "systemctl" => has_any(&[
             "start",
@@ -360,6 +379,8 @@ fn command_needs_plan(command: &str, args: &[String], dry_run: bool, explicit: b
         "native" | "native-tools" => has_any(&[
             "flush-dns",
             "set-interface",
+            "connection-up",
+            "connection-down",
             "interface-up",
             "interface-down",
             "profile-set",
@@ -424,6 +445,10 @@ fn command_needs_plan(command: &str, args: &[String], dry_run: bool, explicit: b
             "--package-caches",
             "--pacman-cache",
             "--flatpak-unused",
+            "--automatic",
+            "--smart",
+            "--include-personal",
+            "--all-known",
         ]),
         #[cfg(not(windows))]
         "prefix" | "wine" | "wine-audit" => has_any(&[
@@ -458,9 +483,16 @@ fn command_needs_plan(command: &str, args: &[String], dry_run: bool, explicit: b
             "lock",
             "unlock",
         ]),
-        "boot" | "bootloader" | "efi" => {
-            has_any(&["install", "update", "set-default", "set-timeout", "write"])
-        }
+        "boot" | "bootloader" | "efi" => has_any(&[
+            "install",
+            "update",
+            "set-default",
+            "set-timeout",
+            "write",
+            "set-next",
+            "grub-reboot",
+            "clear-next",
+        ]),
         // Unknown commands fail in dispatch and must not create state as a
         // side effect.
         _ => false,
@@ -599,7 +631,13 @@ fn run_interactive_menu(base_args: &[String], dry_run: bool, plan_path: Option<P
 
 fn main() {
     let raw_input: Vec<String> = env::args().skip(1).collect();
-    let raw = shortcuts::expand(&raw_input).unwrap_or(raw_input);
+    // El registro se crea de forma perezosa para que el gestor esté
+    // disponible tanto desde el binario como desde los lanzadores de cada
+    // plataforma, sin escribir nada mientras el programa no se ejecuta.
+    let _ = aliases::ensure_defaults();
+    let raw = aliases::expand(&raw_input)
+        .or_else(|| shortcuts::expand(&raw_input))
+        .unwrap_or(raw_input);
     apply_language(&raw);
     apply_visual_options(&raw);
     install_interrupt_handler();
@@ -1811,6 +1849,18 @@ mod tests {
 
     #[test]
     fn mutating_direct_actions_keep_a_plan() {
+        assert!(command_needs_plan(
+            "boot",
+            &args(&["set-next", "--entry", "Ubuntu"]),
+            false,
+            false
+        ));
+        assert!(!command_needs_plan(
+            "boot",
+            &args(&["grub-entries"]),
+            false,
+            false
+        ));
         assert!(command_needs_plan(
             "storage",
             &args(&["mount", "/dev/sdb1"]),

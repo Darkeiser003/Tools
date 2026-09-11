@@ -94,7 +94,6 @@ pub fn run_with_privilege_input(
     current::run_with_privilege_input(program, args, input, dry_run)
 }
 
-#[cfg(not(windows))]
 pub fn critical_path(path: &Path) -> bool {
     current::critical_path(path)
 }

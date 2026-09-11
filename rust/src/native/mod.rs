@@ -28,6 +28,6 @@ pub fn help() -> &'static str {
     }
     #[cfg(not(windows))]
     {
-        "native: network menu|status|flush-dns; hardware status; power menu|status; security status; tools menu|status|install|ssh|adb|containers|kubernetes; utilities status/install (curl,wget,file,tree,htop,btop,lsof,strace,tcpdump,dig,nmap,openssl,gpg,7z,unzip,zip,zstd,tmux,python3,make,cmake,gcc,gdb); container inspect|stats|top|port|diff|pause|unpause|kill|rename|cp|prune; image inspect|history|build|tag|remove|prune; volume and network list|inspect|create|remove|prune; compose up|down|start|stop|restart|ps|logs|pull|build|config|images|top|run|exec|rm|pause|unpause"
+        "native: network menu|status|interfaces|routes|dns|listening|connections|set-interface|connection-up|connection-down|flush-dns; hardware status; power menu|status; security status; tools menu|status|install|ssh|adb|containers|kubernetes; utilities status/install (curl,wget,file,tree,htop,btop,lsof,strace,tcpdump,dig,nmap,openssl,gpg,7z,unzip,zip,zstd,tmux,python3,make,cmake,gcc,gdb); container inspect|stats|top|port|diff|pause|unpause|kill|rename|cp|prune; image inspect|history|build|tag|remove|prune; volume and network list|inspect|create|remove|prune; compose up|down|start|stop|restart|ps|logs|pull|build|config|images|top|run|exec|rm|pause|unpause"
     }
 }

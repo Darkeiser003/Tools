@@ -315,6 +315,7 @@ mod linux {
     static GUI_SPLIT_POSITION: AtomicUsize = AtomicUsize::new(0);
     static GUI_OUTPUT_ATTACHED: AtomicBool = AtomicBool::new(false);
     static GUI_SMOKE_ACTION_BUTTON: AtomicUsize = AtomicUsize::new(0);
+    static GUI_STORAGE_TREE_BUTTON: AtomicUsize = AtomicUsize::new(0);
     static GUI_NAVIGATION: AtomicUsize = AtomicUsize::new(0);
     static GUI_MODAL_WINDOW: AtomicUsize = AtomicUsize::new(0);
     static GUI_MODAL_VIEW: AtomicUsize = AtomicUsize::new(0);
@@ -407,6 +408,28 @@ mod linux {
         fn gtk_text_view_set_wrap_mode(view: *mut Widget, mode: c_int);
         fn gtk_text_view_get_buffer(view: *mut Widget) -> *mut Widget;
         fn gtk_text_buffer_set_text(buffer: *mut Widget, text: *const c_char, length: c_int);
+        fn gtk_tree_store_new(n_columns: c_int, ...) -> *mut Widget;
+        fn gtk_tree_store_append(store: *mut Widget, iter: *mut Widget, parent: *mut Widget);
+        fn gtk_tree_store_set(store: *mut Widget, iter: *mut Widget, ...);
+        fn gtk_tree_view_new_with_model(model: *mut Widget) -> *mut Widget;
+        fn gtk_tree_view_set_headers_visible(view: *mut Widget, visible: c_int);
+        fn gtk_tree_view_append_column(view: *mut Widget, column: *mut Widget) -> c_int;
+        fn gtk_tree_view_expand_all(view: *mut Widget);
+        fn gtk_tree_view_collapse_all(view: *mut Widget);
+        fn gtk_tree_view_column_new() -> *mut Widget;
+        fn gtk_tree_view_column_set_title(column: *mut Widget, title: *const c_char);
+        fn gtk_tree_view_column_pack_start(
+            column: *mut Widget,
+            renderer: *mut Widget,
+            expand: c_int,
+        );
+        fn gtk_tree_view_column_add_attribute(
+            column: *mut Widget,
+            renderer: *mut Widget,
+            attribute: *const c_char,
+            column_number: c_int,
+        );
+        fn gtk_cell_renderer_text_new() -> *mut Widget;
         fn gtk_widget_show_all(widget: *mut Widget);
         fn gtk_widget_show(widget: *mut Widget);
         fn gtk_widget_hide(widget: *mut Widget);
@@ -440,6 +463,7 @@ mod linux {
             response_id: c_int,
         ) -> *mut Widget;
         fn gtk_dialog_run(dialog: *mut Widget) -> c_int;
+        fn gtk_dialog_response(dialog: *mut Widget, response_id: c_int);
     }
 
     #[link(name = "gobject-2.0")]
@@ -615,8 +639,8 @@ mod linux {
         main: *mut Widget,
         content_box: *mut Widget,
         context: *mut Widget,
-        context_titles: [&'static str; 27],
-        pages: [*mut Widget; 27],
+        context_titles: [&'static str; 31],
+        pages: [*mut Widget; 31],
         category_buttons: [*mut Widget; 7],
         current_page: isize,
         history: [usize; 16],
@@ -660,6 +684,36 @@ mod linux {
         status: *mut Widget,
     }
 
+    struct BootActionData {
+        label: &'static str,
+        fields: &'static [NativeField],
+        buffer: *mut Widget,
+        status: *mut Widget,
+    }
+
+    struct ServiceActionData {
+        label: &'static str,
+        fields: &'static [NativeField],
+        buffer: *mut Widget,
+        status: *mut Widget,
+    }
+
+    struct WineActionData {
+        operation: &'static str,
+        label: &'static str,
+        fields: &'static [NativeField],
+        buffer: *mut Widget,
+        status: *mut Widget,
+    }
+
+    struct NetworkActionData {
+        action: &'static str,
+        label: &'static str,
+        fields: &'static [NativeField],
+        buffer: *mut Widget,
+        status: *mut Widget,
+    }
+
     struct AccountActionData {
         action: &'static str,
         label: &'static str,
@@ -679,6 +733,23 @@ mod linux {
         fields: &'static [NativeField],
         buffer: *mut Widget,
         status: *mut Widget,
+    }
+
+    struct StorageFileActionData {
+        operation: &'static str,
+        label: &'static str,
+        fields: &'static [NativeField],
+        buffer: *mut Widget,
+        status: *mut Widget,
+    }
+
+    struct StorageTreeData {
+        buffer: *mut Widget,
+        status: *mut Widget,
+    }
+
+    struct StorageTreeControlData {
+        tree: *mut Widget,
     }
 
     struct VisibilityData {
@@ -1042,6 +1113,31 @@ mod linux {
         }
     }
 
+    /// Registro estructural de la interfaz para el E2E visual. No se activa
+    /// durante el uso normal: solo existe cuando el test proporciona una
+    /// ruta. Así el E2E puede comprobar el contrato real que GTK construyó,
+    /// además de mirar la captura, sin depender de OCR ni de coordenadas.
+    fn gui_audit_event(event: &str) {
+        let Ok(path) = std::env::var("LTOOLS_GUI_AUDIT_MARKER") else {
+            return;
+        };
+        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(file, "{event}");
+        }
+    }
+
+    fn gui_audit_fields(fields: &[NativeField]) -> String {
+        fields
+            .iter()
+            .map(|field| format!("{}{}", field.option, if field.required { "!" } else { "?" }))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    fn gui_audit_button(label: &str, kind: &str, details: &str) {
+        gui_audit_event(&format!("BUTTON\t{label}\t{kind}\t{details}"));
+    }
+
     unsafe fn begin_action() -> bool {
         if GUI_BUSY
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -1091,7 +1187,12 @@ mod linux {
             && args.iter().any(|arg| {
                 matches!(
                     *arg,
-                    "operate" | "operation" | "partition-actions" | "storage-actions"
+                    "operate"
+                        | "operation"
+                        | "partition-actions"
+                        | "storage-actions"
+                        | "manage"
+                        | "files"
                 )
             });
         let is_git_mutation = command == "git"
@@ -1134,6 +1235,27 @@ mod linux {
                         | "set-primary-group"
                 )
             );
+        let is_boot_mutation =
+            command == "boot" && matches!(args.first().copied(), Some("set-next" | "grub-reboot"));
+        let is_system_mutation = command == "system"
+            && matches!(args.first().copied(), Some("service" | "services"))
+            && args.iter().any(|arg| {
+                matches!(
+                    *arg,
+                    "start" | "stop" | "restart" | "enable" | "disable" | "mask" | "unmask"
+                )
+            });
+        let is_network_mutation = command == "native"
+            && matches!(
+                args.get(1).copied(),
+                Some("set-interface" | "connection-up" | "connection-down" | "flush-dns")
+            );
+        let is_wine_mutation =
+            command == "wine" && matches!(args.first().copied(), Some("create" | "migrate"));
+        let is_clean_mutation = command == "clean"
+            && args
+                .iter()
+                .any(|arg| matches!(*arg, "--automatic" | "--smart"));
         if is_storage_manager {
             let message =
                 CString::new(crate::i18n::gui_text("confirm_storage_manager")).unwrap_or_default();
@@ -1183,6 +1305,99 @@ mod linux {
             gtk_widget_destroy(dialog);
             return response == -8;
         }
+        if is_boot_mutation {
+            let entry = args
+                .iter()
+                .skip(1)
+                .filter(|arg| **arg != "--yes")
+                .map(|arg| crate::common::shell_display(arg))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let message = CString::new(format!(
+                "Se programará una entrada de GRUB para el siguiente arranque.\n\nEntrada: {entry}\n\nNo se reiniciará el equipo automáticamente."
+            ))
+            .unwrap_or_default();
+            let dialog = gtk_message_dialog_new(null_mut(), 1, 1, 4, message.as_ptr());
+            if dialog.is_null() {
+                return false;
+            }
+            let response = gtk_dialog_run(dialog);
+            gtk_widget_destroy(dialog);
+            return response == -8;
+        }
+        if is_system_mutation {
+            let target = args
+                .iter()
+                .skip(1)
+                .filter(|arg| **arg != "--yes")
+                .map(|arg| crate::common::shell_display(arg))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let message = CString::new(format!(
+                "Esta acción cambiará el estado o el arranque de un servicio.\n\nObjetivo: {target}\n\nRevisa ámbito, unidad y acción antes de confirmar."
+            ))
+            .unwrap_or_default();
+            let dialog = gtk_message_dialog_new(null_mut(), 1, 1, 4, message.as_ptr());
+            if dialog.is_null() {
+                return false;
+            }
+            let response = gtk_dialog_run(dialog);
+            gtk_widget_destroy(dialog);
+            return response == -8;
+        }
+        if is_network_mutation {
+            let target = args
+                .iter()
+                .skip(1)
+                .filter(|arg| **arg != "--yes")
+                .map(|arg| crate::common::shell_display(arg))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let message = CString::new(format!(
+                "Esta acción cambiará la red del sistema.\n\nOperación: {target}\n\nRevisa interfaz o conexión y confirma para continuar."
+            ))
+            .unwrap_or_default();
+            let dialog = gtk_message_dialog_new(null_mut(), 1, 1, 4, message.as_ptr());
+            if dialog.is_null() {
+                return false;
+            }
+            let response = gtk_dialog_run(dialog);
+            gtk_widget_destroy(dialog);
+            return response == -8;
+        }
+        if is_wine_mutation {
+            let target = args
+                .iter()
+                .skip(1)
+                .filter(|arg| **arg != "--yes")
+                .map(|arg| crate::common::shell_display(arg))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let message = CString::new(format!(
+                "Esta acción creará o migrará un prefijo Wine/Proton.\n\nParámetros: {target}\n\nSe harán comprobaciones de seguridad y no se eliminará el origen sin una opción explícita."
+            ))
+            .unwrap_or_default();
+            let dialog = gtk_message_dialog_new(null_mut(), 1, 1, 4, message.as_ptr());
+            if dialog.is_null() {
+                return false;
+            }
+            let response = gtk_dialog_run(dialog);
+            gtk_widget_destroy(dialog);
+            return response == -8;
+        }
+        if is_clean_mutation {
+            let message = CString::new(
+                "El limpiador analizará cachés, temporales y rutas personales opcionales.\n\nNo se borrarán Descargas, Documentos, aplicaciones ni la papelera sin tu confirmación explícita. Revisa cada categoría y elige si quieres confirmar todo o elemento por elemento.",
+            )
+            .unwrap_or_default();
+            let dialog = gtk_message_dialog_new(null_mut(), 1, 1, 4, message.as_ptr());
+            if dialog.is_null() {
+                return false;
+            }
+            let response = gtk_dialog_run(dialog);
+            gtk_widget_destroy(dialog);
+            return response == -8;
+        }
         if !is_git_mutation {
             return true;
         }
@@ -1211,13 +1426,19 @@ mod linux {
                 }
             }
         };
+        let mut action_args = args.to_vec();
+        if command == "guide"
+            && !matches!(action_args.first().map(String::as_str), Some("gui" | "cli"))
+        {
+            action_args.insert(0, "gui".to_owned());
+        }
         let child = Command::new(executable)
             .env("LTOOLS_CLI", "1")
             .env("LTOOLS_FRONTEND", "gui")
             .env("LTOOLS_ACCOUNT_GUI_PRECONFIRMED", "1")
             .env("LTOOLS_NO_AUTO_TERMINAL", "1")
             .arg(command)
-            .args(args)
+            .args(&action_args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn();
@@ -1897,7 +2118,122 @@ mod linux {
         prompt: "Identificador (ej. podman, kind, minikube, k9s)",
         required: true,
     }];
+    static BOOT_ENTRY_FIELDS: [NativeField; 1] = [NativeField {
+        option: "--entry",
+        prompt: "Título exacto de la entrada GRUB (ej. Ubuntu)",
+        required: true,
+    }];
+    static SERVICE_ACTION_FIELDS: [NativeField; 3] = [
+        NativeField {
+            option: "--scope",
+            prompt: "Ámbito: system o user",
+            required: true,
+        },
+        NativeField {
+            option: "--unit",
+            prompt: "Unidad (ej. sshd.service)",
+            required: true,
+        },
+        NativeField {
+            option: "--operation",
+            prompt: "Acción: status, start, stop, restart, enable, disable, mask o unmask",
+            required: true,
+        },
+    ];
+    static NETWORK_INTERFACE_FIELDS: [NativeField; 2] = [
+        NativeField {
+            option: "--interface",
+            prompt: "Interfaz de red (ej. eth0)",
+            required: true,
+        },
+        NativeField {
+            option: "--state",
+            prompt: "Estado: up o down",
+            required: true,
+        },
+    ];
+    static NETWORK_CONNECTION_FIELDS: [NativeField; 1] = [NativeField {
+        option: "--connection",
+        prompt: "Nombre exacto de la conexión NetworkManager",
+        required: true,
+    }];
+    static WINE_INSPECT_FIELDS: [NativeField; 1] = [NativeField {
+        option: "--path",
+        prompt: "Ruta del prefijo Wine/Proton",
+        required: true,
+    }];
+    static WINE_CREATE_FIELDS: [NativeField; 2] = [
+        NativeField {
+            option: "--dest",
+            prompt: "Ruta del nuevo prefijo",
+            required: true,
+        },
+        NativeField {
+            option: "--arch",
+            prompt: "Arquitectura: win64 o win32 (opcional)",
+            required: false,
+        },
+    ];
+    static WINE_MIGRATE_FIELDS: [NativeField; 8] = [
+        NativeField {
+            option: "--source",
+            prompt: "Prefijo origen",
+            required: true,
+        },
+        NativeField {
+            option: "--dest",
+            prompt: "Prefijo destino vacío o nuevo",
+            required: true,
+        },
+        NativeField {
+            option: "--allow-steam",
+            prompt: "Escribe sí para permitir Steam/Proton",
+            required: false,
+        },
+        NativeField {
+            option: "--set-defaults",
+            prompt: "Escribe sí para actualizar el prefijo predeterminado",
+            required: false,
+        },
+        NativeField {
+            option: "--rewrite-configs",
+            prompt: "Escribe sí para reescribir configuraciones",
+            required: false,
+        },
+        NativeField {
+            option: "--update-launchers",
+            prompt: "Escribe sí para actualizar lanzadores",
+            required: false,
+        },
+        NativeField {
+            option: "--remove-source",
+            prompt: "Escribe sí para retirar el origen tras verificar",
+            required: false,
+        },
+        NativeField {
+            option: "--force",
+            prompt: "Escribe sí para continuar si hay bloqueos",
+            required: false,
+        },
+    ];
 
+    static STORAGE_PATH_FIELDS: [NativeField; 1] = [NativeField {
+        option: "--path",
+        prompt: "Ruta absoluta de archivo o carpeta",
+        required: true,
+    }];
+    static STORAGE_SOURCE_DESTINATION_FIELDS: [NativeField; 2] = [
+        NativeField {
+            option: "--source",
+            prompt: "Origen absoluto",
+            required: true,
+        },
+        NativeField {
+            option: "--destination",
+            prompt: "Destino absoluto o archivo de salida",
+            required: true,
+        },
+    ];
     static STORAGE_DEVICE_FIELDS: [NativeField; 1] = [NativeField {
         option: "--device",
         prompt: "Dispositivo /dev/...",
@@ -2291,12 +2627,18 @@ mod linux {
                         | "--append"
                         | "--lock"
                         | "--unlock"
+                        | "--allow-steam"
+                        | "--set-defaults"
+                        | "--rewrite-configs"
+                        | "--update-launchers"
+                        | "--remove-source"
+                        | "--force"
                 ) {
                     if value.eq_ignore_ascii_case("yes")
                         || value.eq_ignore_ascii_case("sí")
                         || value == "1"
                     {
-                        values.push("--recursive".to_owned());
+                        values.push(field.option.to_owned());
                     }
                 } else if !value.trim().is_empty() {
                     values.push(field.option.to_owned());
@@ -2329,6 +2671,133 @@ mod linux {
             data.status,
             data.label.to_owned(),
             "native".to_owned(),
+            args,
+        );
+    }
+
+    unsafe extern "C" fn on_boot_set_next(_button: *mut Widget, pointer: *mut c_void) {
+        let data = &*(pointer as *const BootActionData);
+        let Some(values) = native_action_dialog(data.label, data.fields) else {
+            label(data.status, crate::i18n::gui_text("cancelled"));
+            return;
+        };
+        let refs = values.iter().map(String::as_str).collect::<Vec<_>>();
+        if !confirm_gui_action("boot", &refs) {
+            label(data.status, crate::i18n::gui_text("cancelled"));
+            return;
+        }
+        if !begin_action() {
+            return;
+        }
+        let mut args = vec!["set-next".to_owned()];
+        args.extend(values);
+        // La confirmación se hizo en el diálogo GTK; el backend solo ejecuta
+        // el título ya revisado y no vuelve a bloquear la interfaz.
+        args.push("--yes".to_owned());
+        label(data.status, crate::i18n::gui_text("running"));
+        show_running(data.buffer, data.label);
+        enqueue_action(
+            data.buffer,
+            data.status,
+            data.label.to_owned(),
+            "boot".to_owned(),
+            args,
+        );
+    }
+
+    unsafe extern "C" fn on_service_action(_button: *mut Widget, pointer: *mut c_void) {
+        let data = &*(pointer as *const ServiceActionData);
+        let Some(values) = native_action_dialog(data.label, data.fields) else {
+            label(data.status, crate::i18n::gui_text("cancelled"));
+            return;
+        };
+        let value = |option: &str| {
+            values
+                .windows(2)
+                .find(|pair| pair[0] == option)
+                .map(|pair| pair[1].clone())
+        };
+        let scope = value("--scope").unwrap_or_else(|| "system".into());
+        let unit = value("--unit").unwrap_or_default();
+        let operation = value("--operation").unwrap_or_default();
+        let mut args = vec!["service".to_owned(), operation, unit];
+        if scope.eq_ignore_ascii_case("user") || scope.eq_ignore_ascii_case("usuario") {
+            args.push("--user".to_owned());
+        }
+        let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+        if !confirm_gui_action("system", &refs) {
+            label(data.status, crate::i18n::gui_text("cancelled"));
+            return;
+        }
+        if !begin_action() {
+            return;
+        }
+        args.push("--yes".to_owned());
+        label(data.status, crate::i18n::gui_text("running"));
+        show_running(data.buffer, data.label);
+        enqueue_action(
+            data.buffer,
+            data.status,
+            data.label.to_owned(),
+            "system".to_owned(),
+            args,
+        );
+    }
+
+    unsafe extern "C" fn on_network_action(_button: *mut Widget, pointer: *mut c_void) {
+        let data = &*(pointer as *const NetworkActionData);
+        let Some(values) = native_action_dialog(data.label, data.fields) else {
+            label(data.status, crate::i18n::gui_text("cancelled"));
+            return;
+        };
+        let mut args = vec!["network".to_owned(), data.action.to_owned()];
+        args.extend(values);
+        let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+        if !confirm_gui_action("native", &refs) {
+            label(data.status, crate::i18n::gui_text("cancelled"));
+            return;
+        }
+        if !begin_action() {
+            return;
+        }
+        args.push("--yes".to_owned());
+        label(data.status, crate::i18n::gui_text("running"));
+        show_running(data.buffer, data.label);
+        enqueue_action(
+            data.buffer,
+            data.status,
+            data.label.to_owned(),
+            "native".to_owned(),
+            args,
+        );
+    }
+
+    unsafe extern "C" fn on_wine_action(_button: *mut Widget, pointer: *mut c_void) {
+        let data = &*(pointer as *const WineActionData);
+        let Some(values) = native_action_dialog(data.label, data.fields) else {
+            label(data.status, crate::i18n::gui_text("cancelled"));
+            return;
+        };
+        let mut args = vec![data.operation.to_owned()];
+        args.extend(values);
+        let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+        if !confirm_gui_action("wine", &refs) {
+            label(data.status, crate::i18n::gui_text("cancelled"));
+            return;
+        }
+        if !begin_action() {
+            return;
+        }
+        if matches!(data.operation, "create" | "migrate") {
+            args.push("--yes".to_owned());
+        }
+        label(data.status, crate::i18n::gui_text("running"));
+        show_running(data.buffer, data.label);
+        enqueue_action(
+            data.buffer,
+            data.status,
+            data.label.to_owned(),
+            "wine".to_owned(),
             args,
         );
     }
@@ -2508,6 +2977,204 @@ mod linux {
         );
     }
 
+    unsafe extern "C" fn on_storage_file_action(_button: *mut Widget, pointer: *mut c_void) {
+        let data = &*(pointer as *const StorageFileActionData);
+        let Some(values) = native_action_dialog(data.label, data.fields) else {
+            label(data.status, crate::i18n::gui_text("cancelled"));
+            return;
+        };
+        let mut args = vec!["manage".to_owned(), data.operation.to_owned()];
+        args.extend(values);
+        let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+        if !confirm_gui_action("storage", &refs) {
+            label(data.status, crate::i18n::gui_text("cancelled"));
+            return;
+        }
+        if !begin_action() {
+            return;
+        }
+        if !matches!(data.operation, "permissions") {
+            args.push("--yes".to_owned());
+        }
+        label(data.status, crate::i18n::gui_text("running"));
+        show_running(data.buffer, data.label);
+        enqueue_action(
+            data.buffer,
+            data.status,
+            data.label.to_owned(),
+            "storage".to_owned(),
+            args,
+        );
+    }
+
+    unsafe extern "C" fn on_storage_tree_expand(_button: *mut Widget, pointer: *mut c_void) {
+        let data = &*(pointer as *const StorageTreeControlData);
+        gtk_tree_view_expand_all(data.tree);
+    }
+
+    unsafe extern "C" fn on_storage_tree_collapse(_button: *mut Widget, pointer: *mut c_void) {
+        let data = &*(pointer as *const StorageTreeControlData);
+        gtk_tree_view_collapse_all(data.tree);
+    }
+
+    unsafe fn add_storage_tree_node(
+        store: *mut Widget,
+        node: &crate::storage_map::Node,
+        parent: *mut Widget,
+    ) {
+        // GtkTreeIter is 32 bytes on GTK3 (stamp + three pointers). Keeping
+        // it on the stack is enough while the store copies the row.
+        let mut iter = [0_usize; 4];
+        gtk_tree_store_append(store, iter.as_mut_ptr().cast(), parent);
+        let state = if node.protected {
+            "protegida"
+        } else if !node.accessible {
+            "inaccesible"
+        } else if node.writable {
+            "escribible"
+        } else {
+            "solo lectura"
+        };
+        let mut row = format!(
+            "{}  ·  {}  ·  {}  ·  {}",
+            node.name,
+            crate::common::human_bytes(node.size),
+            node.kind,
+            state
+        );
+        if let Some(explanation) = node.explanation {
+            row.push_str("  ·  ");
+            row.push_str(explanation);
+        }
+        if let Some(error) = &node.error {
+            row.push_str("  ·  ");
+            row.push_str(error);
+        }
+        let row = CString::new(row.replace('\0', " ")).unwrap_or_default();
+        gtk_tree_store_set(
+            store,
+            iter.as_mut_ptr().cast(),
+            0 as c_int,
+            row.as_ptr(),
+            -1 as c_int,
+        );
+        for child in &node.children {
+            add_storage_tree_node(store, child, iter.as_mut_ptr().cast());
+        }
+    }
+
+    unsafe fn show_storage_tree_dialog() {
+        let dialog = gtk_dialog_new();
+        if dialog.is_null() {
+            return;
+        }
+        let title = CString::new("Mapa interactivo de discos y rutas").unwrap();
+        gtk_window_set_title(dialog, title.as_ptr());
+        gtk_window_set_default_size(dialog, 1060, 720);
+        gtk_window_set_modal(dialog, 1);
+        let parent = GUI_WINDOW.load(Ordering::Acquire) as *mut Widget;
+        if !parent.is_null() {
+            gtk_window_set_transient_for(dialog, parent);
+        }
+        let content = gtk_dialog_get_content_area(dialog);
+        let outer = gtk_box_new(1, 8);
+        gtk_container_set_border_width(outer, 12);
+        let hint = CString::new(
+            "Pulsa las flechas para abrir o cerrar carpetas. El tamaño es acumulado; las rutas protegidas y los errores de permisos se conservan visibles.",
+        )
+        .unwrap();
+        let hint_widget = gtk_label_new(hint.as_ptr());
+        gtk_label_set_xalign(hint_widget, 0.0);
+        gtk_label_set_line_wrap(hint_widget, 1);
+        gtk_box_pack_start(outer, hint_widget, 0, 0, 0);
+
+        let store = gtk_tree_store_new(1, 64_u64);
+        if store.is_null() {
+            gtk_widget_destroy(dialog);
+            return;
+        }
+        for node in crate::storage_map::gui_nodes() {
+            add_storage_tree_node(store, &node, null_mut());
+        }
+        let tree = gtk_tree_view_new_with_model(store);
+        gtk_tree_view_set_headers_visible(tree, 0);
+        let column = gtk_tree_view_column_new();
+        let column_title = CString::new("Ruta / tamaño / estado").unwrap();
+        gtk_tree_view_column_set_title(column, column_title.as_ptr());
+        let renderer = gtk_cell_renderer_text_new();
+        gtk_tree_view_column_pack_start(column, renderer, 1);
+        let attribute = CString::new("text").unwrap();
+        gtk_tree_view_column_add_attribute(column, renderer, attribute.as_ptr(), 0);
+        gtk_tree_view_append_column(tree, column);
+        let scrolled = gtk_scrolled_window_new(null_mut(), null_mut());
+        gtk_scrolled_window_set_policy(scrolled, 1, 1);
+        gtk_widget_set_size_request(scrolled, 980, 560);
+        gtk_widget_set_hexpand(scrolled, 1);
+        gtk_container_add(scrolled, tree);
+        gtk_box_pack_start(outer, scrolled, 1, 1, 0);
+
+        let controls = gtk_box_new(0, 8);
+        let expand_label = CString::new("Expandir todo").unwrap();
+        let collapse_label = CString::new("Colapsar todo").unwrap();
+        let expand = gtk_button_new_with_label(expand_label.as_ptr());
+        let collapse = gtk_button_new_with_label(collapse_label.as_ptr());
+        let expand_data = Box::into_raw(Box::new(StorageTreeControlData { tree }));
+        let collapse_data = Box::into_raw(Box::new(StorageTreeControlData { tree }));
+        connect(
+            expand,
+            "clicked",
+            on_storage_tree_expand,
+            expand_data.cast(),
+        );
+        connect(
+            collapse,
+            "clicked",
+            on_storage_tree_collapse,
+            collapse_data.cast(),
+        );
+        gtk_box_pack_start(controls, expand, 0, 0, 0);
+        gtk_box_pack_start(controls, collapse, 0, 0, 0);
+        gtk_box_pack_start(outer, controls, 0, 0, 0);
+        gtk_container_add(content, outer);
+        let close_label = CString::new("Cerrar").unwrap();
+        gtk_dialog_add_button(dialog, close_label.as_ptr(), -6);
+        gtk_widget_show_all(dialog);
+        if std::env::var_os("LTOOLS_GUI_TREE_SMOKE").is_some() {
+            g_timeout_add(500, Some(close_storage_tree_smoke), dialog.cast());
+        }
+        gtk_dialog_run(dialog);
+        gtk_widget_destroy(dialog);
+        g_object_unref(store);
+    }
+
+    unsafe extern "C" fn on_storage_tree_action(_button: *mut Widget, pointer: *mut c_void) {
+        let data = &*(pointer as *const StorageTreeData);
+        label(data.status, crate::i18n::gui_text("running"));
+        show_storage_tree_dialog();
+        text(data.buffer, "Mapa interactivo cerrado. Usa Expandir todo o las flechas por carpeta para explorar de nuevo.");
+        label(data.status, crate::i18n::gui_text("completed"));
+        if let Ok(marker) = std::env::var("LTOOLS_GUI_TREE_MARKER") {
+            let _ = std::fs::write(marker, "tree-opened\n");
+        }
+        if std::env::var_os("LTOOLS_GUI_TREE_SMOKE").is_some() {
+            g_timeout_add(100, Some(quit_timeout), null_mut());
+        }
+    }
+
+    unsafe extern "C" fn close_storage_tree_smoke(pointer: *mut c_void) -> c_int {
+        gtk_dialog_response(pointer as *mut Widget, -6);
+        0
+    }
+
+    unsafe extern "C" fn trigger_storage_tree_smoke(_data: *mut c_void) -> c_int {
+        let button = GUI_STORAGE_TREE_BUTTON.load(Ordering::Acquire) as *mut Widget;
+        if button.is_null() {
+            return 1;
+        }
+        gtk_button_clicked(button);
+        0
+    }
+
     unsafe extern "C" fn trigger_smoke_action(_data: *mut c_void) -> c_int {
         let button = GUI_SMOKE_ACTION_BUTTON.load(Ordering::Acquire) as *mut Widget;
         if !button.is_null() {
@@ -2543,8 +3210,8 @@ mod linux {
         let page = *Box::from_raw(pointer as *mut usize);
         let navigation = GUI_NAVIGATION.load(Ordering::Acquire) as *mut NavigationData;
         if !navigation.is_null() {
-            show_page(&*navigation, (page < 27).then_some(page));
-            smoke_event(if page < 27 {
+            show_page(&*navigation, (page < 31).then_some(page));
+            smoke_event(if page < 31 {
                 "navigation-page"
             } else {
                 "navigation-main"
@@ -3129,6 +3796,10 @@ mod linux {
                 .unwrap_or(crate::i18n::gui_text("sections")),
             None => crate::i18n::gui_text("sections"),
         };
+        gui_audit_event(&match page {
+            Some(index) => format!("VISIBLE_PAGE\t{index}\t{context}"),
+            None => "VISIBLE_PAGE\tdashboard\tSecciones".to_owned(),
+        });
         label(navigation.context, context);
         if page.is_some() {
             gtk_widget_hide(navigation.main);
@@ -3272,6 +3943,10 @@ mod linux {
                 ("registry", vec!["status"]),
                 ("software", vec!["stores"]),
                 ("git", vec!["status"]),
+                ("guide", vec!["git"]),
+                ("guide", vec!["network"]),
+                ("guide", vec!["boot"]),
+                ("guide", vec!["services"]),
                 ("automation", vec!["list"]),
             ];
             let mut report = vec!["GUI_SAFE_ACTIONS_BEGIN".to_owned()];
@@ -3294,7 +3969,11 @@ mod linux {
                 } else {
                     format!("{} {}", command, owned_args.join(" "))
                 };
-                if result.output.contains("Código de salida:") || result.cancelled {
+                let guide_mode_ok = command != "guide"
+                    || result.output.contains("GUÍA GRÁFICA")
+                    || result.output.contains("GUÍAS GRÁFICAS");
+                if result.output.contains("Código de salida:") || result.cancelled || !guide_mode_ok
+                {
                     report.push(format!("FAIL\t{label}"));
                 } else {
                     report.push(format!("OK\t{label}"));
@@ -3323,6 +4002,11 @@ mod linux {
         buffer: *mut Widget,
         status: *mut Widget,
     ) {
+        gui_audit_button(
+            label_text,
+            "CLI",
+            &format!("command={command}\targs={}", args.join(" ")),
+        );
         let label_c = CString::new(label_text).unwrap_or_default();
         let button = gtk_button_new_with_label(label_c.as_ptr());
         gtk_widget_set_size_request(button, 230, 36);
@@ -3355,6 +4039,11 @@ mod linux {
         buffer: *mut Widget,
         status: *mut Widget,
     ) {
+        gui_audit_button(
+            label_text,
+            "NATIVE",
+            &format!("action={action}\tfields={}", gui_audit_fields(fields)),
+        );
         let label = CString::new(label_text).unwrap_or_default();
         let button = gtk_button_new_with_label(label.as_ptr());
         gtk_widget_set_size_request(button, 230, 36);
@@ -3370,6 +4059,118 @@ mod linux {
         gtk_grid_attach(grid, button, 0, row, 2, 1);
     }
 
+    unsafe fn add_boot_action_button(
+        grid: *mut Widget,
+        row: c_int,
+        label_text: &'static str,
+        fields: &'static [NativeField],
+        buffer: *mut Widget,
+        status: *mut Widget,
+    ) {
+        gui_audit_button(
+            label_text,
+            "BOOT",
+            &format!("fields={}", gui_audit_fields(fields)),
+        );
+        let label = CString::new(label_text).unwrap_or_default();
+        let button = gtk_button_new_with_label(label.as_ptr());
+        gtk_widget_set_size_request(button, 230, 36);
+        gtk_widget_set_halign(button, 3);
+        let data = Box::into_raw(Box::new(BootActionData {
+            label: label_text,
+            fields,
+            buffer,
+            status,
+        }));
+        connect(button, "clicked", on_boot_set_next, data.cast());
+        gtk_grid_attach(grid, button, 0, row, 2, 1);
+    }
+
+    unsafe fn add_service_action_button(
+        grid: *mut Widget,
+        row: c_int,
+        label_text: &'static str,
+        fields: &'static [NativeField],
+        buffer: *mut Widget,
+        status: *mut Widget,
+    ) {
+        gui_audit_button(
+            label_text,
+            "SERVICE",
+            &format!("fields={}", gui_audit_fields(fields)),
+        );
+        let label = CString::new(label_text).unwrap_or_default();
+        let button = gtk_button_new_with_label(label.as_ptr());
+        gtk_widget_set_size_request(button, 230, 36);
+        gtk_widget_set_halign(button, 3);
+        let data = Box::into_raw(Box::new(ServiceActionData {
+            label: label_text,
+            fields,
+            buffer,
+            status,
+        }));
+        connect(button, "clicked", on_service_action, data.cast());
+        gtk_grid_attach(grid, button, 0, row, 2, 1);
+    }
+
+    unsafe fn add_network_action_button(
+        grid: *mut Widget,
+        row: c_int,
+        label_text: &'static str,
+        action: &'static str,
+        fields: &'static [NativeField],
+        buffer: *mut Widget,
+        status: *mut Widget,
+    ) {
+        gui_audit_button(
+            label_text,
+            "NETWORK",
+            &format!("action={action}\tfields={}", gui_audit_fields(fields)),
+        );
+        let label = CString::new(label_text).unwrap_or_default();
+        let button = gtk_button_new_with_label(label.as_ptr());
+        gtk_widget_set_size_request(button, 230, 36);
+        gtk_widget_set_halign(button, 3);
+        let data = Box::into_raw(Box::new(NetworkActionData {
+            action,
+            label: label_text,
+            fields,
+            buffer,
+            status,
+        }));
+        connect(button, "clicked", on_network_action, data.cast());
+        gtk_grid_attach(grid, button, 0, row, 2, 1);
+    }
+
+    unsafe fn add_wine_action_button(
+        grid: *mut Widget,
+        row: c_int,
+        label_text: &'static str,
+        operation: &'static str,
+        fields: &'static [NativeField],
+        buffer: *mut Widget,
+        status: *mut Widget,
+    ) {
+        gui_audit_button(
+            label_text,
+            "WINE",
+            &format!("operation={operation}\tfields={}", gui_audit_fields(fields)),
+        );
+        let label = CString::new(label_text).unwrap_or_default();
+        let button = gtk_button_new_with_label(label.as_ptr());
+        gtk_widget_set_size_request(button, 230, 36);
+        gtk_widget_set_halign(button, 3);
+        let data = Box::into_raw(Box::new(WineActionData {
+            operation,
+            label: label_text,
+            fields,
+            buffer,
+            status,
+        }));
+        connect(button, "clicked", on_wine_action, data.cast());
+        gtk_grid_attach(grid, button, 0, row, 2, 1);
+    }
+
     unsafe fn add_account_action_button(
         grid: *mut Widget,
         row: c_int,
@@ -3379,6 +4180,11 @@ mod linux {
         buffer: *mut Widget,
         status: *mut Widget,
     ) {
+        gui_audit_button(
+            label_text,
+            "ACCOUNT",
+            &format!("action={action}\tfields={}", gui_audit_fields(fields)),
+        );
         let label = CString::new(label_text).unwrap_or_default();
         let button = gtk_button_new_with_label(label.as_ptr());
         gtk_widget_set_size_request(button, 250, 36);
@@ -3400,6 +4206,7 @@ mod linux {
         buffer: *mut Widget,
         status: *mut Widget,
     ) {
+        gui_audit_button("Cambiar contraseña", "ACCOUNT", "action=password");
         let label = CString::new("Cambiar contraseña").unwrap_or_default();
         let button = gtk_button_new_with_label(label.as_ptr());
         gtk_widget_set_size_request(button, 250, 36);
@@ -3418,6 +4225,11 @@ mod linux {
         buffer: *mut Widget,
         status: *mut Widget,
     ) {
+        gui_audit_button(
+            label_text,
+            "STORAGE",
+            &format!("operation={operation}\tfields={}", gui_audit_fields(fields)),
+        );
         let label = CString::new(label_text).unwrap_or_default();
         let button = gtk_button_new_with_label(label.as_ptr());
         gtk_widget_set_size_request(button, 250, 36);
@@ -3433,6 +4245,60 @@ mod linux {
         gtk_grid_attach(grid, button, 0, row, 2, 1);
     }
 
+    unsafe fn add_storage_file_action_button(
+        grid: *mut Widget,
+        row: c_int,
+        label_text: &'static str,
+        operation: &'static str,
+        fields: &'static [NativeField],
+        buffer: *mut Widget,
+        status: *mut Widget,
+    ) {
+        gui_audit_button(
+            label_text,
+            "STORAGE",
+            &format!(
+                "operation=manage-{operation}\tfields={}",
+                gui_audit_fields(fields)
+            ),
+        );
+        let label = CString::new(label_text).unwrap_or_default();
+        let button = gtk_button_new_with_label(label.as_ptr());
+        gtk_widget_set_size_request(button, 250, 36);
+        gtk_widget_set_halign(button, 3);
+        let data = Box::into_raw(Box::new(StorageFileActionData {
+            operation,
+            label: label_text,
+            fields,
+            buffer,
+            status,
+        }));
+        connect(button, "clicked", on_storage_file_action, data.cast());
+        gtk_grid_attach(grid, button, 0, row, 2, 1);
+    }
+
+    unsafe fn add_storage_tree_button(
+        grid: *mut Widget,
+        row: c_int,
+        label_text: &'static str,
+        buffer: *mut Widget,
+        status: *mut Widget,
+    ) {
+        gui_audit_button(
+            label_text,
+            "CLI",
+            "command=storage\targs=map --depth 4 --interactive-tree",
+        );
+        let label = CString::new(label_text).unwrap_or_default();
+        let button = gtk_button_new_with_label(label.as_ptr());
+        gtk_widget_set_size_request(button, 250, 36);
+        gtk_widget_set_halign(button, 3);
+        let data = Box::into_raw(Box::new(StorageTreeData { buffer, status }));
+        connect(button, "clicked", on_storage_tree_action, data.cast());
+        GUI_STORAGE_TREE_BUTTON.store(button as usize, Ordering::Release);
+        gtk_grid_attach(grid, button, 0, row, 2, 1);
+    }
+
     unsafe fn add_dashboard_navigation_button(
         grid: *mut Widget,
         row: c_int,
@@ -3441,6 +4307,7 @@ mod linux {
         navigation: *mut NavigationData,
         page: usize,
     ) -> *mut Widget {
+        gui_audit_button(label_text, "CATEGORY", &format!("page={page}"));
         let label_c = CString::new(label_text).unwrap_or_default();
         let button = gtk_button_new_with_label(label_c.as_ptr());
         gtk_widget_set_size_request(button, 230, 40);
@@ -3465,6 +4332,7 @@ mod linux {
         navigation: *mut NavigationData,
         page: usize,
     ) {
+        gui_audit_button(label_text, "SUBMENU", &format!("page={page}"));
         let label = CString::new(label_text).unwrap_or_default();
         let button = gtk_button_new_with_label(label.as_ptr());
         gtk_widget_set_size_request(button, 230, 36);
@@ -3483,6 +4351,11 @@ mod linux {
         fields: [*mut Widget; 6],
         output: OutputTargets,
     ) {
+        gui_audit_button(
+            label_text,
+            "GIT",
+            &format!("operation={operation}\tfields=git_repo,git_url,git_destination,git_remote_message,git_notes,git_limit"),
+        );
         let label = CString::new(label_text).unwrap_or_default();
         let button = gtk_button_new_with_label(label.as_ptr());
         gtk_widget_set_size_request(button, 230, 36);
@@ -3498,6 +4371,7 @@ mod linux {
     }
 
     unsafe fn add_section_heading(grid: *mut Widget, row: c_int, label_text: &'static str) {
+        gui_audit_event(&format!("HEADING\t{label_text}"));
         let label = CString::new(label_text).unwrap_or_default();
         let heading = gtk_label_new(label.as_ptr());
         gtk_label_set_xalign(heading, 0.0);
@@ -3513,6 +4387,11 @@ mod linux {
     }
 
     unsafe fn add_back_button_at(grid: *mut Widget, navigation: *mut NavigationData, row: c_int) {
+        gui_audit_button(
+            crate::i18n::text("menu.back"),
+            "BACK",
+            &format!("row={row}"),
+        );
         let label = CString::new(crate::i18n::text("menu.back")).unwrap_or_default();
         let button = gtk_button_new_with_label(label.as_ptr());
         gtk_widget_set_size_request(button, 230, 36);
@@ -3610,7 +4489,16 @@ mod linux {
                 gtk_grid_attach(scripts_page, label, 0, 2, 2, 1);
             }
         }
-        add_back_button_at(scripts_page, navigation, scripts_back_row);
+        add_action(
+            scripts_page,
+            scripts_back_row,
+            "Guía de scripts y automatización",
+            "guide",
+            &["automation"],
+            buffer,
+            status,
+        );
+        add_back_button_at(scripts_page, navigation, scripts_back_row + 1);
     }
 
     unsafe fn add_settings_bar_button(
@@ -3818,7 +4706,7 @@ mod linux {
                 CString::new("ltools-dashboard").unwrap().as_ptr(),
             );
             gtk_box_pack_start(content_box, main_grid, 0, 0, 0);
-            let mut pages = [null_mut(); 27];
+            let mut pages = [null_mut(); 31];
             for page in &mut pages {
                 *page = gtk_grid_new();
                 gtk_grid_set_row_spacing(*page, 8);
@@ -3867,6 +4755,10 @@ mod linux {
                     "Usuarios, grupos y sesiones",
                     "Scripts registrados",
                     "Registrar script",
+                    "Red, rutas, DNS y puertos escuchando",
+                    "Arranque, EFI y cargador del sistema",
+                    "Servicios del sistema",
+                    "Gestión de prefijos Wine y Proton",
                 ],
                 pages,
                 category_buttons: [null_mut(); 7],
@@ -3874,6 +4766,10 @@ mod linux {
                 history: [0; 16],
                 history_len: 0,
             }));
+            gui_audit_event("GUI_AUDIT_BEGIN");
+            for (index, title) in (*navigation).context_titles.iter().enumerate() {
+                gui_audit_event(&format!("PAGE\t{index}\t{title}"));
+            }
             // Igual que LTerminal: un único acceso compacto a Ajustes en la
             // esquina superior derecha. El idioma se selecciona dentro de
             // esa página; mantener otro botón aquí abría exactamente la
@@ -4085,6 +4981,15 @@ mod linux {
                 2,
                 1,
             );
+            add_action(
+                settings_page,
+                visibility_heading_row + 9,
+                "Guía de ajustes y visibilidad",
+                "guide",
+                &["defaults"],
+                buffer,
+                status,
+            );
             // La portada solo orienta. Las acciones viven en sus secciones
             // correspondientes para no duplicar el rail de navegación.
             add_back_button((*navigation).pages[0], navigation);
@@ -4115,12 +5020,26 @@ mod linux {
                 buffer,
                 status,
             );
-            add_action(
+            add_submenu_button(
                 (*navigation).pages[0],
                 3,
                 crate::i18n::gui_text("prefixes"),
-                "prefix",
-                &["list"],
+                navigation,
+                30,
+            );
+            add_submenu_button(
+                (*navigation).pages[0],
+                4,
+                "Gestionar paquetes y almacenes",
+                navigation,
+                6,
+            );
+            add_action(
+                (*navigation).pages[0],
+                5,
+                "Guía general de uso",
+                "guide",
+                &["all"],
                 buffer,
                 status,
             );
@@ -4141,7 +5060,16 @@ mod linux {
                 navigation,
                 11,
             );
-            add_back_button_at((*navigation).pages[1], navigation, 2);
+            add_action(
+                (*navigation).pages[1],
+                2,
+                "Guía de herramientas nativas",
+                "guide",
+                &["native"],
+                buffer,
+                status,
+            );
+            add_back_button_at((*navigation).pages[1], navigation, 3);
 
             let storage_page = (*navigation).pages[10];
             add_section_heading(
@@ -4176,18 +5104,82 @@ mod linux {
                 buffer,
                 status,
             );
-            add_submenu_button(
+            add_storage_tree_button(
                 storage_page,
                 4,
-                "Particionado y tablas (parted)",
-                navigation,
-                21,
+                "Mapa desplegable de discos y rutas",
+                buffer,
+                status,
             );
-            add_submenu_button(storage_page, 5, "Sistemas de archivos", navigation, 22);
-            add_submenu_button(storage_page, 6, "Cifrado y volúmenes", navigation, 23);
-            add_action(
+            add_storage_file_action_button(
+                storage_page,
+                5,
+                "Explicar ruta y permisos",
+                "permissions",
+                &STORAGE_PATH_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_file_action_button(
+                storage_page,
+                6,
+                "Borrar a la papelera",
+                "delete",
+                &STORAGE_PATH_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_file_action_button(
                 storage_page,
                 7,
+                "Copiar archivo o carpeta",
+                "copy",
+                &STORAGE_SOURCE_DESTINATION_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_file_action_button(
+                storage_page,
+                8,
+                "Mover archivo o carpeta",
+                "move",
+                &STORAGE_SOURCE_DESTINATION_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_file_action_button(
+                storage_page,
+                9,
+                "Crear archivo ZIP",
+                "zip",
+                &STORAGE_SOURCE_DESTINATION_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_file_action_button(
+                storage_page,
+                10,
+                "Crear archivo TAR",
+                "tar",
+                &STORAGE_SOURCE_DESTINATION_FIELDS,
+                buffer,
+                status,
+            );
+            add_storage_file_action_button(
+                storage_page,
+                11,
+                "Abrir con el gestor nativo",
+                "open",
+                &STORAGE_PATH_FIELDS,
+                buffer,
+                status,
+            );
+            add_submenu_button(storage_page, 12, "Particionado y tablas", navigation, 21);
+            add_submenu_button(storage_page, 13, "Sistemas de archivos", navigation, 22);
+            add_submenu_button(storage_page, 14, "Cifrado y volúmenes", navigation, 23);
+            add_action(
+                storage_page,
+                15,
                 crate::i18n::storage_action_text("tools"),
                 "storage",
                 &["tools"],
@@ -4196,7 +5188,7 @@ mod linux {
             );
             add_action(
                 storage_page,
-                8,
+                16,
                 crate::i18n::storage_action_text("manager"),
                 "storage",
                 &["open-gparted", "--yes"],
@@ -4205,7 +5197,7 @@ mod linux {
             );
             add_action(
                 storage_page,
-                9,
+                17,
                 crate::i18n::storage_action_text("clean"),
                 "clean",
                 &["--preview"],
@@ -4214,17 +5206,26 @@ mod linux {
             );
             add_action(
                 storage_page,
-                10,
-                crate::i18n::storage_action_text("guide"),
-                "storage",
-                &["guide"],
+                18,
+                "Limpiador automático guiado",
+                "clean",
+                &["--automatic"],
                 buffer,
                 status,
             );
-            add_back_button_at(storage_page, navigation, 11);
+            add_action(
+                storage_page,
+                19,
+                crate::i18n::storage_action_text("guide"),
+                "guide",
+                &["storage"],
+                buffer,
+                status,
+            );
+            add_back_button_at(storage_page, navigation, 20);
 
             let partition_page = (*navigation).pages[21];
-            add_section_heading(partition_page, 0, "Particionado y tablas (parted)");
+            add_section_heading(partition_page, 0, "Particionado y tablas");
             add_storage_action_button(
                 partition_page,
                 1,
@@ -4369,7 +5370,16 @@ mod linux {
                 buffer,
                 status,
             );
-            add_back_button_at(partition_page, navigation, 17);
+            add_action(
+                partition_page,
+                17,
+                "Guía de particionado",
+                "guide",
+                &["storage"],
+                buffer,
+                status,
+            );
+            add_back_button_at(partition_page, navigation, 18);
 
             let filesystem_page = (*navigation).pages[22];
             add_section_heading(filesystem_page, 0, "Sistemas de archivos");
@@ -4454,7 +5464,16 @@ mod linux {
                 buffer,
                 status,
             );
-            add_back_button_at(filesystem_page, navigation, 10);
+            add_action(
+                filesystem_page,
+                10,
+                "Guía de sistemas de archivos",
+                "guide",
+                &["storage"],
+                buffer,
+                status,
+            );
+            add_back_button_at(filesystem_page, navigation, 11);
 
             let volumes_page = (*navigation).pages[23];
             add_section_heading(volumes_page, 0, "Cifrado y volúmenes");
@@ -4539,7 +5558,16 @@ mod linux {
                 buffer,
                 status,
             );
-            add_back_button_at(volumes_page, navigation, 10);
+            add_action(
+                volumes_page,
+                10,
+                "Guía de cifrado y volúmenes",
+                "guide",
+                &["storage"],
+                buffer,
+                status,
+            );
+            add_back_button_at(volumes_page, navigation, 11);
 
             let accounts_page = (*navigation).pages[24];
             add_section_heading(accounts_page, 0, "Usuarios, grupos y sesiones");
@@ -4690,7 +5718,16 @@ mod linux {
                 buffer,
                 status,
             );
-            add_back_button_at(accounts_page, navigation, 20);
+            add_action(
+                accounts_page,
+                20,
+                "Guía de cuentas y permisos",
+                "guide",
+                &["accounts"],
+                buffer,
+                status,
+            );
+            add_back_button_at(accounts_page, navigation, 21);
 
             let system_page = (*navigation).pages[11];
             add_section_heading(
@@ -4714,24 +5751,14 @@ mod linux {
                 navigation,
                 24,
             );
-            add_action(
+            add_submenu_button(
                 system_page,
                 3,
                 crate::i18n::native_action_text("network_status"),
-                "native",
-                &["network", "status"],
-                buffer,
-                status,
+                navigation,
+                27,
             );
-            add_action(
-                system_page,
-                4,
-                crate::i18n::boot_label(),
-                "boot",
-                &["status"],
-                buffer,
-                status,
-            );
+            add_submenu_button(system_page, 4, crate::i18n::boot_label(), navigation, 28);
             add_action(
                 system_page,
                 5,
@@ -4750,24 +5777,347 @@ mod linux {
                 buffer,
                 status,
             );
-            add_action(
+            add_submenu_button(
                 system_page,
                 7,
                 crate::i18n::gui_text("system_services"),
+                navigation,
+                29,
+            );
+            add_action(
+                system_page,
+                8,
+                "Guía del sistema",
+                "guide",
+                &["system"],
+                buffer,
+                status,
+            );
+            add_back_button_at(system_page, navigation, 9);
+
+            let network_page = (*navigation).pages[27];
+            add_section_heading(network_page, 0, "Red, rutas, DNS y puertos escuchando");
+            add_action(
+                network_page,
+                1,
+                "Estado general de red",
+                "native",
+                &["network", "status"],
+                buffer,
+                status,
+            );
+            add_action(
+                network_page,
+                2,
+                "Interfaces y direcciones",
+                "native",
+                &["network", "interfaces"],
+                buffer,
+                status,
+            );
+            add_action(
+                network_page,
+                3,
+                "Tabla de rutas",
+                "native",
+                &["network", "routes"],
+                buffer,
+                status,
+            );
+            add_action(
+                network_page,
+                4,
+                "DNS y resolutores",
+                "native",
+                &["network", "dns"],
+                buffer,
+                status,
+            );
+            add_action(
+                network_page,
+                5,
+                "Puertos escuchando",
+                "native",
+                &["network", "listening"],
+                buffer,
+                status,
+            );
+            add_action(
+                network_page,
+                6,
+                "Conexiones NetworkManager",
+                "native",
+                &["network", "connections"],
+                buffer,
+                status,
+            );
+            add_action(
+                network_page,
+                7,
+                "Vaciar caché DNS",
+                "native",
+                &["network", "flush-dns"],
+                buffer,
+                status,
+            );
+            add_network_action_button(
+                network_page,
+                8,
+                "Activar / desactivar interfaz",
+                "set-interface",
+                &NETWORK_INTERFACE_FIELDS,
+                buffer,
+                status,
+            );
+            add_network_action_button(
+                network_page,
+                9,
+                "Conectar NetworkManager",
+                "connection-up",
+                &NETWORK_CONNECTION_FIELDS,
+                buffer,
+                status,
+            );
+            add_network_action_button(
+                network_page,
+                10,
+                "Desconectar NetworkManager",
+                "connection-down",
+                &NETWORK_CONNECTION_FIELDS,
+                buffer,
+                status,
+            );
+            add_action(
+                network_page,
+                11,
+                "Guía de red",
+                "guide",
+                &["network"],
+                buffer,
+                status,
+            );
+            add_back_button_at(network_page, navigation, 12);
+
+            let boot_page = (*navigation).pages[28];
+            add_section_heading(boot_page, 0, "Arranque, EFI y cargador del sistema");
+            add_action(
+                boot_page,
+                1,
+                "Estado general del arranque",
+                "boot",
+                &["status"],
+                buffer,
+                status,
+            );
+            add_action(
+                boot_page,
+                2,
+                "Entradas EFI / NVRAM",
+                "boot",
+                &["efi-entries"],
+                buffer,
+                status,
+            );
+            add_action(
+                boot_page,
+                3,
+                "Entradas GRUB",
+                "boot",
+                &["grub-entries"],
+                buffer,
+                status,
+            );
+            add_action(
+                boot_page,
+                4,
+                "Estado de systemd-boot",
+                "boot",
+                &["systemd-boot"],
+                buffer,
+                status,
+            );
+            add_action(
+                boot_page,
+                5,
+                "Estado de Secure Boot",
+                "boot",
+                &["secure-boot"],
+                buffer,
+                status,
+            );
+            add_action(
+                boot_page,
+                6,
+                "Generar plan seguro",
+                "boot",
+                &["plan"],
+                buffer,
+                status,
+            );
+            add_boot_action_button(
+                boot_page,
+                7,
+                "Programar siguiente entrada GRUB",
+                &BOOT_ENTRY_FIELDS,
+                buffer,
+                status,
+            );
+            add_action(
+                boot_page,
+                8,
+                "Cancelar siguiente entrada GRUB",
+                "boot",
+                &["clear-next", "--yes"],
+                buffer,
+                status,
+            );
+            add_action(
+                boot_page,
+                9,
+                "Guía de arranque, EFI y GRUB",
+                "guide",
+                &["boot"],
+                buffer,
+                status,
+            );
+            add_back_button_at(boot_page, navigation, 10);
+
+            let services_page = (*navigation).pages[29];
+            add_section_heading(services_page, 0, "Servicios del sistema");
+            add_action(
+                services_page,
+                1,
+                "Automáticos y estáticos (system)",
                 "system",
                 &[
                     "services",
-                    "--filter",
-                    "noteworthy",
                     "--scope",
-                    "both",
+                    "system",
+                    "--filter",
+                    "automatic",
                     "--limit",
-                    "50",
+                    "100",
                 ],
                 buffer,
                 status,
             );
-            add_back_button_at(system_page, navigation, 8);
+            add_action(
+                services_page,
+                2,
+                "Manuales / desactivados (system)",
+                "system",
+                &[
+                    "services", "--scope", "system", "--filter", "manual", "--limit", "100",
+                ],
+                buffer,
+                status,
+            );
+            add_action(
+                services_page,
+                3,
+                "Servicios del usuario",
+                "system",
+                &[
+                    "services", "--scope", "user", "--filter", "all", "--limit", "100",
+                ],
+                buffer,
+                status,
+            );
+            add_action(
+                services_page,
+                4,
+                "Todos: sistema y usuario",
+                "system",
+                &[
+                    "services", "--scope", "both", "--filter", "all", "--limit", "100",
+                ],
+                buffer,
+                status,
+            );
+            add_action(
+                services_page,
+                5,
+                "Servicios fallidos y journal",
+                "system",
+                &["failed", "--journal"],
+                buffer,
+                status,
+            );
+            add_service_action_button(
+                services_page,
+                6,
+                "Gestionar servicio",
+                &SERVICE_ACTION_FIELDS,
+                buffer,
+                status,
+            );
+            add_action(
+                services_page,
+                7,
+                "Exportar informe completo",
+                "system",
+                &["export", "--scope", "both", "--format", "tsv"],
+                buffer,
+                status,
+            );
+            add_action(
+                services_page,
+                8,
+                "Guía de servicios",
+                "guide",
+                &["services"],
+                buffer,
+                status,
+            );
+            add_back_button_at(services_page, navigation, 9);
+            let wine_page = (*navigation).pages[30];
+            add_section_heading(wine_page, 0, "Gestión de prefijos Wine y Proton");
+            add_action(
+                wine_page,
+                1,
+                "Listar prefijos detectados",
+                "wine",
+                &["list"],
+                buffer,
+                status,
+            );
+            add_wine_action_button(
+                wine_page,
+                2,
+                "Inspeccionar prefijo",
+                "inspect",
+                &WINE_INSPECT_FIELDS,
+                buffer,
+                status,
+            );
+            add_wine_action_button(
+                wine_page,
+                3,
+                "Crear prefijo",
+                "create",
+                &WINE_CREATE_FIELDS,
+                buffer,
+                status,
+            );
+            add_wine_action_button(
+                wine_page,
+                4,
+                "Migrar y automatizar prefijo",
+                "migrate",
+                &WINE_MIGRATE_FIELDS,
+                buffer,
+                status,
+            );
+            add_action(
+                wine_page,
+                5,
+                "Guía de Wine y Proton",
+                "guide",
+                &["wine"],
+                buffer,
+                status,
+            );
+            add_back_button_at(wine_page, navigation, 6);
             add_action(
                 (*navigation).pages[2],
                 0,
@@ -4811,7 +6161,16 @@ mod linux {
                 buffer,
                 status,
             );
-            add_back_button_at((*navigation).pages[2], navigation, 5);
+            add_action(
+                (*navigation).pages[2],
+                5,
+                "Guía de dependencias",
+                "guide",
+                &["diagnostics"],
+                buffer,
+                status,
+            );
+            add_back_button_at((*navigation).pages[2], navigation, 6);
             let connectivity_page = (*navigation).pages[9];
             add_section_heading(
                 connectivity_page,
@@ -4832,7 +6191,16 @@ mod linux {
                 navigation,
                 19,
             );
-            add_back_button_at(connectivity_page, navigation, 3);
+            add_action(
+                connectivity_page,
+                3,
+                "Guía de conectividad",
+                "guide",
+                &["ssh"],
+                buffer,
+                status,
+            );
+            add_back_button_at(connectivity_page, navigation, 4);
 
             let ssh_page = (*navigation).pages[18];
             add_section_heading(ssh_page, 0, crate::i18n::gui_family_text("installable_ssh"));
@@ -4863,7 +6231,16 @@ mod linux {
                 buffer,
                 status,
             );
-            add_back_button_at(ssh_page, navigation, 4);
+            add_action(
+                ssh_page,
+                4,
+                "Guía de SSH, SCP y SFTP",
+                "guide",
+                &["ssh"],
+                buffer,
+                status,
+            );
+            add_back_button_at(ssh_page, navigation, 5);
 
             let android_page = (*navigation).pages[19];
             add_section_heading(
@@ -4916,7 +6293,16 @@ mod linux {
                 buffer,
                 status,
             );
-            add_back_button_at(android_page, navigation, 6);
+            add_action(
+                android_page,
+                6,
+                "Guía de Android y ADB",
+                "guide",
+                &["adb"],
+                buffer,
+                status,
+            );
+            add_back_button_at(android_page, navigation, 7);
             let utilities_page = (*navigation).pages[20];
             add_section_heading(
                 utilities_page,
@@ -4941,7 +6327,16 @@ mod linux {
                 buffer,
                 status,
             );
-            add_back_button_at(utilities_page, navigation, 3);
+            add_action(
+                utilities_page,
+                3,
+                "Guía de utilidades",
+                "guide",
+                &["utilities"],
+                buffer,
+                status,
+            );
+            add_back_button_at(utilities_page, navigation, 4);
             let container_page = (*navigation).pages[12];
             add_submenu_button(
                 container_page,
@@ -4971,7 +6366,16 @@ mod linux {
                 navigation,
                 17,
             );
-            add_back_button_at(container_page, navigation, 4);
+            add_action(
+                container_page,
+                4,
+                "Guía de Docker y Podman",
+                "guide",
+                &["containers"],
+                buffer,
+                status,
+            );
+            add_back_button_at(container_page, navigation, 5);
             // Cada familia conserva las operaciones avanzadas de Docker y
             // Podman, pero en una pantalla especializada y desplazable.
             let native_page = (*navigation).pages[14];
@@ -5152,7 +6556,16 @@ mod linux {
                 buffer,
                 status,
             );
-            add_back_button_at(native_page, navigation, 41);
+            add_action(
+                native_page,
+                41,
+                "Guía del ciclo de vida de contenedores",
+                "guide",
+                &["containers"],
+                buffer,
+                status,
+            );
+            add_back_button_at(native_page, navigation, 42);
             let native_page = (*navigation).pages[15];
             add_section_heading(
                 native_page,
@@ -5213,7 +6626,16 @@ mod linux {
                 buffer,
                 status,
             );
-            add_back_button_at(native_page, navigation, 48);
+            add_action(
+                native_page,
+                48,
+                "Guía de imágenes",
+                "guide",
+                &["containers"],
+                buffer,
+                status,
+            );
+            add_back_button_at(native_page, navigation, 49);
             let native_page = (*navigation).pages[16];
             add_section_heading(native_page, 0, crate::i18n::gui_family_text("volumes"));
             add_native_action_button(
@@ -5311,7 +6733,16 @@ mod linux {
                 buffer,
                 status,
             );
-            add_back_button_at(native_page, navigation, 60);
+            add_action(
+                native_page,
+                60,
+                "Guía de volúmenes y redes",
+                "guide",
+                &["containers"],
+                buffer,
+                status,
+            );
+            add_back_button_at(native_page, navigation, 61);
             let native_page = (*navigation).pages[17];
             add_section_heading(native_page, 0, crate::i18n::gui_family_text("compose"));
             add_native_action_button(
@@ -5355,7 +6786,16 @@ mod linux {
                 buffer,
                 status,
             );
-            add_back_button_at(native_page, navigation, 66);
+            add_action(
+                native_page,
+                66,
+                "Guía de Compose y diagnósticos",
+                "guide",
+                &["containers"],
+                buffer,
+                status,
+            );
+            add_back_button_at(native_page, navigation, 67);
             let k8s_page = (*navigation).pages[13];
             let native_page = k8s_page;
             add_section_heading(
@@ -5408,7 +6848,16 @@ mod linux {
                 buffer,
                 status,
             );
-            add_back_button_at(native_page, navigation, 73);
+            add_action(
+                native_page,
+                73,
+                "Guía de Kubernetes",
+                "guide",
+                &["kubernetes"],
+                buffer,
+                status,
+            );
+            add_back_button_at(native_page, navigation, 74);
             add_back_button((*navigation).pages[3], navigation);
             add_action(
                 (*navigation).pages[3],
@@ -5425,6 +6874,15 @@ mod linux {
                 crate::i18n::gui_text("registry"),
                 "registry",
                 &["status"],
+                buffer,
+                status,
+            );
+            add_action(
+                (*navigation).pages[3],
+                2,
+                "Guía de valores predeterminados",
+                "guide",
+                &["defaults"],
                 buffer,
                 status,
             );
@@ -5467,12 +6925,26 @@ mod linux {
                 navigation,
                 20,
             );
-            add_back_button_at((*navigation).pages[4], navigation, 6);
+            add_action(
+                (*navigation).pages[4],
+                6,
+                "Guía de herramientas instalables",
+                "guide",
+                &["packages"],
+                buffer,
+                status,
+            );
+            add_back_button_at((*navigation).pages[4], navigation, 7);
             let git_page = (*navigation).pages[8];
-            let git_title = CString::new(crate::i18n::tools_text("git_title")).unwrap_or_default();
-            let git_title_widget = gtk_label_new(git_title.as_ptr());
-            gtk_label_set_xalign(git_title_widget, 0.0);
-            gtk_grid_attach(git_page, git_title_widget, 0, 0, 2, 1);
+            add_action(
+                git_page,
+                0,
+                "Guía completa de Git y GitHub (gh)",
+                "guide",
+                &["git"],
+                buffer,
+                status,
+            );
             let mut git_fields = [null_mut(); 6];
             for (index, key) in [
                 "git_repo_placeholder",
@@ -5487,6 +6959,10 @@ mod linux {
             {
                 let field = gtk_entry_new();
                 let placeholder = CString::new(crate::i18n::tools_text(key)).unwrap_or_default();
+                gui_audit_event(&format!(
+                    "FIELD\tgit\t{key}\t{}",
+                    crate::i18n::tools_text(key)
+                ));
                 gtk_entry_set_placeholder_text(field, placeholder.as_ptr());
                 gtk_grid_attach(git_page, field, 0, (index + 1) as c_int, 2, 1);
                 git_fields[index] = field;
@@ -5638,7 +7114,7 @@ mod linux {
                 git_fields,
                 (buffer, status),
             );
-            add_back_button_at(git_page, navigation, 18);
+            add_back_button_at(git_page, navigation, 19);
             add_section_heading(
                 (*navigation).pages[5],
                 0,
@@ -5658,7 +7134,16 @@ mod linux {
                 navigation,
                 26,
             );
-            add_back_button_at((*navigation).pages[5], navigation, 3);
+            add_action(
+                (*navigation).pages[5],
+                3,
+                "Guía de automatización",
+                "guide",
+                &["automation"],
+                buffer,
+                status,
+            );
+            add_back_button_at((*navigation).pages[5], navigation, 4);
 
             let scripts_page = (*navigation).pages[25];
             build_scripts_page(scripts_page, navigation, buffer, status);
@@ -5691,6 +7176,15 @@ mod linux {
             }));
             connect(register_button, "clicked", on_register, registration.cast());
             gtk_grid_attach(registration_page, register_button, 0, 5, 2, 1);
+            add_action(
+                registration_page,
+                6,
+                "Guía para registrar scripts",
+                "guide",
+                &["automation"],
+                buffer,
+                status,
+            );
             add_back_button_at(registration_page, navigation, 8);
             add_back_button((*navigation).pages[6], navigation);
             let install_title =
@@ -5731,6 +7225,15 @@ mod linux {
                 buffer,
                 status,
             );
+            add_action(
+                (*navigation).pages[6],
+                4,
+                "Guía de paquetes y software",
+                "guide",
+                &["packages"],
+                buffer,
+                status,
+            );
             gtk_widget_show_all(window);
             // `gtk_widget_show_all` vuelve a hacer visibles también los
             // submenús que preparamos ocultos. Restablecer aquí el estado
@@ -5750,6 +7253,7 @@ mod linux {
             // construcción; restablecer la página inicial evita mezclar todos
             // los submenús en la pantalla principal.
             show_page(&*navigation, None);
+            gui_audit_event("GUI_AUDIT_END");
             GUI_NAVIGATION.store(navigation as usize, Ordering::Release);
             if let Ok(page) = std::env::var("LTOOLS_GUI_SMOKE_NAV_PAGE") {
                 if let Ok(page) = page.parse::<usize>() {
@@ -5766,6 +7270,9 @@ mod linux {
                 // reintentable es más estable que un temporizador fijo
                 // cuando la extracción de AppImage o el compositor tardan.
                 g_idle_add(Some(trigger_smoke_action), null_mut());
+            }
+            if std::env::var_os("LTOOLS_GUI_TREE_SMOKE").is_some() {
+                g_timeout_add(250, Some(trigger_storage_tree_smoke), null_mut());
             }
             if std::env::var_os("LTOOLS_GUI_SMOKE").is_some() {
                 let delay = std::env::var("LTOOLS_GUI_SMOKE_HOLD_MS")

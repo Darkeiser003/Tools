@@ -58,12 +58,68 @@ ok 'backend Rust responde a --version'
 HELP_OUTPUT="$("$BIN" --help)"
 grep -Fq 'doctor --install TOOL' <<<"$HELP_OUTPUT" || die 'la ayuda no documenta la instalación explícita'
 ok 'backend Rust responde a --help'
+GUIDE_GIT_OUTPUT="$("$BIN" guide git)" || die 'la guía de Git no responde'
+grep -Fq 'GIT Y GITHUB' <<<"$GUIDE_GIT_OUTPUT" || die 'la guía de Git no documenta GitHub'
+grep -Fq 'clone' <<<"$GUIDE_GIT_OUTPUT" || die 'la guía de Git no documenta clone'
+grep -Fq 'push' <<<"$GUIDE_GIT_OUTPUT" || die 'la guía de Git no documenta push'
+grep -Fq -- '--dry-run' <<<"$GUIDE_GIT_OUTPUT" || die 'la guía de Git no documenta dry-run'
+GUIDE_GUI_STORAGE_OUTPUT="$("$BIN" guide gui storage)"
+grep -Fq 'GUÍA GRÁFICA' <<<"$GUIDE_GUI_STORAGE_OUTPUT" || die 'la guía gráfica no se identifica como GUI'
+grep -Fq 'Proceso complejo' <<<"$GUIDE_GUI_STORAGE_OUTPUT" || die 'la guía gráfica no explica un proceso complejo'
+! grep -Fq 'parted' <<<"$GUIDE_GUI_STORAGE_OUTPUT" || die 'la guía gráfica expuso comandos internos'
+GUIDE_ALL_OUTPUT="$("$BIN" guide all)" || die 'el índice de guías no responde'
+for guide_topic in network boot services storage wine containers kubernetes actions; do
+    grep -Fq "$guide_topic" <<<"$GUIDE_ALL_OUTPUT" || die "el índice de guías no incluye $guide_topic"
+done
+GUIDE_NETWORK_OUTPUT="$("$BIN" guide network)"
+grep -Fq 'set-interface' <<<"$GUIDE_NETWORK_OUTPUT" || die 'la guía CLI de red no explica la opción de interfaz'
+grep -Fq -- '--interface' <<<"$GUIDE_NETWORK_OUTPUT" || die 'la guía CLI de red no explica el argumento de interfaz'
+GUIDE_BOOT_OUTPUT="$("$BIN" guide boot)"
+grep -Fq 'efi-entries' <<<"$GUIDE_BOOT_OUTPUT" || die 'la guía CLI de arranque no explica EFI'
+grep -Fq 'set-next' <<<"$GUIDE_BOOT_OUTPUT" || die 'la guía CLI de arranque no explica GRUB'
+GUIDE_SERVICES_OUTPUT="$("$BIN" guide services)"
+grep -Fq -- '--scope system|user|both' <<<"$GUIDE_SERVICES_OUTPUT" || die 'la guía de servicios no explica sus scopes'
+grep -Fq 'enable' <<<"$GUIDE_SERVICES_OUTPUT" || die 'la guía de servicios no explica activar servicios'
+ok 'guías CLI por familia y Git/GitHub avanzado'
 CLI_HELP_OUTPUT="$(LTOOLS_CLI=1 "$BIN")"
 grep -Fq 'Uso: ltools' <<<"$CLI_HELP_OUTPUT" || die 'el perfil CLI sin argumentos no mostró la ayuda'
 ok 'perfil CLI sin argumentos muestra ayuda sin abrir menú'
 CLI_WRAPPER_OUTPUT="$("$ROOT_DIR/ltools-cli.sh")"
 grep -Fq 'Uso: ltools' <<<"$CLI_WRAPPER_OUTPUT" || die 'ltools-cli.sh sin argumentos no mostró la ayuda'
 ok 'lanzador CLI Linux conserva el modo sin argumentos'
+
+# El gestor de alias debe ser utilizable sin tocar la configuración real del
+# usuario y debe conservar los argumentos como valores separados.
+ALIAS_HOME="$TMP_DIR/alias-config"
+ALIAS_BIN="$TMP_DIR/alias-bin"
+ALIAS_ENSURE_OUTPUT="$(LTOOLS_ALIAS_HOME="$ALIAS_HOME" LTOOLS_ALIAS_BIN="$ALIAS_BIN" \
+    LTOOLS_ALIAS_EXECUTABLE="$BIN" "$BIN" aliases ensure)"
+grep -Fq 'Alias predeterminados listos:' <<<"$ALIAS_ENSURE_OUTPUT" || die 'aliases ensure no creó el registro'
+grep -Fq 'Lanzador creado:' <<<"$ALIAS_ENSURE_OUTPUT" || die 'aliases ensure no creó el lanzador'
+[[ -x "$ALIAS_BIN/ltools" ]] || die 'el lanzador Linux gestionado no es ejecutable'
+ALIAS_LIST_OUTPUT="$(LTOOLS_ALIAS_HOME="$ALIAS_HOME" "$BIN" aliases list)"
+grep -Fq 'tnet -> native network' <<<"$ALIAS_LIST_OUTPUT" || die 'el registro no contiene el alias nativo de red'
+LTOOLS_ALIAS_HOME="$ALIAS_HOME" "$BIN" aliases add tguide guide gui storage >/dev/null
+ALIAS_GUIDE_OUTPUT="$(LTOOLS_ALIAS_HOME="$ALIAS_HOME" "$BIN" tguide)"
+grep -Fq 'GUÍA GRÁFICA: ALMACENAMIENTO' <<<"$ALIAS_GUIDE_OUTPUT" || die 'el alias personalizado no conservó sus argumentos'
+LTOOLS_ALIAS_HOME="$ALIAS_HOME" "$BIN" aliases disable tguide >/dev/null
+set +e
+DISABLED_ALIAS_STATUS=0
+LTOOLS_ALIAS_HOME="$ALIAS_HOME" "$BIN" tguide >"$TMP_DIR/disabled-alias.log" 2>&1 || DISABLED_ALIAS_STATUS=$?
+set -e
+(( DISABLED_ALIAS_STATUS != 0 )) || die 'un alias desactivado se ejecutó inesperadamente'
+grep -Fq 'comando desconocido: tguide' "$TMP_DIR/disabled-alias.log" || die 'un alias desactivado no bloqueó la expansión'
+ok 'gestor de alias Linux: creación, expansión, desactivación y lanzador'
+
+MAP_OUTPUT="$(XDG_STATE_HOME="$TMP_DIR/map-state" "$BIN" storage map --path "$TMP_DIR" --depth 1 --max-children 3)"
+grep -Fq 'MAPA DE DISCOS' <<<"$MAP_OUTPUT" || die 'el mapa de almacenamiento no mostró su cabecera'
+grep -Fq 'Tamaño = contenido accesible acumulado' <<<"$MAP_OUTPUT" || die 'el mapa no documentó el tamaño acumulado'
+MAP_JSON="$(XDG_STATE_HOME="$TMP_DIR/map-state" "$BIN" storage map --path "$TMP_DIR" --depth 0 --format json)"
+grep -Fq 'ltools-storage-map-v1' <<<"$MAP_JSON" || die 'el mapa JSON no declaró su esquema'
+EXPLAIN_OUTPUT="$(XDG_STATE_HOME="$TMP_DIR/map-state" "$BIN" storage explain --path "$TMP_DIR")"
+grep -Fq 'Permisos máximos del proceso:' <<<"$EXPLAIN_OUTPUT" || die 'storage explain no mostró el contexto de permisos'
+ok 'mapa Linux: árbol, tamaños acumulados, JSON y explicación de permisos'
+
 MENU_OUTPUT="$(printf 'q\n' | HOME="$TMP_DIR/menu-home" XDG_STATE_HOME="$TMP_DIR/menu-state" "$BIN" menu 2>&1)"
 for marker in 'Auditar / Inventariar' 'Dependencias' 'Herramientas nativas' 'Herramientas instalables' 'Automatización' 'Rutas predeterminadas'; do
     grep -Fq -- "$marker" <<<"$MENU_OUTPUT" || die "el menú principal no muestra la categoría: $marker"
@@ -85,6 +141,127 @@ if command -v xvfb-run >/dev/null 2>&1; then
             die 'la GUI Rust no pudo abrir y cerrar una ventana de prueba'
         fi
         ok 'GUI Rust Linux abre y cierra una ventana aislada'
+
+        # Auditoría estructural y capturas: el E2E visita páginas reales de la
+        # GUI y conserva evidencia visual de sus títulos, opciones y campos.
+        # El marcador lo escribe la propia construcción GTK, por lo que aquí
+        # también se detectan botones que no llevan comando, argumento o
+        # navegación asociada. Las capturas se dejan en dist/captures para
+        # poder revisarlas después del build.
+        GUI_CAPTURE_DIR="$ROOT_DIR/dist/captures"
+        GUI_AUDIT_MARKER="$TMP_DIR/gui-audit.marker"
+        mkdir -p -- "$GUI_CAPTURE_DIR"
+        rm -f -- "$GUI_AUDIT_MARKER"
+
+        capture_gui_page() {
+            local page capture marker capture_log
+            page="$1"
+            capture="$2"
+            marker="${3:-}"
+            capture_log="$TMP_DIR/gui-capture-${page}.log"
+            timeout 30 xvfb-run -a bash -c '
+                set -Eeuo pipefail
+                export GDK_BACKEND=x11
+                unset WAYLAND_DISPLAY WAYLAND_SOCKET
+                export GTK_USE_PORTAL=0
+                binary="$1"
+                page="$2"
+                capture="$3"
+                marker="$4"
+                export LTOOLS_NO_MOUNTS=1
+                export LTOOLS_GUI_SMOKE=1
+                export LTOOLS_GUI_REQUIRED=1
+                export LTOOLS_DISABLE_GUI=0
+                export LTOOLS_GUI_SMOKE_HOLD_MS=1800
+                export LTOOLS_GUI_SMOKE_NAV_PAGE="$page"
+                export HOME="$5"
+                export XDG_STATE_HOME="$6"
+                if [[ -n "$marker" ]]; then
+                    export LTOOLS_GUI_AUDIT_MARKER="$marker"
+                else
+                    unset LTOOLS_GUI_AUDIT_MARKER
+                fi
+                "$binary" >"$capture.log" 2>&1 &
+                pid=$!
+                window_id=""
+                for _ in {1..24}; do
+                    window_id="$(xdotool search --onlyvisible --name 'LTools' 2>/dev/null | head -n1 || true)"
+                    if [[ -n "$window_id" ]]; then
+                        break
+                    fi
+                    sleep 0.15
+                done
+                [[ -n "$window_id" ]]
+                # Espera a que GTK haya pintado los controles, no solo a que
+                # exista la ventana. Así se evita guardar un root negro por
+                # capturar durante el primer ciclo del compositor.
+                sleep 0.6
+                import -window "$window_id" "$capture" >/dev/null 2>&1 ||
+                    import -window root "$capture" >/dev/null 2>&1
+                wait "$pid"
+                [[ -s "$capture" ]]
+            ' _ "$BIN" "$page" "$capture" "$marker" \
+                "$TMP_DIR/gui-page-${page}-home" "$TMP_DIR/gui-page-${page}-state" \
+                >"$capture_log" 2>&1
+        }
+
+        capture_gui_page 8 "$GUI_CAPTURE_DIR/linux-git-github.png" "$GUI_AUDIT_MARKER" || {
+            cat "$TMP_DIR/gui-capture-8.log" >&2 || true
+            die 'la captura/auditoría de la página Git y GitHub falló'
+        }
+        capture_gui_page 10 "$GUI_CAPTURE_DIR/linux-storage-menu.png" || die 'la captura del menú de almacenamiento falló'
+        capture_gui_page 21 "$GUI_CAPTURE_DIR/linux-storage-partitions.png" || die 'la captura de particionado falló'
+        capture_gui_page 22 "$GUI_CAPTURE_DIR/linux-storage-filesystems.png" || die 'la captura de sistemas de archivos falló'
+        capture_gui_page 23 "$GUI_CAPTURE_DIR/linux-storage-volumes.png" || die 'la captura de volúmenes falló'
+        capture_gui_page 27 "$GUI_CAPTURE_DIR/linux-network.png" || die 'la captura de red falló'
+        capture_gui_page 28 "$GUI_CAPTURE_DIR/linux-boot-efi.png" || die 'la captura de arranque EFI falló'
+        capture_gui_page 29 "$GUI_CAPTURE_DIR/linux-services.png" || die 'la captura de servicios falló'
+        capture_gui_page 30 "$GUI_CAPTURE_DIR/linux-wine-proton.png" || die 'la captura de Wine/Proton falló'
+
+        [[ -s "$GUI_AUDIT_MARKER" ]] || die 'la GUI no produjo el marcador estructural'
+        grep -Fq 'GUI_AUDIT_BEGIN' "$GUI_AUDIT_MARKER" || die 'la auditoría GUI no comenzó'
+        grep -Fq 'GUI_AUDIT_END' "$GUI_AUDIT_MARKER" || die 'la auditoría GUI no terminó'
+        for page_title in \
+            $'PAGE\t8\tGit / GitHub' \
+            $'PAGE\t10\tAlmacenamiento y particiones' \
+            $'PAGE\t21\tParticionado y tablas' \
+            $'PAGE\t22\tSistemas de archivos' \
+            $'PAGE\t23\tCifrado y volúmenes' \
+            $'PAGE\t27\tRed, rutas, DNS y puertos escuchando' \
+            $'PAGE\t28\tArranque, EFI y cargador del sistema' \
+            $'PAGE\t29\tServicios del sistema' \
+            $'PAGE\t30\tGestión de prefijos Wine y Proton'; do
+            grep -Fq "$page_title" "$GUI_AUDIT_MARKER" ||
+                die "la auditoría GUI no registró el título: ${page_title#*$'\t'}"
+        done
+        for expected_button in \
+            $'BUTTON\tGuía completa de Git y GitHub (gh)\tCLI\tcommand=guide\targs=git' \
+            $'BUTTON\tCrear tabla GPT\tSTORAGE\toperation=mklabel-gpt\tfields=--device!' \
+            $'BUTTON\tMapa desplegable de discos y rutas\tCLI\tcommand=storage\targs=map --depth 4 --interactive-tree' \
+            $'BUTTON\tExplicar ruta y permisos\tSTORAGE\toperation=manage-permissions\tfields=--path!' \
+            $'BUTTON\tBorrar a la papelera\tSTORAGE\toperation=manage-delete\tfields=--path!' \
+            $'BUTTON\tCopiar archivo o carpeta\tSTORAGE\toperation=manage-copy\tfields=--source!,--destination!' \
+            $'BUTTON\tCrear archivo ZIP\tSTORAGE\toperation=manage-zip\tfields=--source!,--destination!' \
+            $'BUTTON\tCrear / formatear sistema de archivos\tSTORAGE\toperation=mkfs' \
+            $'BUTTON\tOperación LVM\tSTORAGE\toperation=lvm' \
+            $'BUTTON\tOperación RAID mdadm\tSTORAGE\toperation=raid' \
+            $'BUTTON\tActivar / desactivar interfaz\tNETWORK\taction=set-interface' \
+            $'BUTTON\tProgramar siguiente entrada GRUB\tBOOT' \
+            $'BUTTON\tAutomáticos y estáticos (system)\tCLI\tcommand=system\targs=services --scope system --filter automatic --limit 100' \
+            $'BUTTON\tCrear prefijo\tWINE'; do
+            grep -Fq "$expected_button" "$GUI_AUDIT_MARKER" ||
+                die "la auditoría GUI no registró la opción: ${expected_button#*$'\t'}"
+        done
+        for field in git_repo_placeholder git_url_placeholder git_destination_placeholder git_remote_message_placeholder git_notes_placeholder git_limit_placeholder; do
+            grep -Fq $'FIELD\tgit\t'"$field"$'\t' "$GUI_AUDIT_MARKER" ||
+                die "la auditoría GUI no registró el argumento/campo Git: $field"
+        done
+        duplicate_pages="$(awk -F '\t' '$1 == "PAGE" { print $3 }' "$GUI_AUDIT_MARKER" | sort | uniq -d)"
+        [[ -z "$duplicate_pages" ]] || die "la GUI tiene títulos de página duplicados: $duplicate_pages"
+        duplicate_categories="$(awk -F '\t' '$1 == "BUTTON" && $3 == "CATEGORY" { print $2 }' "$GUI_AUDIT_MARKER" | sort | uniq -d)"
+        [[ -z "$duplicate_categories" ]] || die "la GUI tiene categorías duplicadas: $duplicate_categories"
+        ok 'E2E GUI abre menús, ayudas, campos y argumentos; auditoría sin duplicados'
+        ok "capturas GUI: $GUI_CAPTURE_DIR (almacenamiento, Git, red, EFI, servicios y Wine/Proton)"
     else
         skip 'GUI Rust Linux: xvfb-run está instalado, pero Xvfb no puede crear un display aislado'
     fi
@@ -112,7 +289,7 @@ ok 'contrato JSON de capacidades e integración; catálogo nativo con instalador
 
 ACTIONS_JSON="$("$BIN" actions list --format json)"
 if command -v jq >/dev/null 2>&1; then
-    jq -e '.schema == "ltools-actions-v1" and .platform == "linux" and .safety.target_selection == "explicit-only" and (.actions | length >= 30) and any(.actions[]; .id == "storage.mount" and .targetPolicy == "explicit-only" and .mutating == true) and any(.actions[]; .id == "accounts.add" and .targetPolicy == "explicit-only" and .mutating == true and .confirmation != "none") and any(.actions[]; .id == "native.dns-flush" and .mutating == true and .confirmation != "none") and any(.actions[]; .id == "boot.status" and (.aliases | index("tboot status") != null) and .mutating == false) and all(.actions[]; (.command | IN("audit","packages","games","storage","system","accounts","native","defaults","clean","diagnostics","automation","boot")))' \
+    jq -e '.schema == "ltools-actions-v1" and .platform == "linux" and .safety.target_selection == "explicit-only" and (.actions | length >= 30) and any(.actions[]; .id == "storage.mount" and .targetPolicy == "explicit-only" and .mutating == true) and any(.actions[]; .id == "accounts.add" and .targetPolicy == "explicit-only" and .mutating == true and .confirmation != "none") and any(.actions[]; .id == "native.dns-flush" and .mutating == true and .confirmation != "none") and any(.actions[]; .id == "native.network-interface" and .mutating == true and .confirmation != "none") and any(.actions[]; .id == "wine.migrate" and .mutating == true and .confirmation != "none") and any(.actions[]; .id == "boot.status" and (.aliases | index("tboot status") != null) and .mutating == false) and all(.actions[]; (.command | IN("audit","packages","games","storage","system","accounts","native","defaults","clean","diagnostics","automation","boot","wine")))' \
         <<<"$ACTIONS_JSON" >/dev/null || die 'el registro de acciones Linux no declara políticas o acciones válidas'
 else
     grep -Fq 'ltools-actions-v1' <<<"$ACTIONS_JSON" || die 'el registro de acciones Linux no se pudo generar'
@@ -120,6 +297,10 @@ else
 fi
 ACTION_DRY_RUN="$("$BIN" --dry-run actions run storage.mount /dev/synthetic-ltools)"
 grep -Fq 'udisksctl mount' <<<"$ACTION_DRY_RUN" || grep -Fq 'mount /dev/synthetic-ltools' <<<"$ACTION_DRY_RUN" || die 'actions run no delegó el montaje con dry-run'
+ACTION_NETWORK_DRY_RUN="$("$BIN" --dry-run actions run native.network-interface 'lo up')"
+grep -Fq 'ip link set dev lo up' <<<"$ACTION_NETWORK_DRY_RUN" || die 'actions run no mapeó la interfaz de red'
+ACTION_WINE_DRY_RUN="$("$BIN" --dry-run actions run wine.create "$TMP_DIR/action-prefix")"
+grep -Fq 'no se ejecutaría wineboot' <<<"$ACTION_WINE_DRY_RUN" || die 'actions run no mapeó la creación de prefijos'
 ok 'registro de acciones guiadas, política de objetivo explícito y dry-run'
 
 NATIVE_TOOLS_OUTPUT="$("$BIN" native tools)"
@@ -133,6 +314,13 @@ for utility in curl file openssl gpg; do
 done
 printf 'q\n' | "$BIN" native utilities menu >/dev/null || die 'native utilities menu no volvió con q'
 ok 'catálogo y menú propio de utilidades del sistema'
+NETWORK_INTERFACE_DRY_RUN="$("$BIN" --dry-run native network set-interface --interface lo --state up --yes)"
+grep -Fq 'ip link set dev lo up' <<<"$NETWORK_INTERFACE_DRY_RUN" || die 'network set-interface no generó el plan esperado'
+NETWORK_CONNECTION_DRY_RUN="$("$BIN" --dry-run native network connection-up --connection synthetic --yes)"
+grep -Fq 'nmcli connection up synthetic' <<<"$NETWORK_CONNECTION_DRY_RUN" || die 'network connection-up no generó el plan esperado'
+WINE_CREATE_DRY_RUN="$("$BIN" --dry-run prefix create --dest "$TMP_DIR/prefix-gui" --arch win64 --yes)"
+grep -Fq 'no se ejecutaría wineboot' <<<"$WINE_CREATE_DRY_RUN" || die 'prefix create no respetó dry-run'
+ok 'gestión de red y prefijos Wine/Proton con parámetros, confirmación y dry-run'
 DEPENDENCIES_MENU_OUTPUT="$("$BIN" menu-dependencies <<< 'q')"
 grep -Eqi 'Instalar una dependencia|Install a dependency' <<<"$DEPENDENCIES_MENU_OUTPUT" ||
     die 'el menú central de dependencias no ofrece instalación guiada'
@@ -311,7 +499,11 @@ BOOT_ALIAS="$("$BIN" tboot status 2>&1)" || die 'alias tboot status terminó con
 grep -Fq 'Arranque Linux' <<<"$BOOT_ALIAS" || die 'tboot no se tradujo al módulo boot Linux'
 BOOT_PLAN="$("$BIN" --dry-run boot plan 2>&1)" || die 'boot plan Linux terminó con error'
 grep -Fq 'No se modificarán' <<<"$BOOT_PLAN" || die 'boot plan Linux no confirmó su modo de solo lectura'
-ok 'arranque Linux: estado, alias y plan sin modificaciones'
+for network_action in interfaces routes dns listening connections; do
+    "$BIN" native network "$network_action" >/dev/null 2>&1 ||
+        die "native network $network_action terminó con error"
+done
+ok 'arranque Linux: estado, alias, submenú y red separada sin modificaciones'
 
 DIAGNOSTICS_JSON="$("$BIN" diagnostics health --format json)"
 if command -v jq >/dev/null 2>&1; then

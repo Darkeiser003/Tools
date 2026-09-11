@@ -26,6 +26,7 @@ Opciones:
   --apply         Retirar los artefactos regenerables detectados.
   --plans         Incluir planes automáticos legacy de ~/.local/state/ltools.
   --plans-only    Revisar o retirar únicamente esos planes legacy.
+  --keep-release  Conservar la carpeta release/ y sus distribuibles publicables.
   --yes           No pedir confirmación al usar --apply.
   --help          Mostrar esta ayuda.
 
@@ -44,12 +45,14 @@ MODE='dry-run'
 ASSUME_YES=0
 INCLUDE_PLANS=0
 PLANS_ONLY=0
+KEEP_RELEASE=0
 for arg in "$@"; do
     case "$arg" in
         --dry-run) MODE='dry-run' ;;
         --apply) MODE='apply' ;;
         --plans) INCLUDE_PLANS=1 ;;
         --plans-only) INCLUDE_PLANS=1; PLANS_ONLY=1 ;;
+        --keep-release) KEEP_RELEASE=1 ;;
         --yes) ASSUME_YES=1 ;;
         --help|-h) usage; exit 0 ;;
         *) die "opción desconocida: $arg (usa --help)." ;;
@@ -86,6 +89,10 @@ is_safe_child() {
 
 if ((PLANS_ONLY == 0)); then
 for relative in "${GENERATED_DIRS[@]}"; do
+    if [[ "$relative" == 'release' && "$KEEP_RELEASE" -eq 1 ]]; then
+        SKIPPED+=("release (conservado por --keep-release)")
+        continue
+    fi
     path="$ROOT_DIR/$relative"
     [[ -e "$path" || -L "$path" ]] || continue
     is_safe_child "$path" || die "ruta de limpieza insegura: $path"

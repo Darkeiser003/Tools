@@ -142,7 +142,7 @@ fn list_services(args: &[String], forced_user: bool) -> Result<(), String> {
         selected.len()
     );
     println!(
-        "Columnas: unidad | estado | carga | subestado | tipo | arranque | categoría | descripción"
+        "Columnas: unidad | ámbito | estado | carga | subestado | tipo | arranque | categoría | origen | descripción"
     );
     if selected.is_empty() {
         println!("No hay servicios que coincidan con estos filtros.");
@@ -163,6 +163,7 @@ struct ServiceRow {
     kind: String,
     enabled: String,
     category: String,
+    source: String,
     user: bool,
 }
 
@@ -190,6 +191,10 @@ impl ServiceRow {
             "all" => true,
             "active" => self.active == "active",
             "enabled" => matches!(self.enabled.as_str(), "enabled" | "static" | "indirect"),
+            "automatic" | "auto" => matches!(self.enabled.as_str(), "enabled" | "indirect"),
+            "manual" | "disabled" => {
+                matches!(self.enabled.as_str(), "disabled" | "masked" | "static")
+            }
             "failed" => self.is_failed(),
             "noteworthy" | "" => {
                 !self.is_not_found()
@@ -202,8 +207,8 @@ impl ServiceRow {
 
     fn search_text(&self) -> String {
         format!(
-            "{} {} {} {}",
-            self.unit, self.category, self.description, self.kind
+            "{} {} {} {} {}",
+            self.unit, self.category, self.description, self.kind, self.source
         )
         .to_lowercase()
     }
@@ -238,6 +243,7 @@ fn query_services(user: bool) -> Result<Vec<ServiceRow>, String> {
             row.kind = service_property(user, &row.unit, "Type");
             row.enabled = service_enabled(user, &row.unit);
             row.category = service_category(&row.unit, &row.description);
+            row.source = service_source(user, &row.unit);
             row
         })
         .collect())
@@ -260,6 +266,7 @@ fn parse_service_line(line: &str) -> Option<ServiceRow> {
         kind: String::new(),
         enabled: String::new(),
         category: String::new(),
+        source: String::new(),
         user: false,
     })
 }
@@ -295,6 +302,21 @@ fn service_enabled(user: bool, unit: &str) -> String {
 }
 
 #[cfg(not(windows))]
+fn service_source(user: bool, unit: &str) -> String {
+    let fragment = service_property(user, unit, "FragmentPath");
+    if !fragment.is_empty() {
+        fragment
+    } else {
+        let source = service_property(user, unit, "SourcePath");
+        if source.is_empty() {
+            "generado/transitorio".into()
+        } else {
+            source
+        }
+    }
+}
+
+#[cfg(not(windows))]
 fn service_category(unit: &str, description: &str) -> String {
     let text = format!("{unit} {description}").to_lowercase();
     for (category, words) in [
@@ -324,8 +346,9 @@ fn service_category(unit: &str, description: &str) -> String {
 fn print_service_rows(rows: &[&ServiceRow]) {
     for row in rows {
         println!(
-            "{} | {} | {} | {} | {} | {} | {} | {}",
+            "{} | {} | {} | {} | {} | {} | {} | {} | {} | {}",
             row.unit,
+            if row.user { "user" } else { "system" },
             row.active,
             row.load,
             row.sub,
@@ -340,6 +363,11 @@ fn print_service_rows(rows: &[&ServiceRow]) {
                 &row.enabled
             },
             row.category,
+            if row.source.is_empty() {
+                "unknown"
+            } else {
+                &row.source
+            },
             row.description
         );
     }
@@ -465,7 +493,9 @@ fn service(ctx: &Context, args: &[String], user: bool) -> Result<(), String> {
     ) {
         return Err("acción de servicio no válida".into());
     }
-    if !ask(&format!("¿Ejecutar systemctl {} {}?", operation, unit)) {
+    if !args.iter().any(|arg| arg == "--yes")
+        && !ask(&format!("¿Ejecutar systemctl {} {}?", operation, unit))
+    {
         return Ok(());
     }
     let scope = if user { "user" } else { "system" };
@@ -791,11 +821,11 @@ fn export_report(ctx: &Context, args: &[String]) -> Result<(), String> {
     let contents = match format.as_str() {
         "tsv" => {
             let mut text = String::from(
-                "scope\tunit\tload\tactive\tsub\ttype\tenabled\tcategory\tdescription\n",
+                "scope\tunit\tload\tactive\tsub\ttype\tenabled\tcategory\tsource\tdescription\n",
             );
             for row in &rows {
                 text.push_str(&format!(
-                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
                     if row.user { "user" } else { "system" },
                     crate::common::clean(&row.unit),
                     crate::common::clean(&row.load),
@@ -804,6 +834,7 @@ fn export_report(ctx: &Context, args: &[String]) -> Result<(), String> {
                     crate::common::clean(&row.kind),
                     crate::common::clean(&row.enabled),
                     crate::common::clean(&row.category),
+                    crate::common::clean(&row.source),
                     crate::common::clean(&row.description)
                 ));
             }
@@ -814,7 +845,7 @@ fn export_report(ctx: &Context, args: &[String]) -> Result<(), String> {
                 .iter()
                 .map(|row| {
                     format!(
-                        "{{\"scope\":\"{}\",\"unit\":\"{}\",\"load\":\"{}\",\"active\":\"{}\",\"sub\":\"{}\",\"type\":\"{}\",\"enabled\":\"{}\",\"category\":\"{}\",\"description\":\"{}\"}}",
+                        "{{\"scope\":\"{}\",\"unit\":\"{}\",\"load\":\"{}\",\"active\":\"{}\",\"sub\":\"{}\",\"type\":\"{}\",\"enabled\":\"{}\",\"category\":\"{}\",\"source\":\"{}\",\"description\":\"{}\"}}",
                         json_escape(if row.user { "user" } else { "system" }),
                         json_escape(&row.unit),
                         json_escape(&row.load),
@@ -823,6 +854,7 @@ fn export_report(ctx: &Context, args: &[String]) -> Result<(), String> {
                         json_escape(&row.kind),
                         json_escape(&row.enabled),
                         json_escape(&row.category),
+                        json_escape(&row.source),
                         json_escape(&row.description)
                     )
                 })
@@ -949,9 +981,11 @@ no se modificará automáticamente. La acción solo continúa con tu confirmaci�
 
 #[cfg(not(windows))]
 fn menu_service_list(user: bool) -> Result<(), String> {
-    let filter = menu_input("Filtro [noteworthy/active/enabled/failed/all] (Enter: noteworthy): ")?
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "noteworthy".into());
+    let filter = menu_input(
+        "Filtro [noteworthy/active/automatic/manual/enabled/failed/all] (Enter: noteworthy): ",
+    )?
+    .filter(|value| !value.is_empty())
+    .unwrap_or_else(|| "noteworthy".into());
     let category =
         menu_input("Categoría [all/steam/kde/docker/vmware/wine/network/audio] (Enter: all): ")?
             .filter(|value| !value.is_empty())

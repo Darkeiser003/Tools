@@ -32,6 +32,8 @@ admiten `--dry-run` y generan planes reversibles cuando corresponde.
 - [Requisitos](#requisitos)
 - [Instalación y primer uso](#instalación-y-primer-uso)
 - [Comandos](#comandos)
+- [Gestor de alias](#gestor-de-alias)
+- [Guías de uso por opción](#guías-de-uso-por-opción)
 - [Auditoría de Wine, Proton y juegos](#auditoría-de-wine-proton-y-juegos)
 - [Migración de prefijos](#migración-de-prefijos)
 - [Paquetes y limpieza](#paquetes-y-limpieza)
@@ -129,13 +131,71 @@ comandos cómodos como tdisk status, tsvc list, tnet status, tboot status o
 tclean preview. Son metadatos declarativos, no shell: LTerminal debe usar
 siempre executable y args[] separados.
 
+### Gestor de alias
+
+El gestor mantiene los alias por usuario, detecta si el registro existe y crea
+los alias base que falten al iniciar LTools. No concatena una línea de shell:
+cada comando y cada argumento se guardan por separado, se validan contra los
+comandos de LTools y se pasan de forma nativa.
+
+Linux, desde el checkout:
+
+```text
+./ltools.sh aliases ensure
+./ltools.sh aliases list
+./ltools.sh aliases doctor
+```
+
+Después de `ensure`, el lanzador gestionado queda en `~/.local/bin/ltools`.
+Añade ese directorio a `PATH` si el diagnóstico indica que aún no está
+presente. El registro se guarda en `$XDG_CONFIG_HOME/ltools/aliases.tsv` o en
+`~/.config/ltools/aliases.tsv`.
+
+Windows, desde el paquete portable:
+
+```text
+.\windows\ltools-cli.ps1 aliases ensure
+.\windows\ltools-cli.ps1 aliases list
+.\windows\ltools-cli.ps1 aliases doctor
+```
+
+El lanzador gestionado queda en `%LOCALAPPDATA%\LTools\bin\ltools.cmd` y el
+registro en `%APPDATA%\LTools\aliases.tsv`. En CMD se puede usar
+`windows\ltools-cli.cmd` con los mismos argumentos. PowerShell y CMD tienen
+reglas de rutas diferentes: no se deben copiar rutas `/home`, `/dev` o
+`systemctl` a Windows, ni `C:\` o cmdlets PowerShell a Linux.
+
+Operaciones disponibles en ambos perfiles:
+
+```text
+ltools aliases list
+ltools aliases add mi-red native network status
+ltools aliases disable mi-red
+ltools aliases enable mi-red
+ltools aliases remove mi-red
+ltools aliases path
+ltools aliases shell-init
+```
+
+Los alias predeterminados no se borran: se desactivan para conservar la
+compatibilidad. `doctor` permite comprobar registro, lanzador y `PATH` antes
+de usar `ltools` desde cualquier terminal.
+
 ### Arranque, firmware y recuperación
 
-boot status inspecciona únicamente el arranque nativo de la plataforma: GRUB,
-systemd-boot, EFI y Secure Boot en Linux; BCD, EFI y WinRE en Windows. boot
-plan explica el flujo protegido para una futura modificación, pero no escribe
-GRUB, BCD, NVRAM ni particiones. Cualquier aplicación futura deberá exigir
-destino explícito, copia exportada, diff, elevación, verificación y rollback.
+La pantalla de sistema abre submenús reales para red y arranque. El submenú
+de red separa interfaces, rutas, DNS, puertos escuchando, NetworkManager y
+vaciado de caché DNS. El de arranque ofrece estado general, entradas EFI/NVRAM,
+entradas GRUB, systemd-boot, Secure Boot, plan seguro, programación y
+cancelación de la siguiente entrada GRUB. Red permite además activar o
+desactivar interfaces y conectar o desconectar perfiles de NetworkManager con
+confirmación y registro de la operación.
+
+En CLI, `boot status`, `boot efi-entries`, `boot grub-entries`, `boot
+systemd-boot` y `boot secure-boot` son consultas. `boot set-next --entry
+"Título exacto"` usa `grub-reboot` para el siguiente arranque, exige elevación
+y confirmación (o `--yes` desde una interfaz que ya confirmó); nunca reinicia
+el equipo automáticamente. `boot plan` explica el flujo protegido para una
 Wine no se considera una prueba válida de firmware o arranque.
 
 ## Requisitos
@@ -448,7 +508,9 @@ independiente, se puede indicar explícitamente `--out`.
 | `doctor` | Dependencias, FUSE y diagnóstico del anfitrión |
 | `rollback` | Recuperar operaciones registradas en un plan |
 
-Cada módulo ofrece ayuda propia:
+Cada módulo ofrece ayuda propia. La CLI explica operaciones, filtros y
+argumentos nativos de LTools; la GUI explica el recorrido visual y no obliga a
+memorizar comandos internos del sistema:
 
 ```bash
 ./ltools.sh audit --help
@@ -461,6 +523,48 @@ Cada módulo ofrece ayuda propia:
 ./ltools.sh registry status
 ./ltools.sh --lang en --rust --help
 ```
+
+## Guías de uso por opción
+
+Como LTools tiene muchas acciones, cada familia incluye una guía contextual
+en la GUI y una guía equivalente en la CLI. El botón `Guía ...` aparece junto
+a las acciones de gestión; explica requisitos, campos, ejemplos, permisos,
+riesgos, confirmación, `--dry-run`, planes y el orden recomendado. No es un
+listado pasivo: sirve para saber qué botón usar y qué resultado verificar.
+
+```bash
+./ltools.sh guide all
+./ltools.sh guide cli storage
+./ltools.sh guide gui storage
+./ltools.sh guide git
+./ltools.sh guide gh
+./ltools.sh guide network
+./ltools.sh guide boot
+./ltools.sh guide services
+./ltools.sh guide storage
+./ltools.sh guide containers
+./ltools.sh guide kubernetes
+```
+
+La guía de Git cubre `status`, `log`, `clone`, `fetch`, `pull`, `add`,
+`commit`, `push`, ramas, tags y releases. También documenta la compatibilidad
+avanzada con GitHub CLI (`gh`): `login`, `auth-status`, repositorios, pull
+requests y releases, incluyendo cuándo hace falta red, credenciales o un
+repositorio `OWNER/REPO`. El login sigue siendo interactivo y LTools no lee,
+guarda ni imprime tokens.
+
+Las acciones de red, EFI/GRUB, servicios, cuentas, almacenamiento, Wine/Proton,
+contenedores, Kubernetes, SSH/ADB, paquetes y automatización tienen la misma
+estructura de guía. Las consultas se distinguen de las mutaciones; estas
+últimas conservan confirmación y, cuando corresponde, plan reversible.
+
+Las guías no mezclan plataformas. La CLI muestra capacidades, opciones y
+objetivos válidos para Linux o Windows sin presentar comandos internos como si
+fueran pasos de usuario. La GUI muestra el procedimiento visual equivalente,
+incluidos los campos, confirmaciones y comprobaciones posteriores. Una opción
+no disponible se marca como no aplicable; por ejemplo, Wine/Proton no se
+escanea desde el ejecutable Windows nativo y GRUB/systemd-boot no se ofrece
+como gestión BCD.
 
 ## Integración JSON y terminal
 
@@ -545,6 +649,8 @@ automáticamente).
 ./ltools.sh system status
 ./ltools.sh system failed --journal
 ./ltools.sh system services --scope both --filter noteworthy
+./ltools.sh system services --scope system --filter automatic
+./ltools.sh system services --scope system --filter manual
 ./ltools.sh system services --filter all --category docker --search container
 ./ltools.sh system processes --sort memory --limit 20
 ./ltools.sh system journal --level error --hours 6 --limit 100
@@ -552,8 +658,13 @@ automáticamente).
 ./ltools.sh system export --scope both --format json --out /tmp/ltools-system.json
 ```
 
-Los servicios se muestran en columnas completas, sin truncar descripciones, y
-se agrupan por Steam, KDE, Docker, VMware, Wine, red, audio, sesión y sistema.
+Los servicios se muestran en columnas completas, sin truncar descripciones, e
+incluyen ámbito (`system`/`user`), estado, tipo, política de arranque
+(`enabled`, `disabled`, `static`, `masked`, etc.), categoría y origen real
+(`FragmentPath`/`SourcePath`, por ejemplo `/usr/lib/systemd/system` o
+`/etc/systemd/system`). Se pueden filtrar automáticos, manuales/desactivados,
+activos, fallidos o todos, y se agrupan por Steam, KDE, Docker, VMware, Wine,
+red, audio, sesión y sistema.
 Las acciones disponibles son `start`, `stop`, `restart`, `enable`, `disable`,
 `mask` y `unmask`:
 
@@ -564,7 +675,8 @@ Las acciones disponibles son `start`, `stop`, `restart`, `enable`, `disable`,
 
 Siempre se pide confirmación. Las acciones del sistema requieren `sudo` cuando
 corresponde; las consultas no modifican nada. En el menú se encuentran en
-«Gestionar servicios, procesos y journal», junto con filtros interactivos,
+«Servicios del sistema», junto con listados separados de automáticos, manuales,
+servicios de usuario, todos los ámbitos, fallidos y un gestor por unidad.
 dependencias y exportación TSV/JSON.
 
 ## Diagnóstico nativo
@@ -602,14 +714,22 @@ Defender. Las consultas no cambian el estado.
 ```bash
 ./ltools.sh native menu
 ./ltools.sh native network status
+./ltools.sh native network interfaces
+./ltools.sh native network routes
+./ltools.sh native network dns
+./ltools.sh native network listening
+./ltools.sh native network connections
+./ltools.sh --dry-run native network set-interface --interface eth0 --state up --yes
+./ltools.sh --dry-run native network connection-up --connection "Mi Wi-Fi" --yes
 ./ltools.sh native hardware status
 ./ltools.sh native power status
 ./ltools.sh native security status
 ./ltools.sh --dry-run native network flush-dns
 ```
 
-`network flush-dns` es la única acción mutable de este bloque por ahora:
-requiere confirmación y admite `--dry-run`. En Windows se usa
+`network flush-dns`, `set-interface`, `connection-up` y `connection-down` son
+acciones mutables: requieren confirmación y admiten `--dry-run`/`--yes` cuando
+la confirmación ya la ha realizado una interfaz. En Windows se usa
 `ltools.exe native network flush-dns`. Si falta una herramienta opcional, se
 informa y, cuando el catálogo conoce un paquete seguro, se ofrece instalar
 solo esa dependencia desde el gestor existente; LTools no instala Wine,
@@ -629,6 +749,9 @@ submenú permite consultar y gestionar el flujo habitual:
 ./ltools.sh storage status
 ./ltools.sh storage partitions
 ./ltools.sh storage mounts
+./ltools.sh storage map --depth 2 --max-children 80
+./ltools.sh storage map --path /home --depth 4 --format json --out mapa-home.json
+./ltools.sh storage explain --path /etc
 ./ltools.sh storage inspect /dev/sda1
 ./ltools.sh storage mount /dev/sdb1
 ./ltools.sh storage unmount /mnt/datos
@@ -654,6 +777,34 @@ el comando completo y admite `--dry-run` sobre objetivos sintéticos. `mount`,
 `unmount` y las operaciones mutables se anotan en el plan. `open-gparted` queda
 como alternativa externa, no como requisito. Si falta una herramienta, se
 ofrece su instalación puntual mediante `doctor --install`.
+
+El «Mapa desplegable de discos y rutas» añade una vista de árbol con el tamaño
+acumulado de cada carpeta, archivos y subcarpetas ordenados por peso, permisos
+observados, nodos inaccesibles y rutas estándar explicadas. `--depth` controla
+cuánto se abre el árbol, `--max-children` limita solo el detalle visual (el
+tamaño de la carpeta sigue incluyendo las entradas omitidas) y `--format
+json|tsv` permite alimentar otra GUI o guardar un inventario. El escaneo marca
+los permisos insuficientes y permite repetirlo desde una terminal elevada;
+no sigue otros montajes salvo que se use `--follow-mounts`.
+
+Las acciones sobre archivos se mantienen separadas del escaneo y siempre
+requieren objetivo explícito:
+
+```text
+ltools storage manage explain --path /var
+ltools --dry-run storage manage copy --source /home/yo/Documento --destination /tmp/copia
+ltools --dry-run storage manage move --source /tmp/copia --destination /home/yo/copia
+ltools --dry-run storage manage delete --path /tmp/copia
+ltools --dry-run storage manage zip --source /home/yo/Proyecto --destination /tmp/proyecto.zip
+ltools --dry-run storage manage tar --source /home/yo/Proyecto --destination /tmp/proyecto.tar
+ltools storage manage open --path /home/yo
+```
+
+`delete` usa la papelera nativa y bloquea raíces del sistema, `copy` y `move`
+conservan los argumentos separados, `zip` y `tar` delegan en la herramienta
+nativa instalada y `open` usa el explorador/gestor de archivos de la
+plataforma. Las acciones admiten `--dry-run` y `--yes` cuando la confirmación
+ya fue realizada por una interfaz.
 
 Ejemplos seguros de simulación:
 
@@ -713,6 +864,9 @@ En Windows, el mismo comando usa PowerShell y las herramientas nativas:
 .\ltools.exe storage status
 .\ltools.exe storage partitions
 .\ltools.exe storage mounts
+.\ltools.exe storage map --path C:\Users --depth 2 --max-children 80
+.\ltools.exe storage map --path C:\Users --depth 3 --format json --out C:\Temp\mapa-users.json
+.\ltools.exe storage explain --path C:\Windows
 .\ltools.exe storage inspect C:
 .\ltools.exe storage health C:
 .\ltools.exe storage open-disk-management
@@ -728,6 +882,11 @@ En Windows, `health` y `check` ejecutan `Repair-Volume -Scan` sin reparar.
 particionado al Administrador de discos o DiskPart nativos, después de pedir
 confirmación; LTools no ejecuta scripts destructivos por su cuenta. Todas las
 acciones admiten `--dry-run` para revisar el plan sin cambiar el sistema.
+El mapa usa letras de unidad y rutas Windows, muestra atributos de solo
+lectura y explica Windows, Program Files, ProgramData, Users y AppData; no
+convierte rutas `/dev` ni comandos Linux. Para copiar, mover, archivar o abrir
+desde el mapa se usan `storage manage copy|move|zip|tar|open` con
+`--source`, `--destination` y `--path` Windows.
 
 Las consultas del Registro son de solo lectura. `export` crea un respaldo
 `.reg`; no importa claves ni cambia el Registro. LTools no usa `systemctl`,
@@ -761,8 +920,14 @@ Steam y las rutas montadas que se indiquen con `--root`.
 ./ltools.sh prefix list
 ./ltools.sh prefix list --include-mount-roots
 ./ltools.sh prefix inspect --path "$HOME/.wine"
+./ltools.sh --dry-run prefix create --dest "$HOME/.local/share/ltools-prefixes/wine-main" --arch win64 --yes
 ./ltools.sh defaults
 ```
+
+La GUI ya no deja los prefijos como un simple informe: su submenú permite
+listar, inspeccionar, crear y migrar/automatizar prefijos. La migración puede
+actualizar defaults, configuraciones y lanzadores, siempre con confirmación,
+comprobaciones de destino y plan cuando corresponde.
 
 ## Migración de prefijos
 
@@ -825,6 +990,8 @@ Ejemplos seguros:
 ./ltools.sh packages --out "$HOME/Informes/ltools-packages"
 ./ltools.sh clean --dry-run --package-caches --plan /tmp/ltools-clean.tsv
 ./ltools.sh clean --dry-run --path "$HOME/.cache/paru" --plan /tmp/ltools-cache.tsv
+./ltools.sh clean --automatic --preview
+./ltools.sh clean --automatic --include-personal --ask-each
 ./ltools.sh --dry-run rollback --plan /tmp/ltools-cache.tsv
 ./ltools.sh rollback --plan /tmp/ltools-cache.tsv
 ```
@@ -832,6 +999,22 @@ Ejemplos seguros:
 El modo de limpieza no incluye automáticamente bibliotecas de juegos, máquinas
 virtuales, prefijos ni puntos de montaje. Esas rutas requieren selección
 explícita y mantienen los bloqueos de seguridad.
+
+`clean --automatic` es el asistente de liberación máxima de espacio. Primero
+calcula el tamaño de cachés regenerables, temporales conocidos, cachés de
+gestores, papelera, aplicaciones instaladas y rutas personales detectables.
+Descargas, Documentos, Escritorio, Imágenes, Vídeos y Música quedan fuera por
+defecto. `--include-personal` o `--all-known` solo los añade al inventario;
+todavía se pregunta por la categoría y después si se quiere borrar todo o
+revisar cada elemento uno a uno. `--ask-each` fuerza esta última modalidad.
+
+Los cachés y temporales confirmados se eliminan de sus ubicaciones conocidas;
+los datos personales se envían a la papelera; la papelera se puede revisar y
+vaciar de forma explícita. Las carpetas de aplicaciones nunca se borran como
+archivos: se muestran como espacio potencial y la desinstalación debe hacerse
+mediante `packages`/`software`, usando el gestor nativo de Linux o Windows.
+El resumen distingue espacio potencial, seleccionado y liberado/separado, y
+avisa de que lo enviado a la papelera sigue ocupando espacio hasta vaciarla.
 
 ### Búsqueda e instalación contextual
 

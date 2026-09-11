@@ -274,6 +274,36 @@ static ACTIONS: &[ActionSpec] = &[
         profile: "advanced",
     },
     ActionSpec {
+        id: "native.network-interface",
+        category: "native",
+        command: "native",
+        args: &["network", "set-interface"],
+        target: "interface-and-state",
+        mutating: true,
+        confirmation: "backend",
+        profile: "advanced",
+    },
+    ActionSpec {
+        id: "native.networkmanager-connection",
+        category: "native",
+        command: "native",
+        args: &["network", "connection-up"],
+        target: "connection",
+        mutating: true,
+        confirmation: "backend",
+        profile: "advanced",
+    },
+    ActionSpec {
+        id: "native.networkmanager-disconnect",
+        category: "native",
+        command: "native",
+        args: &["network", "connection-down"],
+        target: "connection",
+        mutating: true,
+        confirmation: "backend",
+        profile: "advanced",
+    },
+    ActionSpec {
         id: "system.health",
         category: "system",
         command: "system",
@@ -471,6 +501,36 @@ static ACTIONS: &[ActionSpec] = &[
         target: "none",
         mutating: false,
         confirmation: "none",
+        profile: "advanced",
+    },
+    ActionSpec {
+        id: "boot.clear-next",
+        category: "boot",
+        command: "boot",
+        args: &["clear-next"],
+        target: "boot-environment",
+        mutating: true,
+        confirmation: "backend",
+        profile: "advanced",
+    },
+    ActionSpec {
+        id: "wine.create",
+        category: "wine",
+        command: "wine",
+        args: &["create"],
+        target: "prefix-destination",
+        mutating: true,
+        confirmation: "backend",
+        profile: "advanced",
+    },
+    ActionSpec {
+        id: "wine.migrate",
+        category: "wine",
+        command: "wine",
+        args: &["migrate"],
+        target: "prefix-source-and-destination",
+        mutating: true,
+        confirmation: "backend",
         profile: "advanced",
     },
     ActionSpec {
@@ -994,7 +1054,48 @@ fn run_named(ctx: &Context, args: &[String]) -> Result<(), String> {
             delegated.push(operation.to_string());
             delegated.push(unit.to_string());
         } else {
-            delegated.push(target.to_string());
+            match spec.target {
+                "boot-environment" => {
+                    if target != "grubenv" {
+                        return Err("el objetivo debe ser exactamente: grubenv".into());
+                    }
+                }
+                "interface-and-state" => {
+                    let mut parts = target.split_whitespace();
+                    let interface = parts.next().ok_or("falta la interfaz")?;
+                    let state = parts.next().ok_or("falta el estado up|down")?;
+                    if parts.next().is_some() {
+                        return Err("el objetivo debe ser: INTERFAZ ESTADO".into());
+                    }
+                    delegated.extend([
+                        "--interface".to_owned(),
+                        interface.to_owned(),
+                        "--state".to_owned(),
+                        state.to_owned(),
+                    ]);
+                }
+                "connection" => {
+                    delegated.extend(["--connection".to_owned(), target.to_owned()]);
+                }
+                "prefix-destination" => {
+                    delegated.extend(["--dest".to_owned(), target.to_owned()]);
+                }
+                "prefix-source-and-destination" => {
+                    let (source, destination) = target
+                        .split_once(" -> ")
+                        .ok_or("el objetivo debe ser: ORIGEN -> DESTINO")?;
+                    if source.is_empty() || destination.is_empty() {
+                        return Err("origen y destino son obligatorios".into());
+                    }
+                    delegated.extend([
+                        "--source".to_owned(),
+                        source.to_owned(),
+                        "--dest".to_owned(),
+                        destination.to_owned(),
+                    ]);
+                }
+                _ => delegated.push(target.to_string()),
+            }
         }
     }
     println!("Acción: {} ({})", spec.id, spec.profile);

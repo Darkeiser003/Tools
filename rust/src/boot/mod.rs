@@ -26,10 +26,10 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
 pub fn help() -> &'static str {
     #[cfg(windows)]
     {
-        "boot: status | plan; inspección nativa de BCD/UEFI sin modificar el arranque"
+        "boot: menu | status | plan; inspección nativa de BCD/UEFI sin modificar el arranque"
     }
     #[cfg(not(windows))]
     {
-        "boot: status | plan; inspección nativa de GRUB/systemd-boot/EFI sin modificar el arranque"
+        "boot: menu | status | efi-entries | grub-entries | systemd-boot | secure-boot | set-next | clear-next | plan"
     }
 }

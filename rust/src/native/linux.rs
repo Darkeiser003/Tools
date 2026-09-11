@@ -12,7 +12,11 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
     match area {
         "network" | "net" => {
             let action = sub(args, area);
-            if action == "menu" { network_menu(ctx) } else { network(ctx, action) }
+            if action == "menu" {
+                network_menu(ctx)
+            } else {
+                network_with_args(ctx, action, args)
+            }
         }
         "hardware" | "hw" => hardware(ctx, sub(args, area)),
         "power" | "energy" => {
@@ -54,6 +58,10 @@ fn sub<'a>(args: &'a [String], area: &str) -> &'a str {
 }
 
 fn network(ctx: &Context, action: &str) -> Result<(), String> {
+    network_with_args(ctx, action, &[])
+}
+
+fn network_with_args(ctx: &Context, action: &str, raw_args: &[String]) -> Result<(), String> {
     match action {
         "status" | "overview" => {
             println!("=== Red Linux ===");
@@ -78,11 +86,85 @@ fn network(ctx: &Context, action: &str) -> Result<(), String> {
             }
             Ok(())
         }
+        "interfaces" | "ifaces" => {
+            println!("=== Interfaces de red ===");
+            if offer(ctx, "ip") { best_effort("ip", &["-brief", "address"]); }
+            else { println!("ip no está disponible."); }
+            Ok(())
+        }
+        "routes" | "route" => {
+            println!("=== Rutas de red ===");
+            if offer(ctx, "ip") { best_effort("ip", &["route"]); }
+            else { println!("ip no está disponible."); }
+            Ok(())
+        }
+        "dns" => {
+            println!("=== DNS ===");
+            if offer(ctx, "resolvectl") { best_effort("resolvectl", &["status"]); }
+            else { println!("resolvectl no está disponible."); }
+            Ok(())
+        }
+        "listening" | "ports" | "listeners" => {
+            println!("=== Puertos escuchando ===");
+            if offer(ctx, "ss") { best_effort("ss", &["-tuln"]); }
+            else { println!("ss no está disponible."); }
+            Ok(())
+        }
+        "connections" | "nmcli" => {
+            println!("=== Conexiones NetworkManager ===");
+            if offer(ctx, "nmcli") { best_effort("nmcli", &["connection", "show"]); }
+            else { println!("nmcli no está disponible."); }
+            Ok(())
+        }
+        "set-interface" => {
+            let interface = option(raw_args, "--interface").ok_or("falta --interface")?;
+            let state = option(raw_args, "--state").ok_or("falta --state")?;
+            if !interface
+                .chars()
+                .all(|value| value.is_ascii_alphanumeric() || "._:-".contains(value))
+                || !matches!(state.as_str(), "up" | "down")
+            {
+                return Err("interfaz o estado no válido; usa --state up|down".into());
+            }
+            run_native_command(
+                ctx,
+                "set-interface",
+                "ip",
+                &[
+                    "link".into(),
+                    "set".into(),
+                    "dev".into(),
+                    interface,
+                    state,
+                ],
+                true,
+                "¿Cambiar el estado de esta interfaz?",
+            )
+        }
+        "connection-up" | "connection-down" => {
+            let connection = option(raw_args, "--connection").ok_or("falta --connection")?;
+            if connection.trim().is_empty() {
+                return Err("la conexión no puede estar vacía".into());
+            }
+            if !offer(ctx, "nmcli") {
+                return Err("nmcli no está disponible".into());
+            }
+            let state = if action == "connection-up" { "up" } else { "down" };
+            run_native_command(
+                ctx,
+                "networkmanager-connection",
+                "nmcli",
+                &["connection".into(), state.into(), connection],
+                true,
+                "¿Aplicar esta acción de NetworkManager?",
+            )
+        }
         "flush-dns" | "dns-flush" => {
             if !offer(ctx, "resolvectl") {
                 return Err("resolvectl no está disponible en este sistema".into());
             }
-            if !ctx.dry_run && !ask("¿Vaciar la caché DNS de resolvectl?") {
+            let confirmed = raw_args.iter().any(|value| value == "--yes");
+            if !ctx.dry_run && !confirmed && !ask("¿Vaciar la caché DNS de resolvectl?") {
                 let _ = record_native(
                     ctx,
                     "flush-dns",
@@ -119,8 +201,14 @@ fn network(ctx: &Context, action: &str) -> Result<(), String> {
                 Err("resolvectl no pudo vaciar la caché DNS".into())
             }
         }
-        _ => Err("network admite status u flush-dns".into()),
+        _ => Err("network admite menu, status, interfaces, routes, dns, listening, connections, set-interface, connection-up, connection-down o flush-dns".into()),
     }
+}
+
+fn option(args: &[String], name: &str) -> Option<String> {
+    args.windows(2)
+        .find(|pair| pair[0] == name)
+        .map(|pair| pair[1].clone())
 }
 
 fn hardware(ctx: &Context, action: &str) -> Result<(), String> {
@@ -2116,7 +2204,13 @@ fn run_native_command(
     confirm: bool,
     question: &str,
 ) -> Result<(), String> {
-    let rendered = args
+    let command_args: Vec<String> = args
+        .iter()
+        .filter(|arg| arg.as_str() != "--yes")
+        .cloned()
+        .collect();
+    let auto_confirmed = args.iter().any(|arg| arg == "--yes");
+    let rendered = command_args
         .iter()
         .map(|arg| crate::common::shell_display(arg))
         .collect::<Vec<_>>()
@@ -2127,23 +2221,23 @@ fn run_native_command(
         println!("Simulación: no se ejecutó el comando.");
         return Ok(());
     }
-    if confirm && !ask(question) {
-        record_native(ctx, operation, program, "cancelled", args)?;
+    if confirm && !auto_confirmed && !ask(question) {
+        record_native(ctx, operation, program, "cancelled", &command_args)?;
         println!("Operación cancelada.");
         return Ok(());
     }
     let ok = if requires_privilege(operation) {
-        crate::common::run_with_sudo(program, args, false)
+        crate::common::run_with_sudo(program, &command_args, false)
             .map_err(|error| format!("no se pudo ejecutar {program} con elevación: {error}"))?
     } else {
         Command::new(program)
-            .args(args)
+            .args(&command_args)
             .status()
             .map_err(|error| format!("no se pudo ejecutar {program}: {error}"))?
             .success()
     };
     let state = if ok { "executed" } else { "failed" };
-    record_native(ctx, operation, program, state, args)?;
+    record_native(ctx, operation, program, state, &command_args)?;
     if ok {
         Ok(())
     } else {

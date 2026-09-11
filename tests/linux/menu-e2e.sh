@@ -218,6 +218,24 @@ run_menu main-registry "3\n6\n1\nq\n" 'Registros y configuración Linux'
 run_menu main-tools "4\n1\nq\nq\n" 'Operaciones Git y GitHub'
 run_menu main-software "4\n2\n1\nq\nq\nq\n" 'Stores de paquetes detectadas'
 run_menu main-utilities "4\n7\nq\n\nq\nq\n" 'Utilidades del sistema Linux'
+
+BOOT_MENU_OUT="$TMP_DIR/boot-menu.out"
+printf '2\n\n3\n\nq\n' | timeout 60 env HOME="$HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" \
+    XDG_DATA_HOME="$XDG_DATA_HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
+    LTOOLS_NO_MOUNTS=1 LTOOLS_NO_AUTO_TERMINAL=1 "$BIN" boot menu >"$BOOT_MENU_OUT" 2>&1
+grep -Fq 'Arranque, GRUB, EFI y systemd-boot' "$BOOT_MENU_OUT" || die 'el menú de arranque no se abrió'
+grep -Fq 'Entradas EFI / NVRAM' "$BOOT_MENU_OUT" || die 'el menú de arranque no ofrece EFI como opción'
+grep -Fq 'Entradas GRUB' "$BOOT_MENU_OUT" || die 'el menú de arranque no ofrece selector/listado GRUB'
+ok 'menú de arranque con EFI, GRUB y systemd-boot'
+
+NETWORK_MENU_OUT="$TMP_DIR/network-menu.out"
+printf '1\n\nq\n' | timeout 60 env HOME="$HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" \
+    XDG_DATA_HOME="$XDG_DATA_HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
+    LTOOLS_NO_MOUNTS=1 LTOOLS_NO_AUTO_TERMINAL=1 "$BIN" native network menu >"$NETWORK_MENU_OUT" 2>&1
+grep -Fq 'Gestión de red Linux' "$NETWORK_MENU_OUT" || die 'el menú de red no se abrió'
+grep -Fq 'Activar interfaz' "$NETWORK_MENU_OUT" || die 'el menú de red no ofrece acciones de interfaz'
+grep -Fq 'Conectar con NetworkManager' "$NETWORK_MENU_OUT" || die 'el menú de red no ofrece NetworkManager'
+ok 'menú de red con interfaces, DNS y NetworkManager'
 run_menu main-multi-session "1\n3\n$PKG_OUT\n\nq\n5\nq\nq\n" 'Operación terminada correctamente.'
 [[ "$(grep -o '=== LTools' "$TMP_DIR/main-multi-session.out" | wc -l)" -ge 2 ]] || die 'el menú no volvió a mostrarse tras una acción'
 grep -Fq $'\033[2J\033[H=== LTools' "$TMP_DIR/main-multi-session.out" || die 'el menú no limpió la pantalla al volver'
@@ -348,6 +366,15 @@ run_bash system services --scope both --filter all --category all --limit 8 >"$S
 grep -Fq 'del sistema y del usuario' "$SYSTEM_BOTH_OUTPUT" || die 'services --scope both no combinó los ámbitos'
 grep -Fq 'Columnas:' "$SYSTEM_BOTH_OUTPUT" || die 'services no mostró sus columnas completas'
 ok 'servicios combinados con filtros, categorías y columnas propias'
+
+SYSTEM_AUTO_OUTPUT="$TMP_DIR/system-automatic.out"
+run_bash system services --scope system --filter automatic --limit 4 >"$SYSTEM_AUTO_OUTPUT"
+grep -Fq 'Filtro: automatic' "$SYSTEM_AUTO_OUTPUT" || die 'services no aceptó el filtro automático'
+grep -Fq 'origen' "$SYSTEM_AUTO_OUTPUT" || die 'services no mostró el origen de la unidad'
+SYSTEM_MANUAL_OUTPUT="$TMP_DIR/system-manual.out"
+run_bash system services --scope system --filter manual --limit 4 >"$SYSTEM_MANUAL_OUTPUT"
+grep -Fq 'Filtro: manual' "$SYSTEM_MANUAL_OUTPUT" || die 'services no aceptó el filtro manual'
+ok 'servicios automáticos/manuales con ámbito y origen'
 
 SYSTEM_FAILED_OUTPUT="$TMP_DIR/system-failed.out"
 run_bash system failed --journal >"$SYSTEM_FAILED_OUTPUT"

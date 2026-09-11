@@ -388,6 +388,12 @@ fn collect_artifacts_dir(path: &Path, file: &mut File, depth: usize) {
 }
 
 pub fn clean(ctx: &Context, args: &[String]) -> Result<(), String> {
+    if args
+        .iter()
+        .any(|arg| matches!(arg.as_str(), "--automatic" | "--smart"))
+    {
+        return crate::cleaner::run(ctx, args);
+    }
     if args.iter().any(|arg| arg == "menu") {
         return menu(ctx);
     }
@@ -543,6 +549,7 @@ fn menu(ctx: &Context) -> Result<(), String> {
         println!("  3) {}", i18n::text("menu.clean.flatpak"));
         println!("  4) {}", i18n::text("menu.clean.path"));
         println!("  5) {}", i18n::text("menu.clean.package"));
+        println!("  6) Limpiador automático guiado (cachés, temporales y datos opcionales)");
         println!("  q) {}", i18n::text("menu.back"));
         print!("{}", i18n::text("menu.prompt"));
         let _ = std::io::stdout().flush();
@@ -568,6 +575,7 @@ fn menu(ctx: &Context) -> Result<(), String> {
                     clean(ctx, &["--package".into(), package.display().to_string()])?;
                 }
             }
+            "6" => clean(ctx, &["--automatic".into()])?,
             "" | "q" | "b" | "back" | "volver" | "retour" | "zurück" | "voltar" | "indietro"
             | "torna" | "terug" | "wstecz" => return Ok(()),
             _ => println!("{}", i18n::text("menu.invalid")),
