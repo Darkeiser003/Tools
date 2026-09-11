@@ -386,8 +386,9 @@ Para automatización o integración desde otra terminal usa el perfil CLI:
 
 Si ejecutas windows\ltools.ps1 desde un checkout del proyecto, el lanzador
 busca automáticamente el ejecutable en el paquete Windows de dist y en el
-target Rust. Si no existe todavía, ejecuta windows\build.cmd; al fallar,
-el lanzador conserva el mensaje visible para poder diagnosticarlo.
+target Rust. Si todavía no existe, ejecuta primero `windows\build.cmd` o
+`windows\build.ps1`; el lanzador no compila implícitamente y conserva el
+mensaje visible para poder diagnosticar la ausencia del ejecutable.
 
 La release Windows no incluye scripts Bash, FUSE, Wine, Proton ni comandos
 Linux. Las capacidades no aplicables se muestran como tales.

@@ -1296,7 +1296,15 @@ fn filesystems() -> Result<(), String> {
     }
     if command_exists("blkid") {
         println!("\n=== blkid ===");
-        run_capture("blkid", &[])?;
+        // `blkid` puede devolver 2 aunque `lsblk` haya podido inventariar
+        // correctamente los sistemas de archivos (por ejemplo, cuando el
+        // contenedor no permite leer algún dispositivo). Es una vista
+        // complementaria: no debe convertir toda la consulta en un fallo.
+        if let Err(error) = run_capture("blkid", &[]) {
+            println!(
+                "blkid no pudo completar la consulta; se conserva la información de lsblk. Detalle: {error}"
+            );
+        }
     }
     Ok(())
 }

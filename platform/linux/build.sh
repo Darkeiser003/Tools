@@ -506,7 +506,25 @@ if [[ "$CHECKS" -eq 1 ]]; then
     fi
     if command -v cargo-deny >/dev/null 2>&1; then
         step 'Validando licencias y fuentes Rust'
-        (cd "$ROOT_DIR/rust" && run_logged cargo deny check)
+        cargo_home_dir="${CARGO_HOME:-${HOME:-/tmp}/.cargo}"
+        if [[ -w "$cargo_home_dir/advisory-dbs" ]]; then
+            (cd "$ROOT_DIR/rust" && run_logged cargo deny check)
+        elif [[ -d "$cargo_home_dir/advisory-dbs" && -d "$cargo_home_dir/registry" ]]; then
+            # Algunos entornos de CI/sandbox montan ~/.cargo como solo
+            # lectura. cargo-deny necesita un lock exclusivo incluso en modo
+            # offline; usa una copia efímera de sus datos locales para
+            # conservar la validación de licencias, fuentes y advisories.
+            deny_home="$OUTPUT_DIR/.cargo-deny-$BUILD_ID"
+            mkdir -p -- "$deny_home"
+            cp -a -- "$cargo_home_dir/advisory-dbs" "$deny_home/"
+            ln -s -- "$cargo_home_dir/registry" "$deny_home/registry"
+            deny_status=0
+            (cd "$ROOT_DIR/rust" && CARGO_HOME="$deny_home" run_logged cargo deny --offline check) || deny_status=$?
+            rm -rf -- "$deny_home"
+            (( deny_status == 0 )) || exit "$deny_status"
+        else
+            die 'cargo-deny está instalado, pero no hay una base local de advisories y no se puede preparar un entorno offline'
+        fi
         ok 'cargo-deny correcto'
     else
         warn 'cargo-deny no está disponible; se omite la validación de licencias y fuentes.'
@@ -726,7 +744,12 @@ EOF
             else
                 warn 'appstreamcli no está en PATH; se omite la validación independiente del manifiesto.'
             fi
-            run_logged appimagetool --no-appstream "$appdir" "$artifact"
+            # appimagetool puede ser un AppImage o necesitar FUSE para
+            # localizar su runtime interno. Forzar extracción lo hace
+            # utilizable en builders sin FUSE; ARCH evita que dependa de que
+            # pueda inferir la arquitectura desde un binario del AppDir.
+            run_logged env ARCH="$ARCH" APPIMAGE_EXTRACT_AND_RUN=1 \
+                appimagetool --no-appstream "$appdir" "$artifact"
             chmod +x "$artifact" || die "no se pudo aplicar el permiso ejecutable a $artifact"
             [[ -s "$artifact" ]] || die "no se pudo crear el AppImage $variant"
             ok "AppImage $variant generado: $artifact"

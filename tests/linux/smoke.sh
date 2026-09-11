@@ -37,6 +37,15 @@ if [[ "$KEEP_TEMP" -eq 0 ]]; then
 else
     printf 'Temporales conservados en: %s\n' "$TMP_DIR"
 fi
+# Toda la batería debe ser hermética: los dry-run de acciones mutables crean
+# una frontera de transacción aunque no ejecuten el comando. Si se hereda el
+# XDG_STATE_HOME del host, una política de solo lectura del entorno puede
+# hacer fallar el smoke antes de probar LTools.
+export HOME="$TMP_DIR/default-home"
+export XDG_CONFIG_HOME="$TMP_DIR/default-config"
+export XDG_DATA_HOME="$TMP_DIR/default-data"
+export XDG_STATE_HOME="$TMP_DIR/default-state"
+mkdir -p -- "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"
 
 printf 'Smoke tests de LTools\n'
 while IFS= read -r -d '' file; do
@@ -353,7 +362,15 @@ if [[ -n "$APPIMAGE_PATH" ]]; then
         printf '$ %q --doctor\n' "$APPIMAGE_PATH"
     } >> "$DIRECT_LOG"
     set +e
-    timeout 30 "$APPIMAGE_PATH" --doctor >> "$DIRECT_LOG" 2>&1
+    if [[ -c /dev/fuse ]] &&
+        { command -v fusermount3 >/dev/null 2>&1 || command -v fusermount >/dev/null 2>&1; }; then
+        timeout 30 "$APPIMAGE_PATH" --doctor >> "$DIRECT_LOG" 2>&1
+    else
+        # En hosts sin FUSE la ejecución directa del runtime AppImage no
+        # puede montar su SquashFS. El contrato del builder ofrece extracción
+        # como fallback, así que la prueba debe ejercer ese mismo camino.
+        APPIMAGE_EXTRACT_AND_RUN=1 timeout 30 "$APPIMAGE_PATH" --doctor >> "$DIRECT_LOG" 2>&1
+    fi
     DIRECT_STATUS=$?
     set -e
     if [[ "$DIRECT_STATUS" -ne 0 ]]; then
@@ -837,7 +854,7 @@ EOF
         die 'el registro del lanzador no confirmó el proceso de terminal'
     ok 'apertura sin argumentos redirige el menú a una terminal gráfica'
 
-    NOARGS_OUTPUT="$(printf 'q\n' | timeout 30 env LTOOLS_NO_AUTO_TERMINAL=1 "$APPIMAGE_PATH" 2>&1)"
+    NOARGS_OUTPUT="$(printf 'q\n' | timeout 30 env APPIMAGE_EXTRACT_AND_RUN=1 LTOOLS_NO_AUTO_TERMINAL=1 "$APPIMAGE_PATH" 2>&1)"
     grep -Fq 'Elige una opción' <<<"$NOARGS_OUTPUT" || die 'el menú interactivo no se mostró al iniciar sin argumentos'
     ok 'menú interactivo del AppImage'
     APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" --version >/dev/null
