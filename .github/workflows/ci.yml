@@ -32,7 +32,12 @@ jobs:
             libpango1.0-dev libcairo2-dev libgdk-pixbuf-2.0-dev \
             libx11-dev libxtst-dev gcc-mingw-w64-x86-64 \
             wine wine64 xvfb xdotool imagemagick x11-utils \
-            rsync trash-cli jq zip unzip file
+            rsync trash-cli jq zip unzip file ripgrep shellcheck
+
+      - name: Install actionlint
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Install stable Rust and Windows GNU target
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable action, pinned 2026-07-16
@@ -41,11 +46,17 @@ jobs:
           components: rustfmt, clippy
           targets: x86_64-pc-windows-gnu
 
+      - name: Install checksum-verified Cargo security tools
+        uses: taiki-e/install-action@6c6fd71fe4fb72c3697d269963d0e15df8adedad # v2.85.10
+        with:
+          tool: cargo-audit,cargo-deny
+
       - name: Run complete Linux build and Wine E2E
         env:
           TMPDIR: ${{ runner.temp }}
+          LTOOLS_REQUIRE_LOOPBACK_TESTS: '1'
         run: >-
-          bash scripts/build.sh --windows-wine --no-appimage --allow-unsigned
+          bash scripts/build.sh --windows-wine --no-appimage --allow-unsigned --strict-security --security-review
           --non-interactive --jobs 2
           --output "${{ runner.temp }}/ltools-linux-dist"
           --release-dir "${{ runner.temp }}/ltools-linux-release"
@@ -53,7 +64,7 @@ jobs:
 
       - name: Preserve build outputs and diagnostic logs
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: linux-wine-build-${{ github.run_id }}
           path: |
@@ -81,6 +92,8 @@ jobs:
 
       - name: Run full native Windows build, tests, smoke and E2E
         shell: pwsh
+        env:
+          LTOOLS_REQUIRE_LOOPBACK_TESTS: '1'
         run: |
           $dist = Join-Path $env:RUNNER_TEMP 'ltools-windows-dist'
           $release = Join-Path $env:RUNNER_TEMP 'ltools-windows-release'
@@ -90,7 +103,7 @@ jobs:
 
       - name: Preserve build outputs and diagnostic logs
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: windows-native-build-${{ github.run_id }}
           path: |
@@ -98,29 +111,3 @@ jobs:
             ${{ runner.temp }}/ltools-windows-release/
             ${{ runner.temp }}/ltools-windows-build.log
           if-no-files-found: warn
-
-  rust-supply-chain:
-    name: Rust advisories, licenses and sources
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Install stable Rust
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable action, pinned 2026-07-16
-        with:
-          toolchain: stable
-
-      - name: Install checksum-verified Cargo security tools
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-audit,cargo-deny
-
-      - name: Check Rust advisories
-        run: cargo audit --file rust/Cargo.lock
-
-      - name: Check licenses, duplicate crates and registry sources
-        run: cargo deny --manifest-path rust/Cargo.toml --config deny.toml check

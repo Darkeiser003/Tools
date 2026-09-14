@@ -3,6 +3,100 @@
 //! La GUI vive en Rust y solo se compila con las APIs de la plataforma. El
 //! perfil CLI nunca entra aquí: conserva salida de consola y ayuda.
 
+static ACCOUNT_PASSWORD_TEMP_SEQUENCE: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Create the password hand-off file without a permissive-umask window and
+/// without following/replacing a pre-existing path in the shared temp folder.
+fn create_account_password_file(password: &str) -> std::io::Result<std::path::PathBuf> {
+    use std::io::Write;
+
+    for _ in 0..16 {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let sequence =
+            ACCOUNT_PASSWORD_TEMP_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "ltools-account-password-{}-{nonce}-{sequence}.txt",
+            std::process::id()
+        ));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&path) {
+            Ok(mut file) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Err(error) = file.set_permissions(std::fs::Permissions::from_mode(0o600))
+                    {
+                        drop(file);
+                        let _ = std::fs::remove_file(&path);
+                        return Err(error);
+                    }
+                }
+                if let Err(error) = file.write_all(password.as_bytes()) {
+                    drop(file);
+                    let _ = std::fs::remove_file(&path);
+                    return Err(error);
+                }
+                return Ok(path);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "no se pudo reservar un nombre exclusivo para el archivo temporal",
+    ))
+}
+
+struct TemporaryFileCleanup(Vec<std::path::PathBuf>);
+
+impl Drop for TemporaryFileCleanup {
+    fn drop(&mut self) {
+        for path in &self.0 {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+#[cfg(test)]
+mod account_password_tempfile_tests {
+    use super::{create_account_password_file, TemporaryFileCleanup};
+
+    #[test]
+    fn password_file_is_private_and_cleanup_removes_it() {
+        let path = create_account_password_file("not-a-real-password")
+            .expect("create private password hand-off file");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read test password file"),
+            "not-a-real-password"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path)
+                    .expect("inspect test password file")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+        drop(TemporaryFileCleanup(vec![path.clone()]));
+        assert!(!path.exists(), "temporary secret file must be removed");
+    }
+}
+
 // The active GUI below uses the small platform FFI layer. Keep the old GTK
 // prototype parsed out of every build; it depended on an undeclared crate and
 // made `cargo build --all-features` fail even though no product path used it.
@@ -292,6 +386,7 @@ mod gtk_legacy {
 
 #[cfg(target_os = "linux")]
 mod linux {
+    use super::{create_account_password_file, TemporaryFileCleanup};
     use std::cell::Cell;
     use std::ffi::{c_char, c_int, c_void, CStr, CString};
     use std::fs::OpenOptions;
@@ -1835,9 +1930,22 @@ mod linux {
         command: String,
         args: Vec<String>,
     ) {
+        enqueue_action_with_temp_cleanup(buffer, status, title, command, args, Vec::new());
+    }
+
+    fn enqueue_action_with_temp_cleanup(
+        buffer: *mut Widget,
+        status: *mut Widget,
+        title: String,
+        command: String,
+        args: Vec<String>,
+        temporary_files: Vec<std::path::PathBuf>,
+    ) {
         let buffer = buffer as usize;
         let status = status as usize;
+        let cleanup = TemporaryFileCleanup(temporary_files);
         std::thread::spawn(move || {
+            let _cleanup = cleanup;
             let execution = run_action_owned(&command, &args);
             let completion = Box::new(AsyncResult {
                 buffer,
@@ -3305,7 +3413,7 @@ mod linux {
         if dialog.is_null() {
             return None;
         }
-        let title = CString::new("Cambiar contraseña").unwrap_or_default();
+        let title = CString::new(crate::i18n::gui_account_text("password")).unwrap_or_default();
         gtk_window_set_title(dialog, title.as_ptr());
         gtk_window_set_modal(dialog, 1);
         let parent = GUI_WINDOW.load(Ordering::Acquire) as *mut Widget;
@@ -3318,7 +3426,11 @@ mod linux {
         gtk_grid_set_row_spacing(grid, 10);
         gtk_grid_set_column_spacing(grid, 10);
         gtk_container_set_border_width(grid, 14);
-        let labels = ["Usuario local", "Contraseña nueva", "Repite la contraseña"];
+        let labels = [
+            crate::i18n::gui_account_text("local_user"),
+            crate::i18n::gui_account_text("new_password"),
+            crate::i18n::gui_account_text("repeat_password"),
+        ];
         let mut entries = Vec::with_capacity(labels.len());
         for (row, label_text) in labels.iter().enumerate() {
             let prompt = CString::new(*label_text).unwrap_or_default();
@@ -3336,7 +3448,7 @@ mod linux {
         }
         gtk_container_add(content, grid);
         let cancel = CString::new(crate::i18n::gui_action_text("cancel")).unwrap_or_default();
-        let execute = CString::new("Cambiar contraseña").unwrap_or_default();
+        let execute = CString::new(crate::i18n::gui_account_text("password")).unwrap_or_default();
         gtk_dialog_add_button(dialog, cancel.as_ptr(), -6);
         gtk_dialog_add_button(dialog, execute.as_ptr(), -8);
         gtk_widget_show_all(dialog);
@@ -3371,29 +3483,17 @@ mod linux {
         if !begin_action() {
             return;
         }
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|value| value.as_nanos())
-            .unwrap_or_default();
-        let password_file = std::env::temp_dir().join(format!(
-            "ltools-account-password-{}-{nonce}.txt",
-            std::process::id()
-        ));
-        if let Err(error) = std::fs::write(&password_file, password) {
-            label(
-                data.status,
-                &format!("No se pudo preparar la contraseña: {error}"),
-            );
-            finish_action();
-            return;
-        }
-        #[cfg(unix)]
-        if let Ok(metadata) = std::fs::metadata(&password_file) {
-            use std::os::unix::fs::PermissionsExt;
-            let mut permissions = metadata.permissions();
-            permissions.set_mode(0o600);
-            let _ = std::fs::set_permissions(&password_file, permissions);
-        }
+        let password_file = match create_account_password_file(&password) {
+            Ok(path) => path,
+            Err(error) => {
+                label(
+                    data.status,
+                    &format!("No se pudo preparar la contraseña: {error}"),
+                );
+                finish_action();
+                return;
+            }
+        };
         let args = vec![
             "password".to_owned(),
             "--user".to_owned(),
@@ -3403,13 +3503,14 @@ mod linux {
             "--yes".to_owned(),
         ];
         label(data.status, crate::i18n::gui_text("running"));
-        show_running(data.buffer, "Cambiar contraseña");
-        enqueue_action(
+        show_running(data.buffer, crate::i18n::gui_account_text("password"));
+        enqueue_action_with_temp_cleanup(
             data.buffer,
             data.status,
-            "Cambiar contraseña".to_owned(),
+            crate::i18n::gui_account_text("password").to_owned(),
             "accounts".to_owned(),
             args,
+            vec![password_file],
         );
     }
 
@@ -5346,12 +5447,33 @@ mod linux {
     unsafe fn add_account_action_button(
         grid: *mut Widget,
         row: c_int,
-        label_text: &'static str,
+        _label_text: &'static str,
         action: &'static str,
         fields: &'static [NativeField],
         buffer: *mut Widget,
         status: *mut Widget,
     ) {
+        let label_text = crate::i18n::gui_account_text(match action {
+            "list" => "list",
+            "groups" => "groups",
+            "identity" => "identity",
+            "sessions" => "sessions",
+            "inspect" => "inspect",
+            "create" => "create",
+            "modify" => "modify",
+            "lock" => "lock",
+            "unlock" => "unlock",
+            "delete" => "delete",
+            "expire" => "expire",
+            "group-create" => "group_create",
+            "group-delete" => "group_delete",
+            "group-add" => "group_add",
+            "group-remove" => "group_remove",
+            "set-primary-group" => "group_primary",
+            "admin-add" => "admin_add",
+            "admin-groups" => "admin_groups",
+            _ => return,
+        });
         gui_audit_button(
             grid,
             label_text,
@@ -5379,8 +5501,9 @@ mod linux {
         buffer: *mut Widget,
         status: *mut Widget,
     ) {
-        gui_audit_button(grid, "Cambiar contraseña", "ACCOUNT", "action=password");
-        let label = CString::new("Cambiar contraseña").unwrap_or_default();
+        let password_label = crate::i18n::gui_account_text("password");
+        gui_audit_button(grid, password_label, "ACCOUNT", "action=password");
+        let label = CString::new(password_label).unwrap_or_default();
         let button = gtk_button_new_with_label(label.as_ptr());
         gtk_widget_set_size_request(button, 250, 36);
         gtk_widget_set_halign(button, 3);
@@ -5940,7 +6063,7 @@ mod linux {
                     "Particionado y tablas",
                     "Sistemas de archivos",
                     "Cifrado y volúmenes",
-                    "Usuarios, grupos y sesiones",
+                    crate::i18n::accounts_label(),
                     "Scripts registrados",
                     "Registrar script",
                     "Red, rutas, DNS y puertos escuchando",
@@ -6797,7 +6920,7 @@ mod linux {
             add_back_button_at(volumes_page, navigation, 13);
 
             let accounts_page = (*navigation).pages[24];
-            add_section_heading(accounts_page, 0, "Usuarios, grupos y sesiones");
+            add_section_heading(accounts_page, 0, crate::i18n::accounts_label());
             add_account_action_button(
                 accounts_page,
                 1,
@@ -6843,7 +6966,11 @@ mod linux {
                 buffer,
                 status,
             );
-            add_section_heading(accounts_page, 6, "Gestionar cuentas");
+            add_section_heading(
+                accounts_page,
+                6,
+                crate::i18n::gui_account_text("manage_accounts"),
+            );
             add_account_action_button(
                 accounts_page,
                 7,
@@ -6899,7 +7026,11 @@ mod linux {
                 buffer,
                 status,
             );
-            add_section_heading(accounts_page, 14, "Gestionar grupos y membresías");
+            add_section_heading(
+                accounts_page,
+                14,
+                crate::i18n::gui_account_text("manage_groups"),
+            );
             add_account_action_button(
                 accounts_page,
                 15,
@@ -6939,13 +7070,17 @@ mod linux {
             add_account_action_button(
                 accounts_page,
                 19,
-                "Cambiar grupo principal",
+                crate::i18n::gui_account_text("group_primary"),
                 "set-primary-group",
                 &ACCOUNT_MEMBERSHIP_FIELDS,
                 buffer,
                 status,
             );
-            add_section_heading(accounts_page, 20, "Administración del equipo");
+            add_section_heading(
+                accounts_page,
+                20,
+                crate::i18n::gui_account_text("team_admin"),
+            );
             add_account_action_button(
                 accounts_page,
                 21,
@@ -6967,7 +7102,7 @@ mod linux {
             add_action(
                 accounts_page,
                 23,
-                "Guía de cuentas y permisos",
+                crate::i18n::gui_account_text("guide"),
                 "guide",
                 &["accounts"],
                 buffer,
@@ -6993,7 +7128,7 @@ mod linux {
             add_submenu_button(
                 system_page,
                 2,
-                "Usuarios, grupos y sesiones",
+                crate::i18n::accounts_label(),
                 navigation,
                 24,
             );
@@ -8774,6 +8909,7 @@ mod storage_tree_row_tests {
 
 #[cfg(windows)]
 mod windows {
+    use super::{create_account_password_file, TemporaryFileCleanup};
     use std::ffi::c_void;
     use std::ffi::OsStr;
     use std::iter::once;
@@ -9058,28 +9194,28 @@ mod windows {
 
     fn action_label_text(page: usize, index: usize, label: &str) -> String {
         if page == ACCOUNT_PAGE {
-            return match index {
-                0 => "Listar cuentas locales",
-                1 => "Listar grupos y miembros",
-                2 => "Ver mi identidad y grupos",
-                3 => "Ver sesiones abiertas",
-                4 => "Inspeccionar cuenta",
-                5 => "Crear cuenta",
-                6 => "Editar cuenta",
-                7 => "Cambiar contraseña",
-                8 => "Bloquear cuenta",
-                9 => "Desbloquear cuenta",
-                10 => "Eliminar cuenta",
-                11 => "Configurar caducidad",
-                12 => "Crear grupo",
-                13 => "Eliminar grupo",
-                14 => "Añadir usuario a grupo",
-                15 => "Retirar usuario de grupo",
-                16 => "Conceder permisos de administrador",
-                17 => "Ver grupo y miembros administradores",
-                _ => label,
-            }
-            .to_owned();
+            let key = match index {
+                0 => "list",
+                1 => "groups",
+                2 => "identity",
+                3 => "sessions",
+                4 => "inspect",
+                5 => "create",
+                6 => "modify",
+                7 => "password",
+                8 => "lock",
+                9 => "unlock",
+                10 => "delete",
+                11 => "expire",
+                12 => "group_create",
+                13 => "group_delete",
+                14 => "group_add",
+                15 => "group_remove",
+                16 => "admin_add",
+                17 => "admin_groups",
+                _ => return label.to_owned(),
+            };
+            return crate::i18n::gui_account_text(key).to_owned();
         }
         if page == 1 {
             let storage_key = match index {
@@ -9166,6 +9302,21 @@ mod windows {
             .collect()
     }
 
+    pub(super) fn page_title(page: usize) -> Option<String> {
+        Some(match page {
+            0 => crate::i18n::category_text("audit_inventory").to_owned(),
+            1 => crate::i18n::category_text("native_tools").to_owned(),
+            2 => crate::i18n::category_text("dependencies").to_owned(),
+            3 => crate::i18n::category_text("defaults").to_owned(),
+            4 => crate::i18n::category_text("installable_tools").to_owned(),
+            5 => crate::i18n::category_text("automation").to_owned(),
+            SETTINGS_PAGE => crate::i18n::gui_text("settings_title").to_owned(),
+            WINSLIM_PAGE => crate::i18n::category_text("winslim").to_owned(),
+            ACCOUNT_PAGE => crate::i18n::accounts_label().to_owned(),
+            _ => return None,
+        })
+    }
+
     unsafe fn state(hwnd: HWND) -> Option<&'static WindowState> {
         let pointer = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
         (!pointer.eq(&0)).then(|| &*(pointer as *const WindowState))
@@ -9197,6 +9348,10 @@ mod windows {
             };
             ShowWindow(*button, if visible { SW_SHOW } else { SW_HIDE });
         }
+        ShowWindow(
+            state.subtitle,
+            if page.is_some() { SW_HIDE } else { SW_SHOW },
+        );
         for (index, widget) in state.pages.iter().enumerate() {
             ShowWindow(
                 *widget,
@@ -9216,7 +9371,10 @@ mod windows {
         if let (Some(page), Ok(marker)) = (page, std::env::var("LTOOLS_GUI_SMOKE_NAV_MARKER")) {
             let _ = std::fs::write(
                 marker,
-                format!("navigation-dashboard-hidden\nnavigation-page={page}\n"),
+                format!(
+                    "navigation-dashboard-hidden\nnavigation-page={page}\nnavigation-title={}\n",
+                    page_title(page).unwrap_or_default()
+                ),
             );
         }
     }
@@ -9273,7 +9431,6 @@ mod windows {
         let content_left = 24;
         let content_width = (client_width - 48).max(230);
         let gap = 12;
-        let column_width = ((content_width - 24 - gap) / 2).max(110);
         let button_height = 42;
 
         move_control(state.subtitle, 12, 12, client_width - 24, 28);
@@ -9303,27 +9460,42 @@ mod windows {
                 content_width,
                 page_height,
             );
-            for index in 0..ACTION_COUNT {
-                let column = (index as i32) % 2;
-                let row = (index as i32) / 2;
-                let (top, row_gap) = if page == ACCOUNT_PAGE {
-                    (168, 6)
+            // La pantalla de cuentas ofrece 18 acciones. En una ventana
+            // normal se distribuyen en tres columnas para no invadir
+            // «Volver»; en ventanas estrechas se conservan dos columnas con
+            // botones compactos y etiquetas legibles.
+            let action_columns = if page == ACCOUNT_PAGE && content_width >= 840 {
+                3
+            } else {
+                2
+            };
+            let (action_top, action_height, row_gap) = if page == ACCOUNT_PAGE {
+                if action_columns == 3 {
+                    (168, 36, 6)
                 } else {
-                    (16, 10)
-                };
+                    (168, 30, 2)
+                }
+            } else {
+                (38, button_height, 10)
+            };
+            let action_width =
+                ((content_width - 24 - gap * (action_columns - 1)) / action_columns).max(110);
+            for index in 0..ACTION_COUNT {
+                let column = (index as i32) % action_columns;
+                let row = (index as i32) / action_columns;
                 move_control(
                     state.action_buttons[page][index],
-                    12 + column * (column_width + gap),
-                    top + row * (button_height + row_gap),
-                    column_width,
-                    button_height,
+                    12 + column * (action_width + gap),
+                    action_top + row * (action_height + row_gap),
+                    action_width,
+                    action_height,
                 );
             }
             if page == 5 {
                 // Estas etiquetas largas deben caber completas en una sola
                 // línea; reservarles el ancho evita que los controles STATIC
                 // recorten su segunda línea en el alto fijo de 24 px.
-                let edit_x = 248;
+                let edit_x = 320;
                 let edit_width = (content_width - edit_x - 18).max(120);
                 for index in 0..5 {
                     // Las acciones ocupan las tres primeras filas del panel;
@@ -9331,19 +9503,31 @@ mod windows {
                     // ejecutar/editar/borrar nunca se dibujen encima de los
                     // campos, también en ventanas Win32 estrechas.
                     let y = 198 + (index as i32) * 38;
-                    move_control(state.field_labels[index], 12, y, 230, 28);
+                    move_control(state.field_labels[index], 12, y, 300, 28);
                     move_control(state.fields[index], edit_x, y - 3, edit_width, 28);
                 }
             }
             if page == ACCOUNT_PAGE {
+                // Las descripciones largas deben permanecer legibles; dejar
+                // 145 px hacía que varias etiquetas acabaran en puntos
+                // suspensivos incluso con la ventana a tamaño normal.
+                let account_label_width = (content_width * 48 / 100).clamp(120, 300);
+                let account_field_x = account_label_width + 20;
+                let account_field_width = (content_width - account_field_x - 12).max(80);
                 for index in 0..4 {
                     let y = 32 + (index as i32) * 34;
-                    move_control(state.account_field_labels[index], 12, y, 145, 24);
+                    move_control(
+                        state.account_field_labels[index],
+                        12,
+                        y,
+                        account_label_width,
+                        28,
+                    );
                     move_control(
                         state.account_fields[index],
-                        168,
+                        account_field_x,
                         y - 3,
-                        (content_width - 180).max(120),
+                        account_field_width,
                         28,
                     );
                 }
@@ -9452,8 +9636,10 @@ mod windows {
     }
 
     unsafe fn run_account_action(hwnd: HWND, state: &WindowState, index: usize) -> String {
+        let mut cleanup = TemporaryFileCleanup(Vec::new());
         let result = (|| {
-            let user = || account_field(state, 0, "El usuario");
+            let user =
+                || account_field(state, 0, crate::i18n::gui_account_text("field_user_group"));
             let mut args = Vec::<String>::new();
             let action = match index {
                 0 => "list",
@@ -9497,21 +9683,16 @@ mod windows {
                 }
                 7 => {
                     let account = user()?;
-                    let password = account_field(state, 1, "La contraseña")?;
-                    let repeated = account_field(state, 2, "La confirmación")?;
+                    let password =
+                        account_field(state, 1, crate::i18n::gui_account_text("new_password"))?;
+                    let repeated =
+                        account_field(state, 2, crate::i18n::gui_account_text("repeat_password"))?;
                     if password != repeated {
                         return Err("Las contraseñas no coinciden".into());
                     }
-                    let nonce = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|value| value.as_nanos())
-                        .unwrap_or_default();
-                    let path = std::env::temp_dir().join(format!(
-                        "ltools-account-password-{}-{nonce}.txt",
-                        std::process::id()
-                    ));
-                    std::fs::write(&path, password)
+                    let path = create_account_password_file(&password)
                         .map_err(|error| format!("No se pudo preparar la contraseña: {error}"))?;
+                    cleanup.0.push(path.clone());
                     args.extend([
                         "password".into(),
                         "--user".into(),
@@ -9553,7 +9734,7 @@ mod windows {
                         "--user".into(),
                         user()?,
                         "--group".into(),
-                        account_field(state, 1, "El grupo")?,
+                        account_field(state, 1, crate::i18n::gui_account_text("field_user_group"))?,
                     ]);
                     "group-add"
                 }
@@ -9563,7 +9744,7 @@ mod windows {
                         "--user".into(),
                         user()?,
                         "--group".into(),
-                        account_field(state, 1, "El grupo")?,
+                        account_field(state, 1, crate::i18n::gui_account_text("field_user_group"))?,
                     ]);
                     "group-remove"
                 }
@@ -10029,6 +10210,25 @@ mod windows {
                     null_mut(),
                 );
                 (*state).pages[page] = page_window;
+                let page_heading = CreateWindowExW(
+                    0,
+                    wide("STATIC").as_ptr(),
+                    wide(&page_title(page).unwrap_or_default()).as_ptr(),
+                    WS_CHILD | WS_VISIBLE | STATIC_CENTER,
+                    12,
+                    4,
+                    720,
+                    28,
+                    page_window,
+                    null_mut(),
+                    instance,
+                    null_mut(),
+                );
+                SetWindowTheme(
+                    page_heading,
+                    wide("DarkMode_Explorer").as_ptr(),
+                    std::ptr::null(),
+                );
                 for index in 0..ACTION_COUNT {
                     if let Some((_, _, label)) = action_spec(page, index) {
                         let button = CreateWindowExW(
@@ -10258,15 +10458,15 @@ mod windows {
                 }
                 if page == ACCOUNT_PAGE {
                     let account_labels = [
-                        "Usuario o grupo",
-                        "Descripción, contraseña o grupo",
-                        "Confirmación o nombre completo",
-                        "Opcional / verdadero-falso",
+                        crate::i18n::gui_account_text("field_user_group"),
+                        crate::i18n::gui_account_text("field_details"),
+                        crate::i18n::gui_account_text("field_confirm"),
+                        crate::i18n::gui_account_text("field_optional"),
                     ];
                     CreateWindowExW(
                         0,
                         wide("STATIC").as_ptr(),
-                        wide("Usuarios, grupos y sesiones").as_ptr(),
+                        wide(crate::i18n::accounts_label()).as_ptr(),
                         WS_CHILD | WS_VISIBLE,
                         10,
                         2,
@@ -10285,8 +10485,8 @@ mod windows {
                             WS_CHILD | WS_VISIBLE,
                             10,
                             16 + (index as i32) * 34,
-                            145,
-                            24,
+                            300,
+                            28,
                             page_window,
                             null_mut(),
                             instance,
@@ -10298,9 +10498,9 @@ mod windows {
                             wide("EDIT").as_ptr(),
                             std::ptr::null(),
                             WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL as u32,
-                            168,
+                            320,
                             13 + (index as i32) * 34,
-                            540,
+                            500,
                             28,
                             page_window,
                             null_mut(),
@@ -10360,21 +10560,52 @@ pub(crate) fn windows_menu_labels(page: usize) -> Vec<String> {
     windows::menu_labels(page)
 }
 
+#[cfg(windows)]
+pub(crate) fn windows_menu_title(page: usize) -> Option<String> {
+    windows::page_title(page)
+}
+
 #[cfg(all(test, windows))]
 mod windows_menu_tests {
-    use super::windows_menu_labels;
+    use super::{windows_menu_labels, windows_menu_title};
 
     #[test]
     fn every_visible_win32_action_has_a_label() {
         for page in [0, 1, 2, 3, 4, 5, 6, 7, 8] {
             let labels = windows_menu_labels(page);
             assert!(!labels.is_empty(), "visible page {page} has no actions");
+            let title = windows_menu_title(page)
+                .unwrap_or_else(|| panic!("visible page {page} has no title"));
+            assert!(
+                !title.trim().is_empty(),
+                "visible page {page} has an empty title"
+            );
             for (index, label) in labels.iter().enumerate() {
                 assert!(
                     !label.trim().is_empty(),
                     "visible page {page}, action {index} has an empty label"
                 );
             }
+        }
+
+        #[test]
+        fn account_menu_uses_selected_locale_for_title_and_actions() {
+            let _language_guard = crate::i18n::language_test_guard();
+            for language in crate::i18n::SUPPORTED {
+                crate::i18n::set(language);
+                let title = windows_menu_title(8).expect("account page title");
+                let labels = windows_menu_labels(8);
+                assert_eq!(title, crate::i18n::gui_account_text("title"));
+                assert_eq!(labels.len(), 18);
+                assert_eq!(labels[0], crate::i18n::gui_account_text("list"));
+                assert_eq!(labels[7], crate::i18n::gui_account_text("password"));
+                assert_eq!(labels[17], crate::i18n::gui_account_text("admin_groups"));
+                if *language != "es" {
+                    assert_ne!(labels[0], "Listar cuentas locales");
+                    assert_ne!(labels[7], "Cambiar contraseña");
+                }
+            }
+            crate::i18n::set("es");
         }
     }
 

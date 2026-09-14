@@ -42,6 +42,7 @@ else
     printf 'Temporales conservados en: %s\n' "$TMP_DIR"
 fi
 
+export TMPDIR="$TMP_DIR"
 export HOME="$TMP_DIR/home"
 export XDG_DATA_HOME="$TMP_DIR/home/.local/share"
 export XDG_CONFIG_HOME="$TMP_DIR/home/.config"

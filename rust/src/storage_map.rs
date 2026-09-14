@@ -1091,6 +1091,19 @@ fn explain_path(path: &Path) -> Option<&'static str> {
     (!explanation.is_empty()).then_some(explanation)
 }
 
+#[cfg(not(windows))]
+fn path_is_within_home(path: &str, home: &Path) -> bool {
+    let home = home.to_string_lossy().replace('\\', "/").to_lowercase();
+    let home = home.trim_end_matches('/');
+    if home.is_empty() || home == "/" {
+        return path.starts_with('/');
+    }
+    path == home
+        || path
+            .strip_prefix(home)
+            .is_some_and(|remainder| remainder.starts_with('/'))
+}
+
 fn explain_path_key(path: &Path) -> Option<&'static str> {
     let value = path.to_string_lossy().replace('\\', "/").to_lowercase();
     #[cfg(windows)]
@@ -1137,10 +1150,14 @@ fn explain_path_key(path: &Path) -> Option<&'static str> {
     }
     #[cfg(not(windows))]
     {
+        let configured_home = std::env::var_os("HOME").map(PathBuf::from);
         let under_user_tree = value == "/root"
             || value.starts_with("/root/")
             || value.starts_with("/home/")
-            || value.starts_with("/users/");
+            || value.starts_with("/users/")
+            || configured_home
+                .as_deref()
+                .is_some_and(|home| path_is_within_home(&value, home));
         if under_user_tree {
             if value
                 .split('/')
@@ -1783,12 +1800,16 @@ fn open_path(ctx: &Context, raw: &str, yes: bool) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(windows))]
+    use super::path_is_within_home;
     #[cfg(unix)]
     use super::resolve_future_path;
     use super::{
         copy_new_path, explain_path_key, manage_operation, parse_options, render_json, scan,
         scan_with_progress, MapOptions,
     };
+    #[cfg(not(windows))]
+    use std::path::Path;
     use std::path::PathBuf;
 
     #[cfg(target_os = "linux")]
@@ -1984,6 +2005,15 @@ mod tests {
     fn map_marks_standard_paths_with_explanations() {
         #[cfg(not(windows))]
         {
+            let fixture_home = Path::new("/tmp/ltools-storage-map-fixture/home");
+            assert!(path_is_within_home(
+                "/tmp/ltools-storage-map-fixture/home/.cache/tool",
+                fixture_home
+            ));
+            assert!(!path_is_within_home(
+                "/tmp/ltools-storage-map-fixture/home-sibling/.cache/tool",
+                fixture_home
+            ));
             assert_eq!(
                 explain_path_key(&PathBuf::from("/etc")),
                 Some("explain_system_config")

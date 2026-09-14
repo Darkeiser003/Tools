@@ -485,6 +485,9 @@ duration_text() {
 CLEAN=0
 FAST=0
 CHECKS=1
+STRICT_SECURITY=0
+SECURITY_REVIEW=0
+AUTO_FIX=0
 TESTS=1
 SMOKE=1
 E2E=1
@@ -609,6 +612,25 @@ run_logged() {
     return "$status"
 }
 
+rust_source_hashes() {
+    find "$ROOT_DIR/rust" -type f -name '*.rs' -not -path "$ROOT_DIR/rust/target/*" -print0 |
+        sort -z | xargs -0 -r sha256sum
+}
+
+report_rust_autofix_changes() {
+    local before="$1" after changed path
+    after="$(rust_source_hashes)"
+    changed="$(diff -u <(printf '%s\n' "$before") <(printf '%s\n' "$after") 2>/dev/null || true)"
+    changed="$(sed -nE 's/^[+-][0-9a-f]{64}  (.*)$/\1/p' <<<"$changed" | sort -u)"
+    if [[ -z "$changed" ]]; then
+        ok '[AUTO-FIX] no persistieron cambios de archivo.'
+        return
+    fi
+    while IFS= read -r path; do
+        [[ -n "$path" ]] && ok "[AUTO-FIXED] ${path#"$ROOT_DIR"/}"
+    done <<<"$changed"
+}
+
 init_logging() {
     local log_parent
     [[ "$NO_LOG" -eq 1 ]] && return 0
@@ -660,6 +682,9 @@ Opciones:
   --clean              Limpia rust/target antes de compilar.
   --fast               Perfil release rápido e incremental.
   --skip-checks        Omite fmt, Clippy y comprobaciones de scripts.
+  --strict-security   Exige cargo-audit/cargo-deny y ShellCheck/actionlint; reescanea.
+  --security-review   Exige ShellCheck y actionlint para scripts y workflows.
+  --auto-fix           Corrige formato Rust y sugerencias mecánicas de Clippy; luego reescanea.
   --no-tests           No ejecuta cargo test.
   --no-smoke           No ejecuta los smoke tests posteriores al empaquetado.
   --no-e2e             Omite las E2E de migración, menús/mapa y stores/Git.
@@ -836,6 +861,9 @@ configure_interactive() {
     if ask_yes_no 'Limpiar rust/target antes de compilar' "$CLEAN"; then CLEAN=1; else CLEAN=0; fi
     if ask_yes_no 'Usar perfil release rápido' "$FAST"; then FAST=1; else FAST=0; fi
     if ask_yes_no 'Ejecutar validaciones fmt, Clippy, lanzadores y tests' "$CHECKS"; then CHECKS=1; else CHECKS=0; fi
+    if ask_yes_no 'Exigir auditoría estricta (Cargo audit/deny, ShellCheck y actionlint)' "$STRICT_SECURITY"; then STRICT_SECURITY=1; else STRICT_SECURITY=0; fi
+    if ask_yes_no 'Exigir revisión estática de scripts y workflows (ShellCheck/actionlint)' "$SECURITY_REVIEW"; then SECURITY_REVIEW=1; else SECURITY_REVIEW=0; fi
+    if ask_yes_no 'Aplicar autocorrecciones Rust seguras y volver a escanear' "$AUTO_FIX"; then AUTO_FIX=1; else AUTO_FIX=0; fi
     if ask_yes_no 'Ejecutar cargo test' "$TESTS"; then TESTS=1; else TESTS=0; fi
     if ask_yes_no 'Ejecutar smoke tests' "$SMOKE"; then SMOKE=1; else SMOKE=0; fi
     if ask_yes_no 'Ejecutar prueba E2E de migración y rollback' "$E2E"; then E2E=1; else E2E=0; fi
@@ -853,6 +881,9 @@ parse_args() {
             --clean) CLEAN=1 ;;
             --fast) FAST=1 ;;
             --skip-checks|--no-checks) CHECKS=0 ;;
+            --strict-security) STRICT_SECURITY=1; SECURITY_REVIEW=1 ;;
+            --security-review) SECURITY_REVIEW=1 ;;
+            --auto-fix) AUTO_FIX=1 ;;
             --no-tests) TESTS=0 ;;
             --no-smoke) SMOKE=0 ;;
             --no-e2e) E2E=0; MENU_E2E=0; SOFTWARE_GIT_E2E=0 ;;
@@ -901,7 +932,7 @@ parse_args() {
     done
 }
 
-cargo_args=()
+cargo_args=(--locked)
 [[ "$OFFLINE" -eq 1 ]] && cargo_args+=(--offline)
 
 configure_cargo_profile() {
@@ -928,13 +959,16 @@ configure_cargo_profile() {
 }
 
 parse_args "$@"
+if [[ "$STRICT_SECURITY" -eq 1 || "$SECURITY_REVIEW" -eq 1 || "$AUTO_FIX" -eq 1 ]]; then CHECKS=1; fi
 validate_output_paths
 init_logging "$@"
 load_signing_material
 configure_interactive
+if [[ "$STRICT_SECURITY" -eq 1 ]]; then SECURITY_REVIEW=1; fi
+if [[ "$STRICT_SECURITY" -eq 1 || "$SECURITY_REVIEW" -eq 1 || "$AUTO_FIX" -eq 1 ]]; then CHECKS=1; fi
 if [[ "$NO_LOG" -eq 0 ]]; then
-    printf '[CONFIG] clean=%s fast=%s checks=%s tests=%s smoke=%s e2e=%s menu_e2e=%s software_git_e2e=%s package=%s appimage=%s offline=%s jobs=%s windows_wine=%s windows_target=%s release_dir=%s\n' \
-        "$CLEAN" "$FAST" "$CHECKS" "$TESTS" "$SMOKE" "$E2E" "$MENU_E2E" "$SOFTWARE_GIT_E2E" "$PACKAGE" "$APPIMAGE" "$OFFLINE" "$JOBS" "$WINDOWS_WINE" "$WINDOWS_TARGET" "$RELEASE_DIR"
+    printf '[CONFIG] clean=%s fast=%s checks=%s strict_security=%s security_review=%s auto_fix=%s tests=%s smoke=%s e2e=%s menu_e2e=%s software_git_e2e=%s package=%s appimage=%s offline=%s jobs=%s windows_wine=%s windows_target=%s release_dir=%s\n' \
+        "$CLEAN" "$FAST" "$CHECKS" "$STRICT_SECURITY" "$SECURITY_REVIEW" "$AUTO_FIX" "$TESTS" "$SMOKE" "$E2E" "$MENU_E2E" "$SOFTWARE_GIT_E2E" "$PACKAGE" "$APPIMAGE" "$OFFLINE" "$JOBS" "$WINDOWS_WINE" "$WINDOWS_TARGET" "$RELEASE_DIR"
     printf '[CONFIG] signing_required=%s private_key_file=%s public_key_file=%s\n' "$SIGNING_REQUIRED" "$SIGNING_PRIVATE_KEY_FILE" "$SIGNING_PUBLIC_KEY_FILE"
 fi
 
@@ -943,6 +977,10 @@ require_command cargo
 require_command rustc
 require_command tar
 require_command sed
+if [[ "$SECURITY_REVIEW" -eq 1 ]]; then
+    require_command shellcheck
+    require_command actionlint
+fi
 if [[ "$APPIMAGE" -eq 1 ]] && ! command -v appimagetool >/dev/null 2>&1; then
     if [[ "$APPIMAGE_REQUIRED" -eq 1 ]]; then
         die 'falta appimagetool; instálalo o ejecuta con --no-appimage'
@@ -1009,18 +1047,52 @@ fi
 
 if [[ "$CHECKS" -eq 1 ]]; then
     step 'Validando formato Rust'
-    run_logged cargo fmt --manifest-path "$MANIFEST" -- --check
+    if ! run_logged cargo fmt --manifest-path "$MANIFEST" -- --check; then
+        if [[ "$AUTO_FIX" -ne 1 ]]; then
+            die 'rustfmt detectó diferencias; corrígelas o vuelve a ejecutar con --auto-fix para aplicar formato y reescanear.'
+        fi
+        step 'Autocorrigiendo formato Rust'
+        rust_fix_before="$(rust_source_hashes)"
+        run_logged cargo fmt --manifest-path "$MANIFEST"
+        ok '[AUTO-FIX] rustfmt aplicó el formato; se repite el escaneo antes de continuar.'
+        report_rust_autofix_changes "$rust_fix_before"
+        step 'Reescaneando formato Rust'
+        run_logged cargo fmt --manifest-path "$MANIFEST" -- --check
+    fi
     ok 'rustfmt correcto'
 
     step 'Validando Clippy'
-    run_logged cargo clippy --manifest-path "$MANIFEST" "${cargo_args[@]}" -- -D warnings
-    ok 'Clippy sin avisos'
+    if ! run_logged cargo clippy --manifest-path "$MANIFEST" --all-targets "${cargo_args[@]}" -- -D warnings; then
+        if [[ "$AUTO_FIX" -ne 1 ]]; then
+            die 'Clippy encontró avisos; corrígelos o vuelve a ejecutar con --auto-fix para aplicar solo sugerencias mecánicas y reescanear.'
+        fi
+        step 'Aplicando autocorrecciones mecánicas de Clippy'
+        rust_fix_before="$(rust_source_hashes)"
+        run_logged cargo clippy --fix --allow-dirty --allow-staged --manifest-path "$MANIFEST" --all-targets "${cargo_args[@]}"
+        ok '[AUTO-FIX] Clippy aplicó sugerencias mecánicas; se volverán a ejecutar formato y Clippy estricto.'
+        step 'Normalizando formato después de Clippy'
+        run_logged cargo fmt --manifest-path "$MANIFEST"
+        ok '[AUTO-FIX] rustfmt normalizó el resultado de Clippy antes del reescaneo.'
+        report_rust_autofix_changes "$rust_fix_before"
+        step 'Reescaneando formato después de Clippy'
+        run_logged cargo fmt --manifest-path "$MANIFEST" -- --check
+        step 'Reescaneando Clippy estricto'
+        run_logged cargo clippy --manifest-path "$MANIFEST" --all-targets "${cargo_args[@]}" -- -D warnings
+    fi
+    ok 'Clippy sin avisos en todos los targets (incluidos tests)'
 
     step 'Validando lanzadores, build y tests Bash'
     run_logged "$ROOT_DIR/tests/encoding.sh"
     ok 'codificaciones UTF-8/UTF-8 BOM/ANSI correctas'
     run_logged bash "$ROOT_DIR/tests/scripts-syntax.sh"
     ok 'sintaxis Bash/PowerShell correcta (PowerShell cuando pwsh está disponible)'
+    step 'Revisando estáticamente scripts y workflows'
+    if [[ "$SECURITY_REVIEW" -eq 1 ]]; then
+        run_logged bash "$ROOT_DIR/tests/static-security.sh" --strict
+    else
+        run_logged bash "$ROOT_DIR/tests/static-security.sh"
+    fi
+    ok 'revisión estática completada; los analizadores omitidos constan explícitamente en el log'
     if command -v ssh-keygen >/dev/null 2>&1; then
         step 'Probando firma OpenSSH de checksums'
         run_logged bash "$ROOT_DIR/tests/ssh-signing.sh"
@@ -1037,12 +1109,16 @@ if [[ "$CHECKS" -eq 1 ]]; then
     ok 'limpieza temporal limitada a artefactos propios, con rutas y uso activo verificados'
 
     cargo_home_dir="${CARGO_HOME:-${HOME:-/tmp}/.cargo}"
-    if command -v cargo-audit >/dev/null 2>&1 && [[ -d "$cargo_home_dir/advisory-db" ]]; then
+    if command -v cargo-audit >/dev/null 2>&1 && { [[ "$OFFLINE" -eq 0 ]] || [[ -d "$cargo_home_dir/advisory-db" ]]; }; then
         step 'Auditando dependencias Rust'
-        (cd "$ROOT_DIR/rust" && run_logged cargo audit --file Cargo.lock --no-fetch)
+        audit_args=(audit --file Cargo.lock)
+        [[ "$OFFLINE" -eq 1 ]] && audit_args+=(--no-fetch)
+        (cd "$ROOT_DIR/rust" && run_logged cargo "${audit_args[@]}")
         ok 'cargo audit sin vulnerabilidades conocidas'
+    elif [[ "$STRICT_SECURITY" -eq 1 ]]; then
+        die 'la auditoría estricta requiere cargo-audit y, en modo offline, una base local de advisories'
     else
-        warn 'cargo-audit o su base local no está disponible; se omite la auditoría de seguridad.'
+        warn 'cargo-audit no está disponible o falta su base local en modo offline; se omite la auditoría de seguridad.'
     fi
     if command -v cargo-deny >/dev/null 2>&1; then
         step 'Validando licencias y fuentes Rust'
@@ -1066,6 +1142,8 @@ if [[ "$CHECKS" -eq 1 ]]; then
             die 'cargo-deny está instalado, pero no hay una base local de advisories y no se puede preparar un entorno offline'
         fi
         ok 'cargo-deny correcto'
+    elif [[ "$STRICT_SECURITY" -eq 1 ]]; then
+        die 'la auditoría estricta requiere cargo-deny instalado'
     else
         warn 'cargo-deny no está disponible; se omite la validación de licencias y fuentes.'
     fi

@@ -406,17 +406,201 @@ pub fn storage_label() -> &'static str {
 }
 
 pub fn accounts_label() -> &'static str {
-    match current() {
-        "en" => "Users, groups and sessions",
-        "de" => "Benutzer, Gruppen und Sitzungen",
-        "fr" => "Utilisateurs, groupes et sessions",
-        "pt" => "Utilizadores, grupos e sessões",
-        "it" => "Utenti, gruppi e sessioni",
-        "ca" => "Usuaris, grups i sessions",
-        "nl" => "Gebruikers, groepen en sessies",
-        "pl" => "Użytkownicy, grupy i sesje",
-        _ => "Usuarios, grupos y sesiones",
-    }
+    gui_account_text("title")
+}
+
+/// Labels of the account-management GUI. Keep the same order as `SUPPORTED`
+/// so both the GTK and Win32 screens use the selected locale consistently.
+pub fn gui_account_text(key: &str) -> &'static str {
+    const TEXT: &[(&str, [&str; 15])] = &[
+        ("title", [
+            "المستخدمون والمجموعات والجلسات", "Benutzer, Gruppen und Sitzungen", "Users, groups and sessions", "Usuarios, grupos y sesiones", "Utilisateurs, groupes et sessions", "उपयोगकर्ता, समूह और सत्र", "Utenti, gruppi e sessioni", "ユーザー、グループ、セッション", "사용자, 그룹 및 세션", "Użytkownicy, grupy i sesje", "Utilizadores, grupos e sessões", "Utilizatori, grupuri și sesiuni", "Пользователи, группы и сеансы", "Користувачі, групи та сеанси", "用户、组和会话",
+        ]),
+        ("manage_accounts", [
+            "إدارة الحسابات", "Konten verwalten", "Manage accounts", "Gestionar cuentas", "Gérer les comptes", "खाते प्रबंधित करें", "Gestisci account", "アカウントの管理", "계정 관리", "Zarządzaj kontami", "Gerir contas", "Gestionați conturile", "Управление учетными записями", "Керування обліковими записами", "管理账户",
+        ]),
+        ("manage_groups", [
+            "إدارة المجموعات والعضوية", "Gruppen und Mitgliedschaften verwalten", "Manage groups and membership", "Gestionar grupos y membresías", "Gérer les groupes et les membres", "समूह और सदस्यता प्रबंधित करें", "Gestisci gruppi e appartenenze", "グループとメンバーシップの管理", "그룹 및 구성원 관리", "Zarządzaj grupami i członkostwem", "Gerir grupos e associações", "Gestionați grupurile și apartenența", "Управление группами и участниками", "Керування групами та учасниками", "管理组和成员关系",
+        ]),
+        ("team_admin", [
+            "إدارة مسؤولي الجهاز", "Computeradministratoren verwalten", "Manage device administrators", "Administración del equipo", "Gérer les administrateurs de l’ordinateur", "डिवाइस व्यवस्थापकों को प्रबंधित करें", "Gestisci gli amministratori del dispositivo", "デバイス管理者の管理", "장치 관리자 관리", "Zarządzaj administratorami urządzenia", "Gerir administradores do computador", "Gestionați administratorii dispozitivului", "Управление администраторами устройства", "Керування адміністраторами пристрою", "管理设备管理员",
+        ]),
+        ("list", [
+            "عرض الحسابات المحلية", "Lokale Konten auflisten", "List local accounts", "Listar cuentas locales", "Lister les comptes locaux", "स्थानीय खाते सूचीबद्ध करें", "Elenca account locali", "ローカルアカウント一覧", "로컬 계정 목록", "Wyświetl konta lokalne", "Listar contas locais", "Listați conturile locale", "Список локальных учетных записей", "Список локальних облікових записів", "列出本地账户",
+        ]),
+        ("groups", [
+            "عرض المجموعات والأعضاء", "Gruppen und Mitglieder auflisten", "List groups and members", "Listar grupos y miembros", "Lister les groupes et membres", "समूह और सदस्य सूचीबद्ध करें", "Elenca gruppi e membri", "グループとメンバー一覧", "그룹 및 구성원 목록", "Wyświetl grupy i członków", "Listar grupos e membros", "Listați grupurile și membrii", "Список групп и участников", "Список груп і учасників", "列出组和成员",
+        ]),
+        ("identity", [
+            "هويتي ومجموعاتي", "Meine Identität und Gruppen", "My identity and groups", "Ver mi identidad y grupos", "Mon identité et mes groupes", "मेरी पहचान और समूह", "La mia identità e i gruppi", "自分のIDとグループ", "내 ID 및 그룹", "Moja tożsamość i grupy", "A minha identidade e grupos", "Identitatea și grupurile mele", "Моя учетная запись и группы", "Моя особа та групи", "我的身份和组",
+        ]),
+        ("sessions", [
+            "الجلسات المفتوحة", "Offene Sitzungen", "Open sessions", "Ver sesiones abiertas", "Sessions ouvertes", "खुले सत्र", "Sessioni aperte", "開いているセッション", "열린 세션", "Otwarte sesje", "Sessões abertas", "Sesiuni deschise", "Открытые сеансы", "Відкриті сеанси", "已打开的会话",
+        ]),
+        ("inspect", [
+            "فحص حساب", "Konto untersuchen", "Inspect account", "Inspeccionar una cuenta", "Inspecter un compte", "खाते की जाँच करें", "Ispeziona account", "アカウントを調査", "계정 검사", "Sprawdź konto", "Inspecionar conta", "Inspectați contul", "Проверить учетную запись", "Перевірити обліковий запис", "检查账户",
+        ]),
+        ("create", [
+            "إنشاء حساب", "Konto erstellen", "Create account", "Crear cuenta", "Créer un compte", "खाता बनाएँ", "Crea account", "アカウントを作成", "계정 만들기", "Utwórz konto", "Criar conta", "Creați un cont", "Создать учетную запись", "Створити обліковий запис", "创建账户",
+        ]),
+        ("modify", [
+            "تعديل حساب", "Konto bearbeiten", "Edit account", "Editar cuenta y grupos", "Modifier un compte", "खाता संपादित करें", "Modifica account", "アカウントを編集", "계정 편집", "Edytuj konto", "Editar conta", "Editați contul", "Изменить учетную запись", "Змінити обліковий запис", "编辑账户",
+        ]),
+        ("password", [
+            "تغيير كلمة المرور", "Passwort ändern", "Change password", "Cambiar contraseña", "Changer le mot de passe", "पासवर्ड बदलें", "Cambia password", "パスワードを変更", "암호 변경", "Zmień hasło", "Alterar palavra-passe", "Schimbați parola", "Сменить пароль", "Змінити пароль", "更改密码",
+        ]),
+        ("lock", [
+            "قفل الحساب", "Konto sperren", "Lock account", "Bloquear cuenta", "Verrouiller le compte", "खाता लॉक करें", "Blocca account", "アカウントをロック", "계정 잠금", "Zablokuj konto", "Bloquear conta", "Blocați contul", "Заблокировать учетную запись", "Заблокувати обліковий запис", "锁定账户",
+        ]),
+        ("unlock", [
+            "إلغاء قفل الحساب", "Konto entsperren", "Unlock account", "Desbloquear cuenta", "Déverrouiller le compte", "खाता अनलॉक करें", "Sblocca account", "アカウントのロックを解除", "계정 잠금 해제", "Odblokuj konto", "Desbloquear conta", "Deblocați contul", "Разблокировать учетную запись", "Розблокувати обліковий запис", "解锁账户",
+        ]),
+        ("delete", [
+            "حذف الحساب", "Konto löschen", "Delete account", "Eliminar cuenta", "Supprimer le compte", "खाता हटाएँ", "Elimina account", "アカウントを削除", "계정 삭제", "Usuń konto", "Eliminar conta", "Ștergeți contul", "Удалить учетную запись", "Видалити обліковий запис", "删除账户",
+        ]),
+        ("expire", [
+            "تعيين انتهاء الصلاحية", "Ablauf festlegen", "Set expiry", "Configurar caducidad", "Définir l’expiration", "समाप्ति सेट करें", "Imposta scadenza", "有効期限を設定", "만료 설정", "Ustaw wygaśnięcie", "Definir validade", "Setați expirarea", "Настроить срок действия", "Налаштувати термін дії", "设置到期时间",
+        ]),
+        ("group_create", [
+            "إنشاء مجموعة", "Gruppe erstellen", "Create group", "Crear grupo", "Créer un groupe", "समूह बनाएँ", "Crea gruppo", "グループを作成", "그룹 만들기", "Utwórz grupę", "Criar grupo", "Creați un grup", "Создать группу", "Створити групу", "创建组",
+        ]),
+        ("group_delete", [
+            "حذف مجموعة", "Gruppe löschen", "Delete group", "Eliminar grupo", "Supprimer un groupe", "समूह हटाएँ", "Elimina gruppo", "グループを削除", "그룹 삭제", "Usuń grupę", "Eliminar grupo", "Ștergeți grupul", "Удалить группу", "Видалити групу", "删除组",
+        ]),
+        ("group_primary", [
+            "تغيير المجموعة الأساسية", "Primärgruppe ändern", "Change primary group", "Cambiar grupo principal", "Changer le groupe principal", "प्राथमिक समूह बदलें", "Cambia gruppo primario", "プライマリグループを変更", "기본 그룹 변경", "Zmień grupę podstawową", "Alterar grupo principal", "Schimbați grupul principal", "Изменить основную группу", "Змінити основну групу", "更改主组",
+        ]),
+        ("group_add", [
+            "إضافة مستخدم إلى مجموعة", "Benutzer zu Gruppe hinzufügen", "Add user to group", "Añadir usuario a grupo", "Ajouter un utilisateur au groupe", "समूह में उपयोगकर्ता जोड़ें", "Aggiungi utente al gruppo", "ユーザーをグループに追加", "그룹에 사용자 추가", "Dodaj użytkownika do grupy", "Adicionar utilizador ao grupo", "Adăugați utilizatorul în grup", "Добавить пользователя в группу", "Додати користувача до групи", "将用户添加到组",
+        ]),
+        ("group_remove", [
+            "إزالة مستخدم من مجموعة", "Benutzer aus Gruppe entfernen", "Remove user from group", "Retirar usuario de grupo", "Retirer un utilisateur du groupe", "समूह से उपयोगकर्ता हटाएँ", "Rimuovi utente dal gruppo", "ユーザーをグループから削除", "그룹에서 사용자 제거", "Usuń użytkownika z grupy", "Remover utilizador do grupo", "Eliminați utilizatorul din grup", "Удалить пользователя из группы", "Вилучити користувача з групи", "从组中移除用户",
+        ]),
+        ("admin_add", [
+            "منح صلاحيات المسؤول", "Administratorrechte vergeben", "Grant administrator rights", "Conceder permisos de administrador", "Accorder les droits administrateur", "व्यवस्थापक अधिकार दें", "Concedi diritti di amministratore", "管理者権限を付与", "관리자 권한 부여", "Nadaj uprawnienia administratora", "Conceder permissões de administrador", "Acordați drepturi de administrator", "Предоставить права администратора", "Надати права адміністратора", "授予管理员权限",
+        ]),
+        ("admin_groups", [
+            "مجموعة المسؤولين وأعضاؤها", "Administratorgruppe und Mitglieder", "Admin group and members", "Ver grupo y miembros administradores", "Groupe administrateur et membres", "व्यवस्थापक समूह और सदस्य", "Gruppo amministratori e membri", "管理者グループとメンバー", "관리자 그룹 및 구성원", "Grupa administratorów i członkowie", "Grupo de administradores e membros", "Grupul administratorilor și membrii", "Группа администраторов и участники", "Група адміністраторів та учасники", "管理员组及成员",
+        ]),
+        ("guide", [
+            "دليل الحسابات والأذونات", "Leitfaden für Konten und Berechtigungen", "Accounts and permissions guide", "Guía de cuentas y permisos", "Guide des comptes et autorisations", "खातों और अनुमतियों की मार्गदर्शिका", "Guida ad account e autorizzazioni", "アカウントと権限のガイド", "계정 및 권한 안내", "Przewodnik po kontach i uprawnieniach", "Guia de contas e permissões", "Ghid pentru conturi și permisiuni", "Руководство по учетным записям и разрешениям", "Посібник з облікових записів і дозволів", "账户和权限指南",
+        ]),
+        ("field_user_group", [
+            "المستخدم أو المجموعة", "Benutzer oder Gruppe", "User or group", "Usuario o grupo", "Utilisateur ou groupe", "उपयोगकर्ता या समूह", "Utente o gruppo", "ユーザーまたはグループ", "사용자 또는 그룹", "Użytkownik lub grupa", "Utilizador ou grupo", "Utilizator sau grup", "Пользователь или группа", "Користувач або група", "用户或组",
+        ]),
+        ("field_details", [
+            "الوصف / كلمة المرور / المجموعة", "Beschreibung / Passwort / Gruppe", "Description / password / group", "Descripción / contraseña / grupo", "Description / mot de passe / groupe", "विवरण / पासवर्ड / समूह", "Descrizione / password / gruppo", "説明 / パスワード / グループ", "설명 / 암호 / 그룹", "Opis / hasło / grupa", "Descrição / palavra-passe / grupo", "Descriere / parolă / grup", "Описание / пароль / группа", "Опис / пароль / група", "描述 / 密码 / 组",
+        ]),
+        ("field_confirm", [
+            "التأكيد / الاسم الكامل", "Bestätigung / vollständiger Name", "Confirmation / full name", "Confirmación / nombre completo", "Confirmation / nom complet", "पुष्टि / पूरा नाम", "Conferma / nome completo", "確認 / 氏名", "확인 / 전체 이름", "Potwierdzenie / pełna nazwa", "Confirmação / nome completo", "Confirmare / nume complet", "Подтверждение / полное имя", "Підтвердження / повне ім’я", "确认 / 全名",
+        ]),
+        ("field_optional", [
+            "اختياري / انتهاء / تاريخ ISO", "Optional / Ablauf / ISO-Datum", "Optional / expiry / ISO date", "Opcional / vence / fecha ISO", "Optionnel / expiration / date ISO", "वैकल्पिक / समाप्ति / ISO तिथि", "Opzionale / scadenza / data ISO", "任意 / 期限 / ISO日付", "선택 사항 / 만료 / ISO 날짜", "Opcjonalnie / wygaśnięcie / data ISO", "Opcional / validade / data ISO", "Opțional / expirare / dată ISO", "Необязательно / срок / дата ISO", "Необов’язково / термін / дата ISO", "可选 / 到期 / ISO 日期",
+        ]),
+        ("local_user", [
+            "المستخدم المحلي", "Lokaler Benutzer", "Local user", "Usuario local", "Utilisateur local", "स्थानीय उपयोगकर्ता", "Utente locale", "ローカルユーザー", "로컬 사용자", "Użytkownik lokalny", "Utilizador local", "Utilizator local", "Локальный пользователь", "Локальний користувач", "本地用户",
+        ]),
+        ("new_password", [
+            "كلمة المرور الجديدة", "Neues Passwort", "New password", "Contraseña nueva", "Nouveau mot de passe", "नया पासवर्ड", "Nuova password", "新しいパスワード", "새 암호", "Nowe hasło", "Nova palavra-passe", "Parolă nouă", "Новый пароль", "Новий пароль", "新密码",
+        ]),
+        ("repeat_password", [
+            "أعد إدخال كلمة المرور", "Passwort wiederholen", "Repeat password", "Repite la contraseña", "Répéter le mot de passe", "पासवर्ड दोहराएँ", "Ripeti la password", "パスワードを再入力", "암호 다시 입력", "Powtórz hasło", "Repetir palavra-passe", "Repetați parola", "Повторите пароль", "Повторіть пароль", "再次输入密码",
+        ]),
+        ("guide_fields", [
+            "تختلف الحقول حسب الإجراء: المستخدم أو المجموعة أو الوصف أو كلمة المرور أو التواريخ. راجع الهدف قبل التنفيذ. إجراء صلاحيات المسؤول يقبل حسابًا اختياريًا؛ والفراغ يعني الحساب الحالي، ويستخدم SID مجموعة Administrators المضمنة.",
+            "Die Felder hängen von der Aktion ab: Benutzer, Gruppe, Beschreibung, Kennwort oder Datum. Ziel vor dem Ausführen prüfen. Die Administratoraktion akzeptiert ein optionales Konto; leer bedeutet das aktuelle Konto und verwendet die integrierte Administratoren-SID.",
+            "Fields depend on the action: user, group, description, password or dates. Verify the target before running. The administrator-rights action accepts an optional account; blank means the current account and uses the built-in Administrators SID.",
+            "Los campos dependen de la acción: usuario, grupo, descripción, contraseña o fechas; se validan antes de ejecutar. «Conceder permisos de administrador» acepta una cuenta opcional (vacío = actual) y usa el SID integrado de Administradores.",
+            "Les champs dépendent de l’action : utilisateur, groupe, description, mot de passe ou dates. Vérifiez la cible avant l’exécution. L’action d’administration accepte un compte facultatif ; vide signifie le compte actuel et utilise le SID intégré des Administrateurs.",
+            "कार्रवाई के अनुसार फ़ील्ड बदलते हैं: उपयोगकर्ता, समूह, विवरण, पासवर्ड या तारीखें। चलाने से पहले लक्ष्य जाँचें। व्यवस्थापक अधिकार वाली कार्रवाई वैकल्पिक खाता लेती है; खाली छोड़ने पर वर्तमान खाता और अंतर्निहित Administrators SID उपयोग होता है।",
+            "I campi dipendono dall’azione: utente, gruppo, descrizione, password o date. Verifica la destinazione prima di eseguire. L’azione per i diritti di amministratore accetta un account facoltativo; vuoto indica l’account corrente e usa il SID integrato Administrators.",
+            "項目は操作によって異なります（ユーザー、グループ、説明、パスワード、日付）。実行前に対象を確認してください。管理者権限の操作ではアカウントを省略できます。空欄は現在のアカウントを意味し、組み込み Administrators の SID を使います。",
+            "필드는 작업에 따라 달라집니다(사용자, 그룹, 설명, 암호, 날짜). 실행 전에 대상을 확인하세요. 관리자 권한 작업은 계정을 선택적으로 받으며, 비워 두면 현재 계정과 기본 제공 Administrators SID를 사용합니다.",
+            "Pola zależą od działania: użytkownik, grupa, opis, hasło lub daty. Przed wykonaniem sprawdź cel. Nadanie praw administratora przyjmuje opcjonalne konto; puste pole oznacza bieżące konto i używa wbudowanego identyfikatora SID grupy Administratorzy.",
+            "Os campos dependem da ação: utilizador, grupo, descrição, palavra-passe ou datas. Confirme o destino antes de executar. A ação de administração aceita uma conta opcional; vazio significa a conta atual e utiliza o SID integrado Administradores.",
+            "Câmpurile depind de acțiune: utilizator, grup, descriere, parolă sau date. Verificați ținta înainte de executare. Acțiunea pentru drepturi de administrator acceptă un cont opțional; gol înseamnă contul curent și folosește SID-ul integrat Administrators.",
+            "Поля зависят от действия: пользователь, группа, описание, пароль или даты. Проверьте цель перед запуском. Действие назначения прав администратора принимает необязательную учетную запись; пустое поле означает текущую учетную запись и использует встроенный SID группы Administrators.",
+            "Поля залежать від дії: користувач, група, опис, пароль або дати. Перевірте ціль перед запуском. Дія надання прав адміністратора приймає необов’язковий обліковий запис; порожнє поле означає поточний обліковий запис і використовує вбудований SID групи Administrators.",
+            "字段取决于操作：用户、组、描述、密码或日期。执行前请核对目标。授予管理员权限的操作可选填账户；留空表示当前账户，并使用内置 Administrators 组 SID。",
+        ]),
+        ("guide_simple", [
+            "راجع الحسابات والمجموعات والهوية والجلسات المفتوحة قبل إجراء أي تغيير.",
+            "Konten, Gruppen, Identität und offene Sitzungen prüfen, bevor Änderungen vorgenommen werden.",
+            "Review accounts, groups, identity and open sessions before making a change.",
+            "Consulta cuentas, grupos, identidad y sesiones antes de editar.",
+            "Consultez les comptes, groupes, l’identité et les sessions ouvertes avant toute modification.",
+            "बदलाव करने से पहले खाते, समूह, पहचान और खुले सत्र देखें।",
+            "Esamina account, gruppi, identità e sessioni aperte prima di apportare modifiche.",
+            "変更前にアカウント、グループ、ID、開いているセッションを確認します。",
+            "변경하기 전에 계정, 그룹, ID 및 열린 세션을 확인하세요.",
+            "Przed zmianą sprawdź konta, grupy, tożsamość i otwarte sesje.",
+            "Consulte contas, grupos, identidade e sessões abertas antes de editar.",
+            "Verificați conturile, grupurile, identitatea și sesiunile deschise înainte de modificări.",
+            "Перед изменением проверьте учетные записи, группы, идентификатор и открытые сеансы.",
+            "Перед зміною перевірте облікові записи, групи, особу та відкриті сеанси.",
+            "更改前先检查账户、组、身份和已打开的会话。",
+        ]),
+        ("guide_complex", [
+            "اختر الإجراء، وأدخل الهدف بدقة، وراجع تأكيد UAC عند ظهوره، ثم أعد الاستعلام للتحقق. TrustedInstaller هوية خدمة وليس مجموعة مستخدمين.",
+            "Aktion wählen, genaues Ziel eingeben, eine UAC-Bestätigung prüfen und den Status erneut abfragen. TrustedInstaller ist eine Dienstidentität, keine Benutzergruppe.",
+            "Choose an action, enter the exact target, review any UAC prompt, then query again to verify. TrustedInstaller is a service identity, not a user group.",
+            "Selecciona la acción, completa el objetivo exacto, revisa la confirmación UAC cuando proceda y vuelve a consultar el estado. TrustedInstaller es una identidad de servicio, no un grupo de usuarios.",
+            "Choisissez une action, indiquez la cible exacte, vérifiez toute confirmation UAC, puis relancez une consultation. TrustedInstaller est une identité de service, pas un groupe d’utilisateurs.",
+            "कार्रवाई चुनें, सटीक लक्ष्य दें, UAC पुष्टि की समीक्षा करें और सत्यापन के लिए फिर से स्थिति देखें। TrustedInstaller सेवा पहचान है, उपयोगकर्ता समूह नहीं।",
+            "Scegli un’azione, indica la destinazione esatta, verifica la richiesta UAC e poi controlla di nuovo lo stato. TrustedInstaller è un’identità di servizio, non un gruppo di utenti.",
+            "操作を選び、正確な対象を入力し、UAC確認を確認してから再照会します。TrustedInstaller はサービス ID であり、ユーザーグループではありません。",
+            "작업을 선택하고 정확한 대상을 입력한 뒤 UAC 확인을 검토하고 다시 조회해 확인하세요. TrustedInstaller는 서비스 ID이지 사용자 그룹이 아닙니다.",
+            "Wybierz działanie, podaj dokładny cel, sprawdź potwierdzenie UAC i ponownie odczytaj stan. TrustedInstaller to tożsamość usługi, a nie grupa użytkowników.",
+            "Escolha a ação, indique o destino exato, reveja a confirmação UAC e consulte novamente para verificar. TrustedInstaller é uma identidade de serviço, não um grupo de utilizadores.",
+            "Alegeți acțiunea, introduceți ținta exactă, verificați confirmarea UAC și consultați din nou starea. TrustedInstaller este o identitate de serviciu, nu un grup de utilizatori.",
+            "Выберите действие, укажите точную цель, проверьте запрос UAC и повторно запросите состояние. TrustedInstaller — это идентификатор службы, а не группа пользователей.",
+            "Виберіть дію, вкажіть точну ціль, перегляньте підтвердження UAC і повторно перевірте стан. TrustedInstaller — це обліковий запис служби, а не група користувачів.",
+            "选择操作并输入准确目标，检查 UAC 确认，然后重新查询以验证。TrustedInstaller 是服务身份，不是用户组。",
+        ]),
+        ("guide_fields_linux", [
+            "تختلف الحقول حسب الإجراء: حساب محلي، وصف، مجلد منزلي، shell، مجموعات، UID، انتهاء الصلاحية وخيارات إضافية. تُدخل كلمة المرور مرتين ولا توضع في الوسائط.",
+            "Die Felder hängen von der Aktion ab: lokales Konto, Beschreibung, Home-Verzeichnis, Shell, Gruppen, UID, Ablauf und optionale Einstellungen. Das Kennwort wird zweimal eingegeben und nie als Argument übergeben.",
+            "Fields vary by action: local account, description, home directory, shell, groups, UID, expiry and optional flags. Enter a password twice; it is never passed as an argument.",
+            "Los campos dependen de la acción: cuenta local, descripción, directorio personal, shell, grupos, UID, caducidad y opciones. La contraseña se introduce dos veces y nunca se pasa como argumento.",
+            "Les champs varient selon l’action : compte local, description, dossier personnel, shell, groupes, UID, expiration et options. Saisissez le mot de passe deux fois ; il n’est jamais transmis comme argument.",
+            "कार्रवाई के अनुसार फ़ील्ड बदलते हैं: स्थानीय खाता, विवरण, होम निर्देशिका, शेल, समूह, UID, समाप्ति और वैकल्पिक विकल्प। पासवर्ड दो बार दर्ज करें; इसे तर्क के रूप में कभी नहीं भेजा जाता।",
+            "I campi variano in base all’azione: account locale, descrizione, directory home, shell, gruppi, UID, scadenza e opzioni. Inserisci la password due volte; non viene mai passata come argomento.",
+            "項目は操作によって異なります（ローカルアカウント、説明、ホームディレクトリ、シェル、グループ、UID、有効期限、オプション）。パスワードは2回入力し、引数として渡しません。",
+            "작업에 따라 로컬 계정, 설명, 홈 디렉터리, 셸, 그룹, UID, 만료 및 선택 항목을 입력합니다. 암호는 두 번 입력하며 인수로 전달되지 않습니다.",
+            "Pola zależą od działania: konto lokalne, opis, katalog domowy, powłoka, grupy, UID, wygaśnięcie i opcje. Hasło wpisuje się dwukrotnie i nigdy nie jest przekazywane jako argument.",
+            "Os campos variam conforme a ação: conta local, descrição, diretório pessoal, shell, grupos, UID, validade e opções. Introduza a palavra-passe duas vezes; nunca é passada como argumento.",
+            "Câmpurile variază în funcție de acțiune: cont local, descriere, director personal, shell, grupuri, UID, expirare și opțiuni. Introduceți parola de două ori; nu este transmisă ca argument.",
+            "Поля зависят от действия: локальная учетная запись, описание, домашний каталог, оболочка, группы, UID, срок действия и параметры. Пароль вводится дважды и не передается как аргумент.",
+            "Поля залежать від дії: локальний обліковий запис, опис, домашній каталог, оболонка, групи, UID, термін дії та параметри. Пароль вводиться двічі й не передається як аргумент.",
+            "字段因操作而异：本地账户、描述、主目录、shell、组、UID、到期时间和可选项。密码需输入两次，绝不会作为参数传递。",
+        ]),
+        ("guide_complex_linux", [
+            "اختر الإجراء والحساب أو المجموعة المحلية بدقة، وراجع التأكيد وطلب الصلاحيات، ثم أعد الاستعلام للتحقق. أضف المسؤول فقط إلى مجموعة sudo أو wheel أو admin موجودة، وراجع قواعد sudoers.",
+            "Aktion und genaues lokales Konto oder Gruppe wählen, Bestätigung und Berechtigungsabfrage prüfen und den Status erneut abfragen. Administratorzugriff nur über eine vorhandene sudo-, wheel- oder admin-Gruppe vergeben; sudoers-Regeln prüfen.",
+            "Choose the action and exact local account or group, review confirmation and privilege prompts, then query again to verify. Grant admin access only through an existing sudo, wheel or admin group; review sudoers rules.",
+            "Elige la acción y la cuenta o grupo local exacto, revisa la confirmación y la solicitud de permisos, y vuelve a consultar para verificar. Concede administración solo mediante un grupo sudo, wheel o admin existente; revisa sudoers.",
+            "Choisissez l’action et le compte ou groupe local exacts, vérifiez la confirmation et la demande d’autorisation, puis relancez une consultation. N’accordez les droits admin que via un groupe sudo, wheel ou admin existant ; vérifiez sudoers.",
+            "कार्रवाई और सटीक स्थानीय खाता या समूह चुनें, पुष्टि और अनुमति अनुरोध देखें, फिर सत्यापन के लिए दोबारा जाँचें। व्यवस्थापक पहुँच केवल मौजूदा sudo, wheel या admin समूह से दें; sudoers नियम देखें।",
+            "Scegli l’azione e l’account o gruppo locale esatto, verifica la conferma e la richiesta di privilegi, poi controlla di nuovo. Concedi l’accesso admin solo tramite un gruppo sudo, wheel o admin esistente; verifica le regole sudoers.",
+            "操作と正確なローカルアカウントまたはグループを選び、確認と権限要求を確認してから再照会します。管理者権限は既存の sudo、wheel、admin グループ経由でのみ付与し、sudoers の規則を確認してください。",
+            "작업과 정확한 로컬 계정 또는 그룹을 선택하고 확인 및 권한 요청을 검토한 뒤 다시 조회하세요. 관리자 권한은 기존 sudo, wheel 또는 admin 그룹을 통해서만 부여하고 sudoers 규칙을 확인하세요.",
+            "Wybierz działanie oraz dokładne konto lub grupę lokalną, sprawdź potwierdzenie i prośbę o uprawnienia, a potem ponownie odczytaj stan. Dostęp administratora nadaj wyłącznie przez istniejącą grupę sudo, wheel lub admin; sprawdź reguły sudoers.",
+            "Escolha a ação e a conta ou grupo local exato, reveja a confirmação e o pedido de permissões e consulte novamente para verificar. Conceda administração apenas através de um grupo sudo, wheel ou admin existente; reveja as regras sudoers.",
+            "Alegeți acțiunea și contul sau grupul local exact, verificați confirmarea și solicitarea de privilegii, apoi consultați din nou starea. Acordați acces de administrator numai printr-un grup sudo, wheel sau admin existent; verificați regulile sudoers.",
+            "Выберите действие и точную локальную учетную запись или группу, проверьте подтверждение и запрос прав, затем повторно запросите состояние. Права администратора выдавайте только через существующую группу sudo, wheel или admin; проверьте правила sudoers.",
+            "Виберіть дію та точний локальний обліковий запис або групу, перегляньте підтвердження й запит прав, а потім повторно перевірте стан. Права адміністратора надавайте лише через наявну групу sudo, wheel або admin; перевірте правила sudoers.",
+            "选择操作和准确的本地账户或组，检查确认与权限提示，然后重新查询验证。仅通过现有 sudo、wheel 或 admin 组授予管理员权限；检查 sudoers 规则。",
+        ]),
+    ];
+    let language = current();
+    let index = SUPPORTED
+        .iter()
+        .position(|candidate| *candidate == language)
+        .unwrap_or(3);
+    TEXT.iter()
+        .find(|(candidate, _)| *candidate == key)
+        .map(|(_, values)| values[index])
+        .unwrap_or("")
 }
 
 pub fn native_label() -> &'static str {
@@ -3682,7 +3866,7 @@ pub fn gui_family_text(key: &str) -> &'static str {
         (
             "installable_utilities",
             [
-                "Utilidades del sistema",
+                "أدوات النظام",
                 "System utilities",
                 "System utilities",
                 "Utilidades del sistema",
@@ -3942,9 +4126,9 @@ pub fn gui_family_text(key: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        boot_label, category_text, gui_action_text, gui_confirmation_text, gui_family_text,
-        gui_text, language_test_guard, native_tools_label, normalize, set, settings_text,
-        storage_action_text, SUPPORTED,
+        boot_label, category_text, gui_account_text, gui_action_text, gui_confirmation_text,
+        gui_family_text, gui_text, language_test_guard, native_tools_label, normalize, set,
+        settings_text, storage_action_text, SUPPORTED,
     };
 
     #[test]
@@ -4255,6 +4439,64 @@ mod tests {
                     !gui_family_text(family).is_empty(),
                     "{language} missing {family}"
                 );
+            }
+        }
+        set("es");
+    }
+
+    #[test]
+    fn account_gui_labels_exist_in_every_terminal_language() {
+        let _guard = language_test_guard();
+        let keys = [
+            "title",
+            "manage_accounts",
+            "manage_groups",
+            "team_admin",
+            "list",
+            "groups",
+            "identity",
+            "sessions",
+            "inspect",
+            "create",
+            "modify",
+            "password",
+            "lock",
+            "unlock",
+            "delete",
+            "expire",
+            "group_create",
+            "group_delete",
+            "group_primary",
+            "group_add",
+            "group_remove",
+            "admin_add",
+            "admin_groups",
+            "guide",
+            "field_user_group",
+            "field_details",
+            "field_confirm",
+            "field_optional",
+            "local_user",
+            "new_password",
+            "repeat_password",
+            "guide_fields",
+            "guide_simple",
+            "guide_complex",
+            "guide_fields_linux",
+            "guide_complex_linux",
+        ];
+        for language in SUPPORTED {
+            set(language);
+            for key in keys {
+                assert!(
+                    !gui_account_text(key).trim().is_empty(),
+                    "{language} missing account GUI string {key}"
+                );
+            }
+            if *language != "es" {
+                assert_ne!(gui_account_text("title"), "Usuarios, grupos y sesiones");
+                assert_ne!(gui_account_text("list"), "Listar cuentas locales");
+                assert_ne!(gui_account_text("password"), "Cambiar contraseña");
             }
         }
         set("es");

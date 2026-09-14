@@ -15,6 +15,9 @@ param(
     [switch]$Clean,
     [switch]$Force,
     [switch]$Fast,
+    [switch]$StrictSecurity,
+    [switch]$SecurityReview,
+    [switch]$AutoFix,
     [switch]$NoTests,
     [switch]$NoSmoke,
     [switch]$NoE2E,
@@ -131,6 +134,9 @@ con parámetros y -Help para mostrar esta ayuda.
   -Force          Fuerza compilación y empaquetado.
   -Clean          Limpia el target Windows antes de compilar.
   -Fast           Release incremental, sin LTO (desarrollo).
+  -StrictSecurity Exige cargo-audit, cargo-deny, ShellCheck y actionlint.
+  -SecurityReview Exige ShellCheck y actionlint para scripts y workflows.
+  -AutoFix       Corrige formato Rust y sugerencias mecánicas de Clippy; luego reescanea.
   -NoTests        Omite cargo test, el smoke y la E2E Windows.
   -NoPackage      Compila pero no crea el ZIP.
   -NoSmoke        Omite solo el smoke Windows posterior a cargo test.
@@ -260,6 +266,8 @@ function Show-Menu {
                     Write-Host '  2) Build portable de desarrollo (perfil rápido, conserva las pruebas)'
                     Write-Host '  3) Build portable completa con smoke y E2E'
                     Write-Host '  4) Build local sin firma (no publicable)'
+                    Write-Host '  5) Exigir auditoría estricta de seguridad y continuar la build incremental'
+                    Write-Host '  6) Revisar scripts y workflows con ShellCheck y actionlint'
                     Write-Host '  0) Volver'
                     $buildChoice = Read-Host 'Selecciona una opción'
                     if ($buildChoice -eq '0') { break }
@@ -268,6 +276,8 @@ function Show-Menu {
                         '2' { Invoke-MenuTask 'Build portable rápida local' { & $PSCommandPath -Force -Fast -AllowUnsigned -Output $unsignedStaging -ReleaseOutput $unsignedRelease } }
                         '3' { Invoke-MenuTask 'Build portable y validaciones' { & $PSCommandPath -Force } }
                         '4' { Invoke-MenuTask 'Build local sin firma' { & $PSCommandPath -Force -AllowUnsigned -Output $unsignedStaging -ReleaseOutput $unsignedRelease } }
+                        '5' { Invoke-MenuTask 'Auditoría estricta de dependencias y build incremental' { & $PSCommandPath -StrictSecurity } }
+                        '6' { Invoke-MenuTask 'Revisión estática estricta de scripts y workflows' { & $PSCommandPath -SecurityReview } }
                         default { Write-Host 'Opción no válida.'; Wait-Menu }
                     }
                 }
@@ -395,18 +405,155 @@ function Invoke-NativeCommand([string]$Executable, [string[]]$Arguments) {
     # termina correctamente; usar ErrorAction=Stop aquí provocaba falsos
     # fallos durante líneas como «Compiling version_check».
     $previousErrorActionPreference = $ErrorActionPreference
+    $previousCargoIncremental = $null
+    $restoreCargoIncremental = $false
+    if ($Executable -ieq 'cargo') {
+        $previousCargoIncremental = [Environment]::GetEnvironmentVariable('CARGO_PROFILE_RELEASE_INCREMENTAL', 'Process')
+        if ($null -ne $previousCargoIncremental -and $previousCargoIncremental -cnotin @('true', 'false')) {
+            # Cargo solo acepta booleanos minúsculos aquí. CI o shells de
+            # Windows pueden heredar 0/1/True/False y hacer fallar incluso
+            # fmt/clippy antes de llegar a la compilación.
+            [Environment]::SetEnvironmentVariable('CARGO_PROFILE_RELEASE_INCREMENTAL', $null, 'Process')
+            $restoreCargoIncremental = $true
+            if (-not $script:CargoIncrementalWarningLogged) {
+                Write-Log 'AVISO: se ignora temporalmente CARGO_PROFILE_RELEASE_INCREMENTAL heredado con formato no válido para Cargo.'
+                $script:CargoIncrementalWarningLogged = $true
+            }
+        }
+    }
     try {
         $ErrorActionPreference = 'Continue'
         & $Executable @Arguments 2>&1 | ForEach-Object { Write-Log ([string]$_) }
         $exitCode = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previousErrorActionPreference
+        if ($restoreCargoIncremental) {
+            [Environment]::SetEnvironmentVariable('CARGO_PROFILE_RELEASE_INCREMENTAL', $previousCargoIncremental, 'Process')
+        }
     }
     return [int]$exitCode
 }
 function Invoke-Cargo([string[]]$Arguments) {
     $exitCode = Invoke-NativeCommand 'cargo' $Arguments
     if ($exitCode -ne 0) { throw "cargo terminó con código $exitCode" }
+}
+function Get-RustSourceHashes {
+    $hashes = @{}
+    $rustRoot = Join-Path $Root 'rust'
+    foreach ($file in Get-ChildItem -LiteralPath $rustRoot -Filter '*.rs' -File -Recurse |
+        Where-Object { -not $_.FullName.StartsWith((Join-Path $rustRoot 'target') + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) }) {
+        $hashes[$file.FullName] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+    }
+    return ,$hashes
+}
+function Write-RustAutofixChanges([hashtable]$Before) {
+    $after = Get-RustSourceHashes
+    $paths = @($Before.Keys) + @($after.Keys) | Sort-Object -Unique
+    $reported = $false
+    foreach ($path in $paths) {
+        if ($Before[$path] -ne $after[$path]) {
+            $relative = $path.Substring($Root.Length).TrimStart([char[]]@(92, 47))
+            Write-Log "[AUTO-FIXED] $relative"
+            $reported = $true
+        }
+    }
+    if (-not $reported) { Write-Log '[AUTO-FIX] no persistieron cambios de archivo.' }
+}
+function Invoke-RustQualityChecks {
+    $formatCheck = @('fmt', '--manifest-path', $CargoManifest, '--', '--check')
+    $formatExit = Invoke-NativeCommand 'cargo' $formatCheck
+    if ($formatExit -ne 0) {
+        if (-not $AutoFix) {
+            throw 'rustfmt detectó diferencias; corrígelas o vuelve a ejecutar con -AutoFix para aplicar formato y reescanear.'
+        }
+        $rustFixBefore = Get-RustSourceHashes
+        Invoke-Cargo @('fmt', '--manifest-path', $CargoManifest)
+        Write-Log '[AUTO-FIX] rustfmt aplicó el formato; se repite el escaneo antes de continuar.'
+        Write-RustAutofixChanges $rustFixBefore
+        Invoke-Cargo $formatCheck
+    }
+
+    $clippyCheck = @('clippy', '--locked', '--manifest-path', $CargoManifest, '--all-targets', '--target', $Target, '--', '-D', 'warnings')
+    $clippyExit = Invoke-NativeCommand 'cargo' $clippyCheck
+    if ($clippyExit -ne 0) {
+        if (-not $AutoFix) {
+            throw 'Clippy encontró avisos; corrígelos o vuelve a ejecutar con -AutoFix para aplicar solo sugerencias mecánicas y reescanear.'
+        }
+        $rustFixBefore = Get-RustSourceHashes
+        Invoke-Cargo @('clippy', '--fix', '--allow-dirty', '--allow-staged', '--locked', '--manifest-path', $CargoManifest, '--all-targets', '--target', $Target)
+        Write-Log '[AUTO-FIX] Clippy aplicó sugerencias mecánicas; se volverán a ejecutar formato y Clippy estricto.'
+        Invoke-Cargo @('fmt', '--manifest-path', $CargoManifest)
+        Write-Log '[AUTO-FIX] rustfmt normalizó el resultado de Clippy antes del reescaneo.'
+        Write-RustAutofixChanges $rustFixBefore
+        Invoke-Cargo $formatCheck
+        Invoke-Cargo $clippyCheck
+    }
+}
+function Invoke-RustSecurityAudit {
+    $auditAvailable = $null -ne (Get-Command 'cargo-audit' -ErrorAction SilentlyContinue)
+    $denyAvailable = $null -ne (Get-Command 'cargo-deny' -ErrorAction SilentlyContinue)
+    if ($StrictSecurity -and (-not $auditAvailable -or -not $denyAvailable)) {
+        $missing = @()
+        if (-not $auditAvailable) { $missing += 'cargo-audit' }
+        if (-not $denyAvailable) { $missing += 'cargo-deny' }
+        throw "La auditoría estricta requiere las herramientas que faltan: $($missing -join ', ')."
+    }
+    if (-not $auditAvailable) { Write-Log 'AVISO: cargo-audit no está instalado; se omite la auditoría de vulnerabilidades.' }
+    else {
+        Invoke-Step 'Actualizando y auditando advisories Rust' {
+            Invoke-Cargo @('audit', '--file', (Join-Path $Root 'rust\Cargo.lock'))
+        }
+    }
+    if (-not $denyAvailable) { Write-Log 'AVISO: cargo-deny no está instalado; se omite la revisión de licencias y fuentes.' }
+    else {
+        Invoke-Step 'Revisando advisories, licencias y fuentes Rust' {
+            Invoke-Cargo @('deny', '--manifest-path', $CargoManifest, '--config', (Join-Path $Root 'deny.toml'), 'check')
+        }
+    }
+}
+function Invoke-StaticSecurityReview {
+    $shellCheck = Get-Command 'shellcheck' -ErrorAction SilentlyContinue
+    $actionLint = Get-Command 'actionlint' -ErrorAction SilentlyContinue
+    $requireTools = $SecurityReview -or $StrictSecurity
+    $missing = @()
+    if (-not $shellCheck) { $missing += 'shellcheck' }
+    if (-not $actionLint) { $missing += 'actionlint' }
+    if ($requireTools -and $missing.Count -gt 0) {
+        throw "La revisión estática estricta requiere estas herramientas ausentes: $($missing -join ', ')."
+    }
+
+    if ($shellCheck) {
+        $shellFiles = @()
+        $shellFiles += @(Get-ChildItem -LiteralPath $Root -File -Filter '*.sh' -ErrorAction SilentlyContinue)
+        foreach ($directory in @('scripts', 'tests', 'appimage')) {
+            $path = Join-Path $Root $directory
+            if (Test-Path -LiteralPath $path -PathType Container) {
+                $shellFiles += @(Get-ChildItem -LiteralPath $path -File -Filter '*.sh' -Recurse)
+            }
+        }
+        if ($shellFiles.Count -gt 0) {
+            Invoke-Step 'ShellCheck de scripts Bash' {
+                $arguments = @('--severity=error') + @($shellFiles | ForEach-Object { $_.FullName })
+                $exitCode = Invoke-NativeCommand 'shellcheck' $arguments
+                if ($exitCode -ne 0) { throw "ShellCheck terminó con código $exitCode." }
+            }
+        } else { Write-Log '[REVIEW][SKIP] No se encontraron scripts Bash.' }
+    } else { Write-Log '[REVIEW][SKIP] shellcheck no está instalado; no se considera superado.' }
+
+    if ($actionLint) {
+        $workflowDirectory = Join-Path $Root '.github\workflows'
+        $workflows = if (Test-Path -LiteralPath $workflowDirectory -PathType Container) {
+            @(Get-ChildItem -LiteralPath $workflowDirectory -File | Where-Object { $_.Extension -in @('.yml', '.yaml') })
+        } else { @() }
+        if ($workflows.Count -gt 0) {
+            Invoke-Step 'actionlint de workflows GitHub Actions' {
+                $arguments = @('-color') + @($workflows | ForEach-Object { $_.FullName })
+                $exitCode = Invoke-NativeCommand 'actionlint' $arguments
+                if ($exitCode -ne 0) { throw "actionlint terminó con código $exitCode." }
+            }
+        } else { Write-Log '[REVIEW][SKIP] No se encontraron workflows GitHub Actions.' }
+    } else { Write-Log '[REVIEW][SKIP] actionlint no está instalado; no se considera superado.' }
+    if ($missing.Count -eq 0) { Write-Log '[REVIEW][PASS] ShellCheck y actionlint superados.' }
 }
 function Initialize-Signing {
     $configHome = if ($env:LTOOLS_CONFIG_HOME) { $env:LTOOLS_CONFIG_HOME } elseif ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } elseif ($env:USERPROFILE) { Join-Path $env:USERPROFILE '.config' } else { $null }
@@ -522,6 +669,7 @@ if ($SshSigningConfiguration.PublicKey) {
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { throw "No se encontró cargo. Instala Rust mediante rustup." }
 if (-not (Get-Command rustc -ErrorAction SilentlyContinue)) { throw "No se encontró rustc." }
 Invoke-Step 'Validando sintaxis de scripts PowerShell' { Test-PowerShellSyntax }
+Invoke-StaticSecurityReview
 Ensure-Target
 
 $oldState = $null
@@ -540,7 +688,7 @@ $sshPublicKeyFingerprint = if ($SshSigningConfiguration.PublicKey -and
 } else { $null }
 $previousSigning = Get-MapValue $oldState 'signing'
 $signingKeyChanged = Test-LToolsSigningKeyChanged $previousSigning $publicKeyFingerprint
-$needCompile = $Force -or $Clean -or $profileChanged -or $signingKeyChanged -or -not (Test-Path $Binary) -or -not (Test-Path $GuiBinary) -or -not (Test-Path $CliBinary) -or $impact.RustCompile.Count -gt 0
+$needCompile = $Force -or $AutoFix -or $Clean -or $profileChanged -or $signingKeyChanged -or -not (Test-Path $Binary) -or -not (Test-Path $GuiBinary) -or -not (Test-Path $CliBinary) -or $impact.RustCompile.Count -gt 0
 $existingZip = Join-Path $OutputDir "ltools-$Version-windows-$PackageArch.zip"
 $existingCli = Join-Path $OutputDir "ltools-$Version-windows-$PackageArch-cli.exe"
 $publishedExe = Join-Path $PublishDir "ltools-$Version-windows-$PackageArch.exe"
@@ -587,23 +735,30 @@ if ($SigningRequired -and -not $publicKeyFingerprint) {
         }
     }
 }
-$needCargoTests = -not $NoTests -and ($Force -or $impact.CargoTests.Count -gt 0)
-$needSmoke = -not ($NoTests -or $NoRun -or $NoSmoke) -and ($Force -or $impact.WindowsSmoke.Count -gt 0)
-$needE2E = -not ($NoTests -or $NoRun -or $NoE2E) -and ($Force -or $impact.WindowsE2E.Count -gt 0)
-$needBuildStateTests = -not $NoTests -and ($Force -or $impact.BuildStateTests.Count -gt 0)
-$needPublishTests = -not $NoTests -and ($Force -or $impact.PublishTests.Count -gt 0)
-Write-Log ("Impacto: compilar={0}, empaquetar={1}, cargo-test={2}, smoke={3}, E2E={4}, estado-test={5}, publish-test={6}" -f
-    $impact.RustCompile.Count, $impact.Package.Count, $impact.CargoTests.Count,
+$needCargoTests = -not $NoTests -and ($Force -or $AutoFix -or $impact.CargoTests.Count -gt 0)
+$needRustReview = $Force -or $AutoFix -or $impact.RustCompile.Count -gt 0
+$needSmoke = -not ($NoTests -or $NoRun -or $NoSmoke) -and ($Force -or $AutoFix -or $impact.WindowsSmoke.Count -gt 0)
+$needE2E = -not ($NoTests -or $NoRun -or $NoE2E) -and ($Force -or $AutoFix -or $impact.WindowsE2E.Count -gt 0)
+$needBuildStateTests = -not $NoTests -and ($Force -or $AutoFix -or $impact.BuildStateTests.Count -gt 0)
+$needPublishTests = -not $NoTests -and ($Force -or $AutoFix -or $impact.PublishTests.Count -gt 0)
+Write-Log ("Impacto: compilar={0}, revisar-Rust={1}, empaquetar={2}, cargo-test={3}, smoke={4}, E2E={5}, estado-test={6}, publish-test={7}" -f
+    $impact.RustCompile.Count, $needRustReview, $impact.Package.Count, $impact.CargoTests.Count,
     $impact.WindowsSmoke.Count, $impact.WindowsE2E.Count, $impact.BuildStateTests.Count, $impact.PublishTests.Count)
-Write-Log ("Plan incremental: compilar={0}, empaquetar={1}, cargo-test={2}, smoke={3}, E2E={4}, estado-test={5}, publish-test={6}" -f
-    $needCompile, $needPackage, $needCargoTests, $needSmoke, $needE2E, $needBuildStateTests, $needPublishTests)
+Write-Log ("Plan incremental: compilar={0}, revisar-Rust={1}, empaquetar={2}, cargo-test={3}, smoke={4}, E2E={5}, estado-test={6}, publish-test={7}" -f
+    $needCompile, $needRustReview, $needPackage, $needCargoTests, $needSmoke, $needE2E, $needBuildStateTests, $needPublishTests)
+
+Invoke-RustSecurityAudit
+
+if ($needRustReview) {
+    Invoke-Step 'Validando formato y Clippy estricto de todo el código Rust' { Invoke-RustQualityChecks }
+} else { Write-Log '    SKIP: la firma incremental confirma que no cambió código ni configuración Rust.' }
 
 if ($Clean) {
     Invoke-Step "Limpiando target Windows" { Remove-Item -LiteralPath $TargetDir -Recurse -Force -ErrorAction SilentlyContinue }
     $needCompile = $true
 }
 if ($needCompile) {
-    $cargoArgs = @('build', '--manifest-path', $CargoManifest, '--release', '--target', $Target)
+    $cargoArgs = @('build', '--locked', '--manifest-path', $CargoManifest, '--release', '--target', $Target)
     $cargoProfileVariables = @(
         'CARGO_PROFILE_RELEASE_LTO',
         'CARGO_PROFILE_RELEASE_CODEGEN_UNITS',
@@ -653,7 +808,7 @@ if ($needPublishTests) {
     }
 }
 if ($needCargoTests) {
-    Invoke-Step "Ejecutando tests Rust" { Invoke-Cargo @('test', '--manifest-path', $CargoManifest, '--target', $Target) }
+    Invoke-Step "Ejecutando tests Rust" { Invoke-Cargo @('test', '--locked', '--manifest-path', $CargoManifest, '--target', $Target) }
 }
 if ($Target -match 'windows') {
     $smoke = Join-Path $Root 'windows\tests\smoke.ps1'

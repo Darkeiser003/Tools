@@ -1129,11 +1129,13 @@ fn windows_gui_page_guide(topic: &str) -> Option<String> {
         return None;
     }
     let (page, category, title) = windows_gui_topic_page(topic)?;
-    let menu = if page == 8 {
-        crate::i18n::gui_text("accounts")
+    let title = if topic == "accounts" {
+        crate::i18n::accounts_label()
     } else {
-        crate::i18n::category_text(category)
+        title
     };
+    let menu = crate::gui::windows_menu_title(page)
+        .unwrap_or_else(|| crate::i18n::category_text(category).to_owned());
     let mut options = crate::gui::windows_menu_labels(page);
     options.push(crate::i18n::text("menu.back").to_owned());
     let listed = options
@@ -1159,9 +1161,9 @@ fn windows_gui_page_guide(topic: &str) -> Option<String> {
             "Descarga solo tras revisar que el paquete corresponde a Windows y a GUI/CLI. La firma Ed25519 y los hashes deben validarse; cierra el programa antes de reemplazar el ejecutable y conserva una copia. No se eleva ni se instala automáticamente.",
         ),
         8 => (
-            "Los campos dependen de la acción: usuario, grupo, descripción, contraseña o fechas; se validan antes de ejecutar. «Conceder permisos de administrador» toma una cuenta opcional (vacío = actual) y usa el grupo integrado Administradores por SID `S-1-5-32-544`.",
-            "Consulta cuentas, grupos, identidad y sesiones antes de editar.",
-            "Selecciona la acción, completa el objetivo exacto, revisa la confirmación UAC cuando proceda y vuelve a consultar el estado. TrustedInstaller es una identidad de servicio, no un grupo de usuarios: no se añade una cuenta a ella.",
+            crate::i18n::gui_account_text("guide_fields"),
+            crate::i18n::gui_account_text("guide_simple"),
+            crate::i18n::gui_account_text("guide_complex"),
         ),
         7 => (
             if crate::platform::nsudo_path().is_some() {
@@ -1178,8 +1180,13 @@ fn windows_gui_page_guide(topic: &str) -> Option<String> {
             "Revisa la familia, confirma la operación si es modificadora y repite una consulta equivalente para verificar el resultado.",
         ),
     };
+    let account_sid = if page == 8 {
+        "\n\nBuilt-in Administrators group SID: S-1-5-32-544."
+    } else {
+        ""
+    };
     Some(format!(
-        "GUÍA GRÁFICA: {title}\n\nMenú completo «{menu}» (opciones obtenidas del catálogo real de botones Windows):\n{listed}\n\nCampos y argumentos de la GUI:\n  {fields}\n\nProceso simple:\n  {simple}\n\nProceso complejo:\n  {complex}\n\nLas opciones enumeradas corresponden a esta ventana Windows; «{}» vuelve a la pantalla anterior. No se muestran acciones Linux ni se gestionan prefijos Wine/Proton desde el ejecutable Windows.",
+        "GUÍA GRÁFICA: {title}\n\nMenú completo «{menu}» (opciones obtenidas del catálogo real de botones Windows):\n{listed}\n\nCampos y argumentos de la GUI:\n  {fields}{account_sid}\n\nProceso simple:\n  {simple}\n\nProceso complejo:\n  {complex}\n\nLas opciones enumeradas corresponden a esta ventana Windows; «{}» vuelve a la pantalla anterior. No se muestran acciones Linux ni se gestionan prefijos Wine/Proton desde el ejecutable Windows.",
         crate::i18n::text("menu.back")
     ))
 }
@@ -1205,11 +1212,8 @@ fn windows_gui_index() -> String {
         let Some((_, category, _)) = windows_gui_topic_page(topic) else {
             continue;
         };
-        let title = if page == 8 {
-            crate::i18n::gui_text("accounts")
-        } else {
-            crate::i18n::category_text(category)
-        };
+        let title = crate::gui::windows_menu_title(page)
+            .unwrap_or_else(|| crate::i18n::category_text(category).to_owned());
         let options = crate::gui::windows_menu_labels(page)
             .into_iter()
             .chain(std::iter::once(crate::i18n::text("menu.back").to_owned()))
@@ -1236,6 +1240,49 @@ fn windows_gui_index() -> String {
 fn gui_catalog_guide(topic: &str) -> String {
     if topic == "settings" {
         return gui_settings_guide();
+    }
+    if topic == "accounts" {
+        let options = [
+            "list",
+            "groups",
+            "identity",
+            "sessions",
+            "inspect",
+            "create",
+            "modify",
+            "password",
+            "lock",
+            "unlock",
+            "delete",
+            "expire",
+            "group_create",
+            "group_delete",
+            "group_add",
+            "group_remove",
+            "group_primary",
+            "admin_add",
+            "admin_groups",
+            "guide",
+        ]
+        .into_iter()
+        .map(crate::i18n::gui_account_text)
+        .chain(std::iter::once(crate::i18n::text("menu.back")))
+        .collect::<Vec<_>>();
+        let listed = options
+            .iter()
+            .enumerate()
+            .map(|(index, option)| format!("  {}. «{}»", index + 1, option))
+            .collect::<Vec<_>>()
+            .join("\n");
+        return format!(
+            "GUÍA GRÁFICA: {}\n\nMenú completo «{}» (opciones del menú Linux):\n{}\n\nCampos y argumentos de la GUI:\n  {}\n\nProceso simple:\n  {}\n\nProceso complejo:\n  {}\n\nLinux administra cuentas locales; los permisos de administrador se conceden solo mediante grupos sudo, wheel o admin que ya existan. No se muestran acciones Windows ni identidades de servicio.",
+            crate::i18n::accounts_label(),
+            crate::i18n::accounts_label(),
+            listed,
+            crate::i18n::gui_account_text("guide_fields_linux"),
+            crate::i18n::gui_account_text("guide_simple"),
+            crate::i18n::gui_account_text("guide_complex_linux"),
+        );
     }
     let (title, menu, options, fields, process) = match topic {
         "storage-partitions" => (
@@ -2173,6 +2220,49 @@ mod tests {
         }
     }
 
+    #[cfg(not(windows))]
+    #[test]
+    fn linux_account_gui_guide_matches_all_localized_actions_and_platform() {
+        let _language_guard = crate::i18n::language_test_guard();
+        let action_keys = [
+            "list",
+            "groups",
+            "identity",
+            "sessions",
+            "inspect",
+            "create",
+            "modify",
+            "password",
+            "lock",
+            "unlock",
+            "delete",
+            "expire",
+            "group_create",
+            "group_delete",
+            "group_add",
+            "group_remove",
+            "group_primary",
+            "admin_add",
+            "admin_groups",
+            "guide",
+        ];
+        for language in crate::i18n::SUPPORTED {
+            crate::i18n::set(language);
+            let guide = gui_guide("accounts");
+            for key in action_keys {
+                assert!(
+                    guide.contains(crate::i18n::gui_account_text(key)),
+                    "Linux account GUI guide ({language}) omits {key}"
+                );
+            }
+            assert!(guide.contains(crate::i18n::gui_account_text("guide_fields_linux")));
+            assert!(guide.contains(crate::i18n::gui_account_text("guide_complex_linux")));
+            assert!(!guide.contains("TrustedInstaller"));
+            assert!(!guide.contains("S-1-5-32-544"));
+        }
+        crate::i18n::set("es");
+    }
+
     #[test]
     fn every_contextual_gui_guide_lists_its_menu_options() {
         let _language_guard = crate::i18n::language_test_guard();
@@ -2417,6 +2507,8 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn windows_accounts_guide_documents_admin_sid_and_trustedinstaller_boundary() {
+        let _language_guard = crate::i18n::language_test_guard();
+        crate::i18n::set("es");
         let guide = gui_guide("accounts");
         assert!(guide.contains("Conceder permisos de administrador"));
         assert!(guide.contains("Ver grupo y miembros administradores"));
@@ -2442,6 +2534,12 @@ mod tests {
             crate::i18n::set(language);
             for (topic, page) in pages {
                 let guide = gui_guide(topic);
+                let title = crate::gui::windows_menu_title(page)
+                    .unwrap_or_else(|| panic!("falta el título de la página Windows {page}"));
+                assert!(
+                    guide.contains(&format!("Menú completo «{title}»")),
+                    "guía Windows/{topic} ({language}) no coincide con el título de la GUI «{title}»"
+                );
                 let options = crate::gui::windows_menu_labels(page)
                     .into_iter()
                     .chain(std::iter::once(crate::i18n::text("menu.back").to_owned()));
@@ -2450,6 +2548,15 @@ mod tests {
                         guide.contains(&option),
                         "guía Windows/{topic} ({language}) no enumera el botón «{option}»"
                     );
+                }
+                if topic == "accounts" {
+                    for key in ["guide_fields", "guide_simple", "guide_complex"] {
+                        assert!(
+                            guide.contains(crate::i18n::gui_account_text(key)),
+                            "Windows account guide ({language}) is missing localized {key}"
+                        );
+                    }
+                    assert!(guide.contains("S-1-5-32-544"));
                 }
             }
             if crate::platform::winslim_available() {

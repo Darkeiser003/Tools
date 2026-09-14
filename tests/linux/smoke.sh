@@ -67,6 +67,7 @@ export HOME="$TMP_DIR/default-home"
 export XDG_CONFIG_HOME="$TMP_DIR/default-config"
 export XDG_DATA_HOME="$TMP_DIR/default-data"
 export XDG_STATE_HOME="$TMP_DIR/default-state"
+export TMPDIR="$TMP_DIR"
 export LTOOLS_LANG=es
 mkdir -p -- "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"
 

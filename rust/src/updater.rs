@@ -39,6 +39,43 @@ struct LatestRelease {
     verified: bool,
 }
 
+trait UpdateTransport {
+    fn fetch_bytes(&self, url: &str, limit: u64) -> Result<Vec<u8>, String>;
+    fn download_to_file(&self, url: &str, limit: u64, file: &mut File) -> Result<u64, String>;
+}
+
+struct HttpUpdateTransport(ureq::Agent);
+
+impl UpdateTransport for HttpUpdateTransport {
+    fn fetch_bytes(&self, url: &str, limit: u64) -> Result<Vec<u8>, String> {
+        let mut response = self
+            .0
+            .get(url)
+            .header("User-Agent", concat!("LTools/", env!("CARGO_PKG_VERSION")))
+            .header("Accept", "application/vnd.github+json")
+            .call()
+            .map_err(|error| format!("no se pudo consultar {url}: {error}"))?;
+        response
+            .body_mut()
+            .with_config()
+            .limit(limit)
+            .read_to_vec()
+            .map_err(|error| format!("respuesta demasiado grande o ilegible desde {url}: {error}"))
+    }
+
+    fn download_to_file(&self, url: &str, limit: u64, file: &mut File) -> Result<u64, String> {
+        let mut response = self
+            .0
+            .get(url)
+            .header("User-Agent", concat!("LTools/", env!("CARGO_PKG_VERSION")))
+            .call()
+            .map_err(|error| format!("no se pudo descargar el paquete verificado: {error}"))?;
+        let mut reader = response.body_mut().with_config().limit(limit).reader();
+        io::copy(&mut reader, file)
+            .map_err(|error| format!("falló la escritura del paquete: {error}"))
+    }
+}
+
 pub fn help() -> &'static str {
     "update [check|download] [--repository OWNER/REPO] [--pause] — comprueba una release GitHub, verifica firma/hash y prepara el paquete sin privilegios"
 }
@@ -161,6 +198,24 @@ fn download_verified_artifact(
     expected_checksum: &str,
     download_directory: &Path,
 ) -> Result<PathBuf, String> {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(120)))
+        .build()
+        .into();
+    download_verified_artifact_with(
+        artifact,
+        expected_checksum,
+        download_directory,
+        &HttpUpdateTransport(agent),
+    )
+}
+
+fn download_verified_artifact_with(
+    artifact: &ReleaseArtifact,
+    expected_checksum: &str,
+    download_directory: &Path,
+    transport: &impl UpdateTransport,
+) -> Result<PathBuf, String> {
     if expected_checksum != artifact.sha256 {
         return Err("el hash esperado no coincide con el artefacto del manifiesto".into());
     }
@@ -176,7 +231,7 @@ fn download_verified_artifact(
     let temporary_workspace = create_workspace()?;
     let temporary = temporary_workspace.0.join("download.part");
     let download_result = (|| {
-        download_artifact(artifact, &temporary)?;
+        download_artifact_with(artifact, &temporary, transport)?;
         let actual_size = fs::metadata(&temporary)
             .map_err(|error| format!("no se pudo inspeccionar el artefacto descargado: {error}"))?
             .len();
@@ -230,18 +285,31 @@ fn fetch_latest_at(
     base: &str,
     public_key_override: Option<&Path>,
 ) -> Result<LatestRelease, String> {
-    let workspace = create_workspace()?;
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(25)))
         .build()
         .into();
-    let manifest_bytes = fetch_bytes(
-        &agent,
-        &format!("{base}/ltools-release.json"),
-        METADATA_LIMIT,
-    )?;
-    let checksum_bytes = fetch_bytes(&agent, &format!("{base}/SHA256SUMS.txt"), METADATA_LIMIT)?;
-    let signature_bytes = fetch_bytes(&agent, &format!("{base}/SHA256SUMS.txt.sig"), 64 * 1024)?;
+    fetch_latest_at_with(
+        repository,
+        base,
+        public_key_override,
+        &HttpUpdateTransport(agent),
+    )
+}
+
+fn fetch_latest_at_with(
+    repository: &str,
+    base: &str,
+    public_key_override: Option<&Path>,
+    transport: &impl UpdateTransport,
+) -> Result<LatestRelease, String> {
+    let workspace = create_workspace()?;
+    let manifest_bytes =
+        transport.fetch_bytes(&format!("{base}/ltools-release.json"), METADATA_LIMIT)?;
+    let checksum_bytes =
+        transport.fetch_bytes(&format!("{base}/SHA256SUMS.txt"), METADATA_LIMIT)?;
+    let signature_bytes =
+        transport.fetch_bytes(&format!("{base}/SHA256SUMS.txt.sig"), 64 * 1024)?;
     let manifest_path = workspace.0.join("ltools-release.json");
     let checksum_path = workspace.0.join("SHA256SUMS.txt");
     let signature_path = workspace.0.join("SHA256SUMS.txt.sig");
@@ -459,22 +527,11 @@ fn metadata_base_url(repository: &str) -> Result<String, String> {
     ))
 }
 
-fn fetch_bytes(agent: &ureq::Agent, url: &str, limit: u64) -> Result<Vec<u8>, String> {
-    let mut response = agent
-        .get(url)
-        .header("User-Agent", concat!("LTools/", env!("CARGO_PKG_VERSION")))
-        .header("Accept", "application/vnd.github+json")
-        .call()
-        .map_err(|error| format!("no se pudo consultar {url}: {error}"))?;
-    response
-        .body_mut()
-        .with_config()
-        .limit(limit)
-        .read_to_vec()
-        .map_err(|error| format!("respuesta demasiado grande o ilegible desde {url}: {error}"))
-}
-
-fn download_artifact(artifact: &ReleaseArtifact, path: &Path) -> Result<(), String> {
+fn download_artifact_with(
+    artifact: &ReleaseArtifact,
+    path: &Path,
+    transport: &impl UpdateTransport,
+) -> Result<(), String> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -489,22 +546,11 @@ fn download_artifact(artifact: &ReleaseArtifact, path: &Path) -> Result<(), Stri
         )
     })?;
     let result = (|| {
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .timeout_global(Some(Duration::from_secs(120)))
-            .build()
-            .into();
-        let mut response = agent
-            .get(&artifact.download_url)
-            .header("User-Agent", concat!("LTools/", env!("CARGO_PKG_VERSION")))
-            .call()
-            .map_err(|error| format!("no se pudo descargar el paquete verificado: {error}"))?;
-        let mut reader = response
-            .body_mut()
-            .with_config()
-            .limit(artifact.size_bytes + 1)
-            .reader();
-        let copied = io::copy(&mut reader, &mut file)
-            .map_err(|error| format!("falló la escritura del paquete: {error}"))?;
+        let copied = transport.download_to_file(
+            &artifact.download_url,
+            artifact.size_bytes.saturating_add(1),
+            &mut file,
+        )?;
         file.sync_all()
             .map_err(|error| format!("no se pudo vaciar el paquete al disco: {error}"))?;
         if copied != artifact.size_bytes {
@@ -934,6 +980,35 @@ mod tests {
     use std::net::TcpListener;
     use std::thread;
 
+    #[derive(Default)]
+    struct FixtureTransport(BTreeMap<String, Vec<u8>>);
+
+    impl UpdateTransport for FixtureTransport {
+        fn fetch_bytes(&self, url: &str, limit: u64) -> Result<Vec<u8>, String> {
+            let contents = self
+                .0
+                .get(url)
+                .ok_or_else(|| format!("fixture sin respuesta para {url}"))?;
+            if contents.len() as u64 > limit {
+                return Err(format!("fixture supera el límite para {url}"));
+            }
+            Ok(contents.clone())
+        }
+
+        fn download_to_file(&self, url: &str, limit: u64, file: &mut File) -> Result<u64, String> {
+            let contents = self
+                .0
+                .get(url)
+                .ok_or_else(|| format!("fixture sin paquete para {url}"))?;
+            if contents.len() as u64 > limit {
+                return Err(format!("fixture supera el límite para {url}"));
+            }
+            file.write_all(contents)
+                .map_err(|error| format!("falló la escritura del fixture: {error}"))?;
+            Ok(contents.len() as u64)
+        }
+    }
+
     #[test]
     fn compares_release_and_prerelease_versions() {
         assert!(version_is_newer("1.2.0", "1.1.99").unwrap());
@@ -1047,6 +1122,56 @@ mod tests {
         assert!(validate_test_base_url("http://evil.example/update").is_err());
     }
 
+    #[test]
+    fn production_http_transport_fetches_metadata_and_streams_artifacts() {
+        let contents = b"HTTP transport fixture".to_vec();
+        let (base, server) = match local_http_server(contents.clone(), 2) {
+            Ok(server) => server,
+            Err(error)
+                if error.kind() == io::ErrorKind::PermissionDenied
+                    && std::env::var_os("LTOOLS_REQUIRE_LOOPBACK_TESTS").is_none() =>
+            {
+                eprintln!("SKIP: sandbox no permite TCP loopback; CI exige ejecutar esta prueba.");
+                return;
+            }
+            Err(error) => panic!("no se pudo iniciar el servidor HTTP de prueba: {error}"),
+        };
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(10)))
+            .build()
+            .into();
+        let transport = HttpUpdateTransport(agent);
+        assert_eq!(
+            transport
+                .fetch_bytes(&format!("{base}/metadata"), 1024)
+                .unwrap(),
+            contents
+        );
+
+        let workspace = create_workspace().unwrap();
+        let path = workspace.0.join("download.part");
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .unwrap();
+        let copied = transport
+            .download_to_file(
+                &format!("{base}/artifact"),
+                contents.len() as u64 + 1,
+                &mut file,
+            )
+            .unwrap();
+        assert_eq!(copied, contents.len() as u64);
+        file.sync_all().unwrap();
+        assert_eq!(fs::read(path).unwrap(), contents);
+        assert_eq!(
+            server.join().unwrap(),
+            2,
+            "la E2E HTTP debe cubrir ambas rutas"
+        );
+    }
+
     #[cfg(not(windows))]
     #[test]
     fn parses_xdg_download_directory_without_evaluating_shell_syntax() {
@@ -1072,7 +1197,7 @@ mod tests {
     }
 
     #[test]
-    fn local_release_metadata_signature_and_artifact_contract_are_checked() {
+    fn release_metadata_signature_and_artifact_contract_are_checked() {
         let (platform, architecture, kind) = platform_artifact();
         assert_ne!(
             architecture, "unsupported",
@@ -1113,19 +1238,19 @@ mod tests {
         );
         let verifying_key = hex(signing_key.verifying_key().as_bytes());
         let mut documents = BTreeMap::new();
-        documents.insert("/ltools-release.json".to_owned(), manifest_bytes);
-        documents.insert("/SHA256SUMS.txt".to_owned(), checksums.into_bytes());
-        documents.insert("/SHA256SUMS.txt.sig".to_owned(), signature.into_bytes());
-        let (base, server) = local_http_server(documents.clone());
+        let base = "https://updates.invalid";
+        documents.insert(format!("{base}/ltools-release.json"), manifest_bytes);
+        documents.insert(format!("{base}/SHA256SUMS.txt"), checksums.into_bytes());
+        documents.insert(format!("{base}/SHA256SUMS.txt.sig"), signature.into_bytes());
+        let transport = FixtureTransport(documents.clone());
         let key_path = std::env::temp_dir().join(format!(
             "ltools-updater-test-key-{}-{}",
             std::process::id(),
             nonce()
         ));
         fs::write(&key_path, verifying_key).unwrap();
-        let result = fetch_latest_at("example/project", &base, Some(&key_path));
+        let result = fetch_latest_at_with("example/project", base, Some(&key_path), &transport);
         let _ = fs::remove_file(&key_path);
-        server.join().unwrap();
         let release = result.expect("el manifiesto y su firma de prueba deben verificarse");
         assert!(release.verified);
         assert_eq!(release.artifact.filename, filename);
@@ -1138,10 +1263,14 @@ mod tests {
             nonce()
         ));
         fs::write(&wrong_key_path, hex(wrong_key.verifying_key().as_bytes())).unwrap();
-        let (bad_base, bad_server) = local_http_server(documents);
-        let bad_result = fetch_latest_at("example/project", &bad_base, Some(&wrong_key_path));
+        let bad_transport = FixtureTransport(documents);
+        let bad_result = fetch_latest_at_with(
+            "example/project",
+            base,
+            Some(&wrong_key_path),
+            &bad_transport,
+        );
         let _ = fs::remove_file(&wrong_key_path);
-        bad_server.join().unwrap();
         assert!(
             bad_result.is_err(),
             "un manifiesto firmado por otra clave debe rechazarse"
@@ -1149,25 +1278,25 @@ mod tests {
     }
 
     #[test]
-    fn local_artifact_download_checks_size_and_writes_only_to_reserved_path() {
+    fn artifact_download_checks_size_and_writes_only_to_reserved_path() {
         let contents = b"fixture package bytes".to_vec();
         let mut documents = BTreeMap::new();
-        documents.insert("/asset.bin".to_owned(), contents.clone());
-        let (base, server) = local_http_server(documents);
+        let url = "https://updates.invalid/asset.bin";
+        documents.insert(url.to_owned(), contents.clone());
+        let transport = FixtureTransport(documents);
         let artifact = ReleaseArtifact {
             filename: "asset.bin".into(),
-            download_url: format!("{base}/asset.bin"),
+            download_url: url.into(),
             size_bytes: contents.len() as u64,
             sha256: hex(&Sha256::digest(&contents)),
         };
         let workspace = create_workspace().unwrap();
         let destination = workspace.0.join("download.part");
-        let result = download_artifact(&artifact, &destination);
-        server.join().unwrap();
+        let result = download_artifact_with(&artifact, &destination, &transport);
         result.unwrap();
         assert_eq!(fs::read(&destination).unwrap(), contents);
         assert!(
-            download_artifact(&artifact, &destination).is_err(),
+            download_artifact_with(&artifact, &destination, &transport).is_err(),
             "no debe sobrescribir el archivo reservado"
         );
     }
@@ -1177,9 +1306,10 @@ mod tests {
         let contents = b"a verified portable update".to_vec();
         let hash = hex(&Sha256::digest(&contents));
         let mut documents = BTreeMap::new();
-        documents.insert("/asset.bin".to_owned(), contents.clone());
-        documents.insert("/bad-asset.bin".to_owned(), contents.clone());
-        let (base, server) = local_http_server(documents);
+        let base = "https://updates.invalid";
+        documents.insert(format!("{base}/asset.bin"), contents.clone());
+        documents.insert(format!("{base}/bad-asset.bin"), contents.clone());
+        let transport = FixtureTransport(documents);
         let workspace = create_workspace().unwrap();
         let downloads = workspace.0.join("Downloads");
         fs::create_dir(&downloads).unwrap();
@@ -1191,7 +1321,8 @@ mod tests {
             size_bytes: contents.len() as u64,
             sha256: hash.clone(),
         };
-        let promoted = download_verified_artifact(&artifact, &hash, &downloads).unwrap();
+        let promoted =
+            download_verified_artifact_with(&artifact, &hash, &downloads, &transport).unwrap();
         assert_ne!(promoted, existing);
         assert_eq!(
             fs::read(&existing).unwrap(),
@@ -1216,14 +1347,19 @@ mod tests {
             size_bytes: contents.len() as u64,
             sha256: wrong_hash.clone(),
         };
-        assert!(download_verified_artifact(&invalid_artifact, &wrong_hash, &downloads).is_err());
+        assert!(download_verified_artifact_with(
+            &invalid_artifact,
+            &wrong_hash,
+            &downloads,
+            &transport
+        )
+        .is_err());
         assert!(!downloads.join("bad-asset.bin").exists());
         assert_eq!(
             fs::read_dir(&downloads).unwrap().count(),
             2,
             "un temporal fallido no debe quedar publicado"
         );
-        server.join().unwrap();
     }
 
     #[test]
@@ -1252,17 +1388,18 @@ mod tests {
         let contents = b"verified appimage fixture".to_vec();
         let hash = hex(&Sha256::digest(&contents));
         let mut documents = BTreeMap::new();
-        documents.insert("/asset.AppImage".to_owned(), contents.clone());
-        let (base, server) = local_http_server(documents);
+        let url = "https://updates.invalid/asset.AppImage";
+        documents.insert(url.to_owned(), contents.clone());
+        let transport = FixtureTransport(documents);
         let workspace = create_workspace().unwrap();
         let artifact = ReleaseArtifact {
             filename: "ltools-1.2.3-linux-x86_64.AppImage".into(),
-            download_url: format!("{base}/asset.AppImage"),
+            download_url: url.into(),
             size_bytes: contents.len() as u64,
             sha256: hash.clone(),
         };
-        let destination = download_verified_artifact(&artifact, &hash, &workspace.0).unwrap();
-        server.join().unwrap();
+        let destination =
+            download_verified_artifact_with(&artifact, &hash, &workspace.0, &transport).unwrap();
         assert_eq!(fs::read(&destination).unwrap(), contents);
         assert_eq!(
             fs::metadata(destination).unwrap().permissions().mode() & 0o777,
@@ -1287,13 +1424,15 @@ mod tests {
         );
     }
 
-    fn local_http_server(documents: BTreeMap<String, Vec<u8>>) -> (String, thread::JoinHandle<()>) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let expected_requests = documents.len();
+    fn local_http_server(
+        contents: Vec<u8>,
+        expected_requests: usize,
+    ) -> io::Result<(String, thread::JoinHandle<usize>)> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        listener.set_nonblocking(true)?;
         let server = thread::spawn(move || {
-            listener.set_nonblocking(true).unwrap();
-            let deadline = std::time::Instant::now() + Duration::from_secs(15);
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
             let mut served = 0;
             while served < expected_requests && std::time::Instant::now() < deadline {
                 let (mut stream, _) = match listener.accept() {
@@ -1302,34 +1441,26 @@ mod tests {
                         thread::sleep(Duration::from_millis(10));
                         continue;
                     }
-                    Err(error) => panic!("falló el servidor HTTP de prueba: {error}"),
+                    Err(_) => break,
                 };
-                let mut request = [0_u8; 4096];
-                let count = stream.read(&mut request).unwrap();
-                let first_line = String::from_utf8_lossy(&request[..count]);
-                let path = first_line.split_whitespace().nth(1).unwrap_or("/");
-                if let Some(body) = documents.get(path) {
-                    write!(
-                        stream,
-                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                        body.len()
-                    )
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
                     .unwrap();
-                    stream.write_all(body).unwrap();
-                } else {
-                    write!(
-                        stream,
-                        "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                    )
-                    .unwrap();
+                let mut request = [0_u8; 2048];
+                if stream.read(&mut request).is_err() {
+                    break;
                 }
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    contents.len()
+                )
+                .unwrap();
+                stream.write_all(&contents).unwrap();
                 served += 1;
             }
-            assert_eq!(
-                served, expected_requests,
-                "el cliente no solicitó todos los documentos antes del timeout"
-            );
+            served
         });
-        (format!("http://{address}"), server)
+        Ok((format!("http://{address}"), server))
     }
 }

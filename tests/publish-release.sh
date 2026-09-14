@@ -28,7 +28,7 @@ ltools_promote_release_staging
 # Un reemplazo concurrente del directorio debe rechazarse sin sobrescribirlo.
 ltools_create_release_staging "$destination"
 stage="$LTOOLS_RELEASE_STAGING"
-mv -- "$destination" "$workspace/original-release"
+command mv -- "$destination" "$workspace/original-release"
 mkdir -- "$destination"
 printf 'concurrent\n' >"$destination/concurrent.txt"
 if ltools_promote_release_staging; then
@@ -37,7 +37,7 @@ fi
 [[ -f "$destination/concurrent.txt" ]] || { printf 'ERROR: se alteró el destino concurrente.\n' >&2; exit 1; }
 ltools_cleanup_release_staging
 rm -rf -- "$destination"
-mv -- "$workspace/original-release" "$destination"
+command mv -- "$workspace/original-release" "$destination"
 
 # Fuerza la ruta de fallback y simula un fallo de instalación: debe restaurar
 # la release anterior y dejar el staging nuevo recuperable.

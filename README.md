@@ -1324,7 +1324,10 @@ aislado, usa:
 ```
 
 El comprobador prioriza UMU-Wine, prueba la consola, el ejecutable, el JSON,
-defaults y el menú, y elimina el prefijo temporal al terminar. También acepta
+defaults y el menú, y elimina el prefijo temporal al terminar. Si están
+disponibles Xvfb, `xdotool` e ImageMagick, abre cada categoría Win32 con clics
+reales, comprueba el título mostrado contra el índice de guías y guarda
+capturas del panel principal y de cada categoría en `dist/captures/`. También acepta
 `--runner RUTA`, `--prefix RUTA`, `--output DIR`, `--keep-prefix`,
 `--no-tests`, `--fast`, `--offline`, `--jobs N` y `--install-mono`. Wine Mono no
 se instala por defecto porque LTools no usa .NET; esa opción solo prepara el
@@ -1342,20 +1345,61 @@ release ni necesita una clave de firma:
   y en paralelo la build nativa Windows con tests, smoke y E2E. Guarda logs y
   paquetes temporales como artefactos descargables de la ejecución. Las builds
   CI se marcan explícitamente como no firmadas y no deben subirse como release
-  oficial. El job Linux omite AppImage si no hay `appimagetool`; prueba el
-  tarball y el ejecutable Windows bajo Wine. La AppImage final se verifica con
-  el builder de distribución que la genera.
-- `Rust supply chain` comprueba vulnerabilidades conocidas (`cargo audit`) y
-  licencias, versiones duplicadas y fuentes de crates (`cargo deny`), usando el
-  `deny.toml` del proyecto.
+  oficial. El job Linux omite AppImage deliberadamente (`--no-appimage`) para
+  limitar la CI a tarball, pruebas GUI y ejecutable Windows bajo Wine. La
+  misma build Linux instala las herramientas Cargo verificadas y usa
+  `--strict-security`, de modo que `cargo audit` y `cargo deny` deben pasar
+  antes de aceptar sus artefactos. La AppImage final se verifica con el builder
+  de distribución que la genera.
 - `Workflow and secret security` valida sintaxis y expresiones de Actions con
   actionlint, busca configuraciones inseguras con zizmor, pasa ShellCheck a los
-  scripts Bash y busca secretos en el código y el historial con Gitleaks. Los
-  comentarios automáticos de Gitleaks están desactivados.
+  scripts Bash y busca secretos en el código y el historial con Gitleaks. Las
+  acciones externas están fijadas a commits SHA completos y Dependabot las
+  actualiza semanalmente. Los comentarios automáticos de Gitleaks están
+  desactivados.
 - `Dependency review` revisa los cambios de dependencias de cada pull request
-  contra las alertas de GitHub y bloquea la incorporación de vulnerabilidades
-  altas o críticas. Dependabot propone semanalmente actualizaciones de crates y
-  GitHub Actions; cada PR sigue pasando por las pruebas anteriores.
+  y falla el check si introducen vulnerabilidades moderadas, altas o críticas.
+  Para que un check fallido impida fusionar, GitHub debe tenerlo marcado como
+  obligatorio en la protección de la rama `main`. Dependabot propone semanalmente
+  actualizaciones de crates y GitHub Actions; cada PR sigue pasando por las
+  pruebas anteriores.
+
+Cada cambio de `rust/Cargo.toml` o `rust/Cargo.lock` vuelve a pasar por build y
+pruebas Linux/Wine y Windows nativo, además de `cargo audit`, `cargo deny` y
+Dependency Review. La build busca ShellCheck y actionlint para analizar scripts
+y workflows: los ejecuta si están disponibles y registra cada omisión como
+`[REVIEW][SKIP]`, nunca como una comprobación superada. `--security-review`
+(Linux) o `-SecurityReview` (Windows) los exige; `--strict-security` /
+`-StrictSecurity` también los exige junto con `cargo audit` y `cargo deny`.
+La CI Linux instala los analizadores y los ejecuta obligatoriamente dentro del
+mismo pipeline de build. Si hay red, refresca los avisos de seguridad antes del
+análisis. Para una ejecución offline, Linux usa la base local y falla si no
+existe. Sin modo estricto, las herramientas ausentes se indican claramente en
+el log y no se presentan como comprobaciones superadas.
+Las fases de comprobación, test y compilación usan `--locked`: se evalúa
+exactamente el `Cargo.lock` propuesto por Dependabot, sin resolver ni reescribir
+dependencias silenciosamente.
+No se editan ni fusionan automáticamente las dependencias: GitHub marca los
+checks del PR como correctos o fallidos y una persona decide si acepta el cambio.
+Para arreglos mecánicos locales, `scripts/build.sh --auto-fix` o
+`scripts/build.ps1 -AutoFix` permite que rustfmt y las sugerencias automáticas de
+Clippy corrijan código Rust. El builder etiqueta cada cambio como `[AUTO-FIX]`,
+repite formato y Clippy con avisos tratados como errores, y solo después continúa
+con tests y empaquetado. Esta opción activa las validaciones aunque se desactiven
+normalmente; no modifica dependencias ni intenta ocultar avisos de seguridad.
+Sin la opción, el build informa el fallo y cómo habilitar la reparación.
+ShellCheck y actionlint son analizadores, no autocorrectores: informan de los
+archivos afectados y hacen fallar la build si encuentran errores, pero no
+reescriben scripts/workflows. Los cambios manuales vuelven a pasar por el mismo
+análisis. La build no intenta corregir vulnerabilidades de forma especulativa.
+
+Las alertas CodeQL las gestiona el análisis predeterminado ya activo en GitHub:
+tras cada push o actualización de PR, vuelve a escanear el código y GitHub
+marca como corregidas las alertas que ya no se reproducen. El CI no cierra ni
+silencia alertas por su cuenta. Una build local no puede cambiar el estado
+remoto de CodeQL: su log marca las autocorrecciones mecánicas como `[AUTO-FIX]`,
+y GitHub marca la alerta como corregida solo después de recibir y procesar el
+nuevo commit. Las alertas persistentes siguen abiertas para revisión humana.
 
 CodeQL ya aparece como analizador activo en las alertas del repositorio. Por eso
 no añado otro workflow CodeQL en paralelo: GitHub desactiva el workflow avanzado
@@ -1711,11 +1755,18 @@ Para ejecutar la batería completa:
 bash scripts/build.sh --non-interactive
 ```
 
+Las pruebas del actualizador verifican localmente firmas, hashes, límites y
+publicación sin sobrescritura mediante transporte simulado; además prueban el
+cliente HTTP real con loopback. Un sandbox que impida abrir sockets puede omitir
+solo esa última prueba, pero CI define `LTOOLS_REQUIRE_LOOPBACK_TESTS=1` y falla
+si el transporte HTTP real no se puede ejercitar.
+
 Pruebas individuales:
 
 ```bash
 cargo test --manifest-path rust/Cargo.toml --all-targets
 cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings
+cargo fmt --manifest-path rust/Cargo.toml -- --check
 ./tests/contracts.sh
 ./tests/linux/smoke.sh --binary rust/target/release/ltools
 ./tests/linux/e2e.sh --binary rust/target/release/ltools
@@ -1756,6 +1807,12 @@ En Windows nativo:
 ```powershell
 .\scripts\build.ps1 -Force
 ```
+
+El builder Windows valida `rustfmt` y ejecuta Clippy contra todos los targets
+Windows cuando detecta cambios Rust/de dependencias (o con `-Force`); el builder
+Linux también incluye los targets de pruebas en Clippy. Así, una corrección de
+código reabre el análisis afectado, y el log distingue el resultado del análisis
+incremental del resto de pruebas.
 
 El ejecutable Windows es nativo y no comparte los detectores Linux: `games`
 inspecciona Steam, Epic Games, Ubisoft Connect, EA app, itch.io, Battle.net,
