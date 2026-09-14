@@ -1,0 +1,38 @@
+# Mantener el mismo contenido de texto en Linux, Windows, WSL y Wine.
+* text=auto eol=lf
+
+# Los recursos gráficos vectoriales siguen siendo texto.
+*.svg text eol=lf
+
+# PowerShell 5.1 necesita conservar el BOM UTF-8 que comprueba tests/encoding.sh.
+*.ps1 text eol=lf
+*.ps1.in text eol=lf
+*.sh text eol=lf
+*.bat text eol=lf
+*.cmd text eol=lf
+
+# Evitar normalizar recursos y artefactos binarios.
+*.ico binary
+*.icns binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.zip binary
+*.gz binary
+*.xz binary
+*.zst binary
+*.7z binary
+*.pdf binary
+*.dll binary
+*.exe binary
+*.msi binary
+*.AppImage binary
+*.so binary
+*.dylib binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.wasm binary
