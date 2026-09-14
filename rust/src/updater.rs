@@ -793,31 +793,80 @@ fn write_private(path: &Path, contents: &[u8]) -> Result<(), String> {
 
 fn downloads_directory() -> Result<PathBuf, String> {
     #[cfg(windows)]
-    let home = nonempty_path_environment("USERPROFILE");
-    #[cfg(not(windows))]
-    let home = nonempty_path_environment("HOME");
-    let home = home
-        .ok_or_else(|| "no se pudo determinar la carpeta de usuario para Downloads".to_owned())?;
-    #[cfg(not(windows))]
-    if let Some(path) = std::env::var_os("XDG_DOWNLOAD_DIR").map(PathBuf::from) {
-        if path.is_absolute() {
-            return Ok(path);
-        }
+    {
+        let home = nonempty_path_environment("USERPROFILE").ok_or_else(|| {
+            "no se pudo determinar la carpeta de usuario para Downloads".to_owned()
+        })?;
+        Ok(select_windows_download_directory(
+            &home,
+            windows_download_directory(),
+        ))
     }
     #[cfg(not(windows))]
-    if let Some(config_home) = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
+    {
+        let home = nonempty_path_environment("HOME").ok_or_else(|| {
+            "no se pudo determinar la carpeta de usuario para Downloads".to_owned()
+        })?;
+        if let Some(path) = std::env::var_os("XDG_DOWNLOAD_DIR").map(PathBuf::from) {
+            if path.is_absolute() {
+                return Ok(path);
+            }
+        }
+        if let Some(config_home) = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+        {
+            if let Some(path) = read_xdg_download_dir(&config_home.join("user-dirs.dirs"), &home) {
+                return Ok(path);
+            }
+        } else if let Some(path) =
+            read_xdg_download_dir(&home.join(".config").join("user-dirs.dirs"), &home)
+        {
+            return Ok(path);
+        }
+        Ok(home.join("Downloads"))
+    }
+}
+
+#[cfg(windows)]
+fn windows_download_directory() -> Option<PathBuf> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    use std::ptr;
+    use windows_sys::Win32::System::Com::CoTaskMemFree;
+    use windows_sys::Win32::UI::Shell::{
+        FOLDERID_Downloads, SHGetKnownFolderPath, KF_FLAG_DONT_VERIFY,
+    };
+
+    let mut raw_path = ptr::null_mut();
+    let status = unsafe {
+        SHGetKnownFolderPath(
+            &FOLDERID_Downloads,
+            KF_FLAG_DONT_VERIFY as u32,
+            ptr::null_mut(),
+            &mut raw_path,
+        )
+    };
+    if status != 0 || raw_path.is_null() {
+        unsafe { CoTaskMemFree(raw_path.cast()) };
+        return None;
+    }
+
+    let length = (0..)
+        .take_while(|index| unsafe { *raw_path.add(*index) != 0 })
+        .count();
+    let path = PathBuf::from(OsString::from_wide(unsafe {
+        std::slice::from_raw_parts(raw_path, length)
+    }));
+    unsafe { CoTaskMemFree(raw_path.cast()) };
+    path.is_absolute().then_some(path)
+}
+
+#[cfg(any(windows, test))]
+fn select_windows_download_directory(home: &Path, known_folder: Option<PathBuf>) -> PathBuf {
+    known_folder
         .filter(|path| path.is_absolute())
-    {
-        if let Some(path) = read_xdg_download_dir(&config_home.join("user-dirs.dirs"), &home) {
-            return Ok(path);
-        }
-    } else if let Some(path) =
-        read_xdg_download_dir(&home.join(".config").join("user-dirs.dirs"), &home)
-    {
-        return Ok(path);
-    }
-    Ok(home.join("Downloads"))
+        .unwrap_or_else(|| home.join("Downloads"))
 }
 
 #[cfg(not(windows))]
@@ -1194,6 +1243,31 @@ mod tests {
             parse_xdg_download_dir("XDG_DOWNLOAD_DIR=relative\n", home),
             None
         );
+    }
+
+    #[test]
+    fn windows_download_directory_prefers_the_registered_known_folder() {
+        #[cfg(windows)]
+        let (home, configured, fallback) = (
+            Path::new(r"C:\Users\test-user"),
+            PathBuf::from(r"D:\User Data\Descargas"),
+            PathBuf::from(r"C:\Users\test-user\Downloads"),
+        );
+        #[cfg(not(windows))]
+        let (home, configured, fallback) = (
+            Path::new("/home/test-user"),
+            PathBuf::from("/mnt/Descargas"),
+            PathBuf::from("/home/test-user/Downloads"),
+        );
+        assert_eq!(
+            select_windows_download_directory(home, Some(configured.clone())),
+            configured
+        );
+        assert_eq!(
+            select_windows_download_directory(home, Some(PathBuf::from("relative"))),
+            fallback
+        );
+        assert_eq!(select_windows_download_directory(home, None), fallback);
     }
 
     #[test]

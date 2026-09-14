@@ -1494,53 +1494,82 @@ a comandos conocidos de LTools y conserva sus argumentos por separado. Usa
 `ltools guide aliases` para el flujo, las rutas y la compatibilidad por sistema.
 "#
         .to_owned(),
-        "network" => r#"GUÍA GRÁFICA: RED
+        "network" => format!(
+            r#"GUÍA GRÁFICA: {network_title}
 
-Menú completo «Red, rutas, DNS y puertos escuchando»:
-  1. «Estado general de red»: resumen de conectividad e interfaz activa.
-  2. «Interfaces y direcciones»: interfaces, estados y direcciones.
-  3. «Tabla de rutas»: rutas y puerta de enlace.
-  4. «DNS y resolutores»: resolutores configurados y respuesta disponible.
-  5. «Puertos escuchando»: servicios que escuchan y sus procesos.
-  6. «Conexiones NetworkManager»: perfiles detectados y su estado.
-  7. «Vaciar caché DNS»: acción protegida para renovar la resolución.
-  8. «Activar / desactivar interfaz»: campos «Interfaz de red» y «Estado:
-     up o down».
-  9. «Conectar NetworkManager»: campo «Nombre exacto de la conexión
-     NetworkManager».
- 10. «Desconectar NetworkManager»: el mismo campo; puede cortar la conexión.
- 11. «Guía de red»: vuelve a esta guía.
- 12. «Volver»: regresa al menú anterior.
+Menú completo «{network_title}»:
+  1. «{network_status}»: resumen de conectividad e interfaz activa.
+  2. «{network_interfaces}»: interfaces, estados y direcciones.
+  3. «{network_routes}»: rutas y puerta de enlace.
+  4. «{network_dns}»: resolutores configurados y respuesta disponible.
+  5. «{network_listening}»: servicios que escuchan y sus procesos.
+  6. «{network_connections}»: perfiles detectados y su estado.
+  7. «{network_flush_dns}»: acción protegida para renovar la resolución.
+  8. «{network_interface_manage}»: campos «{interface_prompt}» y «{state_prompt}».
+  9. «{network_connect}»: campo «{connection_prompt}».
+ 10. «{network_disconnect}»: el mismo campo; puede cortar la conexión.
+ 11. «{network_guide}»: vuelve a esta guía.
+ 12. «{back}»: regresa al menú anterior.
 
 Proceso simple: ejecuta 1–6 y compara interfaz, ruta predeterminada, DNS,
 puertos y perfil antes de modificar nada.
 
 Proceso complejo: usa 8, 9 o 10, rellena el objetivo exacto, revisa la
 confirmación y repite 1–3. No desconectes la interfaz de una sesión remota.
-"#
-        .to_owned(),
-        "boot" => r#"GUÍA GRÁFICA: ARRANQUE, EFI Y GRUB
+"#,
+            network_title = crate::i18n::system_page_text("network_title"),
+            network_status = crate::i18n::system_page_text("network_status"),
+            network_interfaces = crate::i18n::system_page_text("network_interfaces"),
+            network_routes = crate::i18n::system_page_text("network_routes"),
+            network_dns = crate::i18n::system_page_text("network_dns"),
+            network_listening = crate::i18n::system_page_text("network_listening"),
+            network_connections = crate::i18n::system_page_text("network_connections"),
+            network_flush_dns = crate::i18n::system_page_text("network_flush_dns"),
+            network_interface_manage = crate::i18n::system_page_text("network_interface_manage"),
+            network_connect = crate::i18n::system_page_text("network_connect"),
+            network_disconnect = crate::i18n::system_page_text("network_disconnect"),
+            network_guide = crate::i18n::system_page_text("network_guide"),
+            interface_prompt = crate::i18n::gui_native_prompt("Interfaz de red (ej. eth0)"),
+            state_prompt = crate::i18n::gui_native_prompt("Estado: up o down"),
+            connection_prompt =
+                crate::i18n::gui_native_prompt("Nombre exacto de la conexión NetworkManager"),
+            back = crate::i18n::text("menu.back"),
+        ),
+        "boot" => format!(
+            r#"GUÍA GRÁFICA: {boot_title}
 
-Menú completo «Arranque, EFI y cargador del sistema»:
-  1. «Estado general del arranque»: resumen de cargador y modo de arranque.
-  2. «Entradas EFI / NVRAM»: entradas UEFI disponibles y orden.
-  3. «Entradas GRUB»: entradas reconocidas por GRUB.
-  4. «Estado de systemd-boot»: loader y entradas systemd-boot.
-  5. «Estado de Secure Boot»: estado de Secure Boot si el equipo lo expone.
-  6. «Generar plan seguro»: prepara un plan de lectura/revisión.
-  7. «Programar siguiente entrada GRUB»: campo «Título exacto de la entrada
-     GRUB (ej. Ubuntu)»; afecta solo al siguiente arranque.
-  8. «Cancelar siguiente entrada GRUB»: elimina la selección programada.
-  9. «Guía de arranque, EFI y GRUB»: vuelve a esta guía.
- 10. «Volver»: regresa al menú anterior.
+Menú completo «{boot_title}»:
+  1. «{boot_status}»: resumen de cargador y modo de arranque.
+  2. «{efi_entries}»: entradas UEFI disponibles y orden.
+  3. «{grub_entries}»: entradas reconocidas por GRUB.
+  4. «{systemd_boot}»: loader y entradas systemd-boot.
+  5. «{secure_boot}»: estado de Secure Boot si el equipo lo expone.
+  6. «{boot_plan}»: prepara un plan de lectura/revisión.
+  7. «{grub_schedule}»: campo «{entry_prompt}»; afecta solo al siguiente arranque.
+  8. «{grub_cancel}»: elimina la selección programada.
+  9. «{boot_guide}»: vuelve a esta guía.
+ 10. «{back}»: regresa al menú anterior.
 
 Proceso simple: pulsa 1–6 y anota el título exacto de la entrada antes de
 usar cualquier acción de cambio.
 
 Proceso complejo: pulsa 7, escribe el título exacto, revisa la confirmación y
 verifica con 1–3. Para deshacerlo usa 8 y vuelve a consultar el estado.
-"#
-        .to_owned(),
+"#,
+            boot_title = crate::i18n::system_page_text("boot_title"),
+            boot_status = crate::i18n::system_page_text("boot_status"),
+            efi_entries = crate::i18n::system_page_text("efi_entries"),
+            grub_entries = crate::i18n::system_page_text("grub_entries"),
+            systemd_boot = crate::i18n::system_page_text("systemd_boot"),
+            secure_boot = crate::i18n::system_page_text("secure_boot"),
+            boot_plan = crate::i18n::system_page_text("boot_plan"),
+            grub_schedule = crate::i18n::system_page_text("grub_schedule"),
+            grub_cancel = crate::i18n::system_page_text("grub_cancel"),
+            boot_guide = crate::i18n::system_page_text("boot_guide"),
+            entry_prompt =
+                crate::i18n::gui_native_prompt("Título exacto de la entrada GRUB (ej. Ubuntu)"),
+            back = crate::i18n::text("menu.back"),
+        ),
         "privileges" => r#"GUÍA GRÁFICA: ELEVACIÓN Y PERMISOS
 
 Menú completo «Ajustes»:
@@ -1573,29 +1602,44 @@ rechazar la contraseña deja el sistema sin cambios; `--no-elevate` permite
 desactivar la elevación opcional en una ejecución concreta.
 "#
         .to_owned(),
-        "services" => r#"GUÍA GRÁFICA: SERVICIOS
+        "services" => format!(
+            r#"GUÍA GRÁFICA: {services_title}
 
-Menú completo «Servicios del sistema»:
-  1. «Automáticos y estáticos (system)»: unidades del sistema configuradas
-     para iniciar automáticamente o estáticas.
-  2. «Manuales / desactivados (system)»: unidades del sistema no automáticas.
-  3. «Servicios del usuario»: unidades del ámbito de usuario.
-  4. «Todos: sistema y usuario»: inventario combinado.
-  5. «Servicios fallidos y journal»: fallos y eventos relacionados.
-  6. «Gestionar servicio»: campos «Ámbito: system o user», «Unidad (ej.
-     sshd.service)» y «Acción: status, start, stop, restart, enable, disable,
-     mask o unmask».
-  7. «Exportar informe completo»: guarda la vista combinada en TSV.
-  8. «Guía de servicios»: vuelve a esta guía.
-  9. «Volver»: regresa al menú anterior.
+Menú completo «{services_title}»:
+  1. «{services_automatic}»: unidades del sistema configuradas para iniciar
+     automáticamente o estáticas.
+  2. «{services_manual}»: unidades del sistema no automáticas.
+  3. «{services_user}»: unidades del ámbito de usuario.
+  4. «{services_both}»: inventario combinado.
+  5. «{services_failed}»: fallos y eventos relacionados.
+  6. «{services_manage}»: campos «{scope_prompt}», «{unit_prompt}» y
+     «{action_prompt}».
+  7. «{services_export}»: guarda la vista combinada en TSV.
+  8. «{services_guide}»: vuelve a esta guía.
+  9. «{back}»: regresa al menú anterior.
 
 Proceso simple: revisa 1–5 y compara estado, unidad, ámbito, origen,
 dependencias y eventos.
 
 Proceso complejo: en 6 elige ámbito, unidad y acción exactos; revisa la
 confirmación, ejecuta y vuelve a consultar 1–5. Usa 7 para conservar evidencia.
-"#
-        .to_owned(),
+"#,
+            services_title = crate::i18n::system_page_text("services_title"),
+            services_automatic = crate::i18n::system_page_text("services_automatic"),
+            services_manual = crate::i18n::system_page_text("services_manual"),
+            services_user = crate::i18n::system_page_text("services_user"),
+            services_both = crate::i18n::system_page_text("services_both"),
+            services_failed = crate::i18n::system_page_text("services_failed"),
+            services_manage = crate::i18n::system_page_text("services_manage"),
+            services_export = crate::i18n::system_page_text("services_export"),
+            services_guide = crate::i18n::system_page_text("services_guide"),
+            scope_prompt = crate::i18n::gui_native_prompt("Ámbito: system o user"),
+            unit_prompt = crate::i18n::gui_native_prompt("Unidad (ej. sshd.service)"),
+            action_prompt = crate::i18n::gui_native_prompt(
+                "Acción: status, start, stop, restart, enable, disable, mask o unmask"
+            ),
+            back = crate::i18n::text("menu.back"),
+        ),
         "git" | "gh" => r#"GUÍA GRÁFICA: GIT Y GITHUB
 
 Campos compartidos del menú: repositorio/ruta, URL, destino de clonación,
@@ -2156,6 +2200,8 @@ mod tests {
 
     #[test]
     fn updater_guides_cover_integrity_and_manual_platform_specific_installation() {
+        let _language_guard = crate::i18n::language_test_guard();
+        crate::i18n::set("es");
         let guide = common_guide("updates").unwrap();
         assert!(guide.contains("Ed25519") && guide.contains("SHA256SUMS.txt"));
         assert!(guide.contains("no sobrescribe") && guide.contains("no instala automáticamente"));
@@ -2378,6 +2424,99 @@ mod tests {
                 assert!(guide.contains(option), "falta {option} en {topic}");
             }
         }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn network_boot_and_services_guides_match_each_localized_menu() {
+        let _language_guard = crate::i18n::language_test_guard();
+        let page_keys = [
+            ("network", "network_title"),
+            ("network", "network_status"),
+            ("network", "network_interfaces"),
+            ("network", "network_routes"),
+            ("network", "network_dns"),
+            ("network", "network_listening"),
+            ("network", "network_connections"),
+            ("network", "network_flush_dns"),
+            ("network", "network_interface_manage"),
+            ("network", "network_connect"),
+            ("network", "network_disconnect"),
+            ("network", "network_guide"),
+            ("boot", "boot_title"),
+            ("boot", "boot_status"),
+            ("boot", "efi_entries"),
+            ("boot", "grub_entries"),
+            ("boot", "systemd_boot"),
+            ("boot", "secure_boot"),
+            ("boot", "boot_plan"),
+            ("boot", "grub_schedule"),
+            ("boot", "grub_cancel"),
+            ("boot", "boot_guide"),
+            ("services", "services_title"),
+            ("services", "services_automatic"),
+            ("services", "services_manual"),
+            ("services", "services_user"),
+            ("services", "services_both"),
+            ("services", "services_failed"),
+            ("services", "services_manage"),
+            ("services", "services_export"),
+            ("services", "services_guide"),
+        ];
+        let prompts = [
+            "Interfaz de red (ej. eth0)",
+            "Estado: up o down",
+            "Nombre exacto de la conexión NetworkManager",
+            "Título exacto de la entrada GRUB (ej. Ubuntu)",
+            "Ámbito: system o user",
+            "Unidad (ej. sshd.service)",
+            "Acción: status, start, stop, restart, enable, disable, mask o unmask",
+        ];
+
+        for language in crate::i18n::SUPPORTED {
+            crate::i18n::set(language);
+            for topic in ["network", "boot", "services"] {
+                let guide = gui_guide(topic);
+                assert!(
+                    guide.contains(crate::i18n::text("menu.back")),
+                    "{language}: {topic} omits the localized Back action"
+                );
+                for (page, key) in page_keys.iter().filter(|(page, _)| *page == topic) {
+                    let label = crate::i18n::system_page_text(key);
+                    assert!(
+                        guide.contains(label),
+                        "{language}: {topic} guide omits menu label {key} ({label})"
+                    );
+                    if key.ends_with("_title") {
+                        assert!(
+                            guide.starts_with(&format!("GUÍA GRÁFICA: {label}")),
+                            "{language}: {page} guide title diverges from its menu"
+                        );
+                    }
+                }
+                for prompt in prompts.iter().filter(|prompt| match topic {
+                    "network" => {
+                        prompt.starts_with("Interfaz")
+                            || prompt.starts_with("Estado:")
+                            || prompt.starts_with("Nombre exacto")
+                    }
+                    "boot" => prompt.starts_with("Título exacto"),
+                    "services" => {
+                        prompt.starts_with("Ámbito:")
+                            || prompt.starts_with("Unidad")
+                            || prompt.starts_with("Acción:")
+                    }
+                    _ => false,
+                }) {
+                    let label = crate::i18n::gui_native_prompt(prompt);
+                    assert!(
+                        guide.contains(label),
+                        "{language}: {topic} guide omits GUI field prompt {prompt} ({label})"
+                    );
+                }
+            }
+        }
+        crate::i18n::set("es");
     }
 
     #[cfg(not(windows))]

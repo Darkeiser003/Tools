@@ -7,11 +7,15 @@ on:
     - cron: '41 4 * * 1'
   workflow_dispatch:
 
+concurrency:
+  group: workflow-security-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions: {}
 
 jobs:
   review:
-    name: Lint Actions, audit workflows and scan secrets
+    name: Lint Actions and scan secrets
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -44,15 +48,29 @@ jobs:
       - name: Validate workflow syntax and expressions
         run: actionlint -color
 
-      - name: Review workflow security patterns
-        uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
-        with:
-          advanced-security: false
-          annotations: true
-
       - name: Scan current changes and repository history for secrets
         uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_ENABLE_COMMENTS: 'false'
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: 'false'
+
+  zizmor:
+    name: Audit GitHub Actions with zizmor
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write # Allows zizmor to upload SARIF when Advanced Security is enabled.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Analyze workflows and GitHub automation
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          inputs: ./.github/
+          version: 1.28.0
+          advanced-security: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}

@@ -39,6 +39,36 @@ LICENSE_TEST_DIR=""
 die() { printf 'WINDOWS-WINE ERROR: %s\n' "$1" >&2; exit 1; }
 ok() { printf '  OK    %s\n' "$1"; }
 warn() { printf '  AVISO %s\n' "$1"; }
+
+identify_image() {
+    if command -v identify >/dev/null 2>&1; then
+        LC_ALL=C identify "$@"
+    else
+        LC_ALL=C magick identify "$@"
+    fi
+}
+
+validate_gui_capture() {
+    local capture="$1" description="$2" dimensions width height colors entropy
+    [[ -s "$capture" ]] || die "$description no produjo una captura"
+    if ! command -v identify >/dev/null 2>&1 && ! command -v magick >/dev/null 2>&1; then
+        (( REQUIRE_GUI == 0 )) || die '--require-gui necesita ImageMagick identify para verificar visualmente las capturas'
+        return 0
+    fi
+    dimensions="$(identify_image -format '%w %h' "$capture" 2>/dev/null || true)"
+    read -r width height <<<"$dimensions"
+    [[ "${width:-0}" -ge 800 && "${height:-0}" -ge 600 ]] ||
+        die "captura de $description incompleta: ${dimensions:-sin dimensiones}"
+    colors="$(identify_image -format '%k' "$capture" 2>/dev/null || echo 0)"
+    [[ "$colors" -ge 4 ]] || die "captura de $description sin contenido visual suficiente ($colors colores)"
+    # Un marco antialiasado puede dar miles de colores incluso si el panel
+    # interior está vacío; la entropía detecta que realmente se pintaron
+    # etiquetas y controles. Las páginas válidas Wine superan 0.45.
+    entropy="$(identify_image -format '%[entropy]' "$capture" 2>/dev/null || true)"
+    awk -v value="$entropy" 'BEGIN { exit !(value >= 0.10) }' ||
+        die "captura de $description casi vacía (entropía visual ${entropy:-no disponible}); se esperaba texto y controles renderizados"
+}
+
 usage() {
     cat <<'EOF'
 Uso: tests/linux/windows-wine.sh [opciones]
@@ -792,6 +822,9 @@ else
         gui_marker_name="ltools-gui-smoke-$$.marker"
         gui_marker="$PREFIX/drive_c/windows/temp/$gui_marker_name"
         gui_marker_windows="C:\\windows\\temp\\$gui_marker_name"
+        gui_ready_marker_name="ltools-gui-ready-$$.marker"
+        gui_ready_marker="$PREFIX/drive_c/windows/temp/$gui_ready_marker_name"
+        gui_ready_marker_windows="C:\\windows\\temp\\$gui_ready_marker_name"
         gui_capture_dir="${LTOOLS_GUI_CAPTURE_DIR:-$ROOT_DIR/dist/captures}"
         menu_capture_dir="$gui_capture_dir/windows-menu-pages"
         dashboard_gui_capture="$gui_capture_dir/windows-menu-dashboard.png"
@@ -805,7 +838,7 @@ else
         gui_pages+=(6)
         mkdir -p -- "$menu_capture_dir"
         mkdir -p -- "$(dirname -- "$gui_marker")"
-        rm -f -- "$gui_marker" "$dashboard_gui_capture" "$native_gui_capture" "$settings_gui_capture" "$accounts_gui_capture"
+        rm -f -- "$gui_marker" "$gui_ready_marker" "$dashboard_gui_capture" "$native_gui_capture" "$settings_gui_capture" "$accounts_gui_capture"
         for page in "${gui_pages[@]}"; do
             rm -f -- "$menu_capture_dir/windows-menu-page-$page.png"
         done
@@ -815,113 +848,10 @@ else
             LTOOLS_GUI_REQUIRED=1 LTOOLS_DISABLE_GUI=0 LTOOLS_TERMINAL=auto \
             LTOOLS_LANG=es \
             LTOOLS_GUI_SMOKE_NAV_MARKER="$gui_marker_windows" \
-            LTOOLS_GUI_SMOKE_HOLD_MS=45000 bash -c '
-                set -Eeuo pipefail
-                runner="$1"
-                mode="$2"
-                executable="$3"
-                dashboard_capture="$4"
-                capture_dir="$5"
-                native_capture="$6"
-                settings_capture="$7"
-                accounts_capture="$capture_dir/windows-accounts-wine.png"
-                marker="$8"
-                IFS=, read -r -a gui_pages <<<"$9"
-                if [[ "$mode" == proton ]]; then
-                    "$runner" run "$executable" &
-                else
-                    "$runner" "$executable" &
-                fi
-                gui_pid=$!
-                window_id=""
-                for _ in {1..60}; do
-                    # El título Win32 es «WinSlim-Tools <versión>»; buscar
-                    # «LTools» nunca encuentra esta ventana bajo Wine.
-                    window_id="$(xdotool search --onlyvisible --name "WinSlim-Tools" 2>/dev/null | head -n1 || true)"
-                    [[ -n "$window_id" ]] && break
-                    sleep 0.1
-                done
-                [[ -n "$window_id" ]] || { echo "No apareció la ventana Win32 de LTools" >&2; exit 1; }
-                xdotool windowraise "$window_id"
-                sleep 0.6
-                import -window root "$dashboard_capture"
-                for page in "${gui_pages[@]}"; do
-                    # La GUI coloca las categorías en una columna con 50 px
-                    # entre centros; cada botón se abre con un clic real.
-                    button_y=$((87 + page * 50))
-                    xdotool mousemove --sync --window "$window_id" 520 "$button_y" click 1
-                    opened=0
-                    case "$page" in
-                        0) expected_title="Auditar / Inventariar" ;;
-                        1) expected_title="Herramientas nativas" ;;
-                        2) expected_title="Dependencias" ;;
-                        3) expected_title="Rutas predeterminadas" ;;
-                        4) expected_title="Herramientas instalables" ;;
-                        5) expected_title="Automatización" ;;
-                        6) expected_title="Ajustes de LTools" ;;
-                        7) expected_title="WinSlim" ;;
-                        8) expected_title="Usuarios, grupos y sesiones" ;;
-                        *) echo "Página Win32 desconocida: $page" >&2; exit 1 ;;
-                    esac
-                    for _ in {1..50}; do
-                        if [[ -s "$marker" ]] &&
-                            grep -Fq "navigation-page=$page" "$marker" &&
-                            grep -Fqx "navigation-title=$expected_title" "$marker"; then
-                            opened=1
-                            break
-                        fi
-                        sleep 0.1
-                    done
-                    [[ "$opened" -eq 1 ]] || { echo "No abrió la categoría Win32 $page" >&2; exit 1; }
-                    printf "GUI_PAGE_OK=%s\n" "$page"
-                    capture="$capture_dir/windows-menu-pages/windows-menu-page-$page.png"
-                    [[ "$page" -ne 1 ]] || capture="$native_capture"
-                    [[ "$page" -ne 6 ]] || capture="$settings_capture"
-                    # Capturar la superficie realmente visible: ImageMagick
-                    # devuelve negro al leer directamente el HWND de Wine.
-                    sleep 0.6
-                    import -window root "$capture"
-                    if [[ "$page" -ne 6 ]]; then
-                        # El botón Volver está centrado junto al borde inferior.
-                        xdotool mousemove --sync --window "$window_id" 520 643 click 1
-                        sleep 0.2
-                    fi
-                done
-                # Cuentas es un submenú real abierto desde «Herramientas nativas».
-                # Recorre la ruta visible completa y comprueba también su título.
-                xdotool mousemove --sync --window "$window_id" 520 643 click 1
-                sleep 0.2
-                xdotool mousemove --sync --window "$window_id" 520 137 click 1
-                opened=0
-                for _ in {1..50}; do
-                    if [[ -s "$marker" ]] &&
-                        grep -Fq "navigation-page=1" "$marker" &&
-                        grep -Fqx "navigation-title=Herramientas nativas" "$marker"; then
-                        opened=1
-                        break
-                    fi
-                    sleep 0.1
-                done
-                [[ "$opened" -eq 1 ]] || { echo "No abrió Herramientas nativas para llegar al submenú de cuentas" >&2; exit 1; }
-                xdotool mousemove --sync --window "$window_id" 270 269 click 1
-                opened=0
-                for _ in {1..50}; do
-                    if [[ -s "$marker" ]] &&
-                        grep -Fq "navigation-page=8" "$marker" &&
-                        grep -Fqx "navigation-title=Usuarios, grupos y sesiones" "$marker"; then
-                        opened=1
-                        break
-                    fi
-                    sleep 0.1
-                done
-                [[ "$opened" -eq 1 ]] || { echo "No abrió con clic el submenú Usuarios, grupos y sesiones" >&2; exit 1; }
-                sleep 0.6
-                import -window root "$accounts_capture"
-                printf "GUI_PAGE_OK=8\n"
-                xdotool windowclose "$window_id"
-                wait "$gui_pid"
-            ' _ "$RUNNER" "$RUNNER_MODE" "$WINEXE" "$dashboard_gui_capture" "$gui_capture_dir" \
-            "$native_gui_capture" "$settings_gui_capture" "$gui_marker" \
+            LTOOLS_GUI_SMOKE_READY_MARKER="$gui_ready_marker_windows" \
+            LTOOLS_GUI_SMOKE_HOLD_MS=45000 bash "$ROOT_DIR/tests/linux/windows-wine-gui.sh" \
+            "$RUNNER" "$RUNNER_MODE" "$WINEXE" "$dashboard_gui_capture" "$gui_capture_dir" \
+            "$native_gui_capture" "$settings_gui_capture" "$gui_marker" "$gui_ready_marker" \
             "$(IFS=,; printf '%s' "${gui_pages[*]}")" \
             >"$gui_output" 2>&1
         gui_status=$?
@@ -930,19 +860,10 @@ else
             printf 'Salida de la GUI Windows bajo Wine (código %s):\n' "$gui_status" >&2
             sed -n '1,160p' "$gui_output" >&2 || true
             [[ -f "$gui_marker" ]] && cat "$gui_marker" >&2 || true
+            [[ -f "$gui_ready_marker" ]] && cat "$gui_ready_marker" >&2 || true
             die 'la GUI Windows bajo Wine no abrió todas las categorías con clics reales'
         fi
-        for capture in "$dashboard_gui_capture"; do
-            [[ -s "$capture" ]] || die 'el panel principal Windows no produjo captura'
-            if command -v identify >/dev/null 2>&1; then
-                capture_dimensions="$(identify -format '%w %h' "$capture" 2>/dev/null || true)"
-                read -r capture_width capture_height <<<"$capture_dimensions"
-                [[ "${capture_width:-0}" -ge 800 && "${capture_height:-0}" -ge 600 ]] ||
-                    die "captura del panel principal Windows incompleta: ${capture_dimensions:-sin dimensiones}"
-                capture_colors="$(identify -format '%k' "$capture" 2>/dev/null || echo 0)"
-                [[ "$capture_colors" -ge 4 ]] || die 'captura del panel principal Windows sin contenido visual suficiente'
-            fi
-        done
+        validate_gui_capture "$dashboard_gui_capture" 'panel principal Windows'
         for page in "${gui_pages[@]}"; do
             if [[ "$page" -eq 1 ]]; then
                 page_capture="$native_gui_capture"
@@ -951,17 +872,7 @@ else
             else
                 page_capture="$menu_capture_dir/windows-menu-page-$page.png"
             fi
-            [[ -s "$page_capture" ]] || die "la categoría GUI Windows $page no produjo captura"
-            if command -v identify >/dev/null 2>&1; then
-                page_dimensions="$(identify -format '%w %h' "$page_capture" 2>/dev/null || true)"
-                read -r page_width page_height <<<"$page_dimensions"
-                [[ "${page_width:-0}" -ge 800 && "${page_height:-0}" -ge 600 ]] ||
-                    die "captura de GUI Windows $page incompleta: ${page_dimensions:-sin dimensiones}"
-                page_colors="$(identify -format '%k' "$page_capture" 2>/dev/null || echo 0)"
-                # El Win32 owner-drawn usa una paleta plana; cuatro colores
-                # distinguen texto, controles, borde y fondo.
-                [[ "$page_colors" -ge 4 ]] || die "captura de GUI Windows $page sin contenido visual suficiente"
-            fi
+            validate_gui_capture "$page_capture" "categoría GUI Windows $page"
         done
         [[ -s "$accounts_gui_capture" ]] || die 'el submenú GUI de cuentas no produjo captura'
         if command -v identify >/dev/null 2>&1; then
@@ -976,11 +887,13 @@ else
             grep -Fq "GUI_PAGE_OK=$page" "$gui_output" ||
                 die "el E2E no confirmó la categoría GUI Windows $page"
         done
+        validate_gui_capture "$accounts_gui_capture" 'submenú GUI de cuentas'
         grep -Fq 'GUI_PAGE_OK=8' "$gui_output" || die 'el E2E no confirmó el submenú GUI de cuentas'
         cat "$gui_output" | tee -a "$LOG_PATH"
         rm -f -- "$gui_marker"
+        rm -f -- "$gui_ready_marker"
         rm -f -- "$gui_output"
-        ok "GUI Windows bajo Wine captura el panel principal, abre con clic real las categorías ${gui_pages[*]} y el submenú de cuentas, y valida títulos/capturas"
+        ok "GUI Windows bajo Wine espera a que aparezcan los controles antes de mostrar la ventana, abre con clic real las categorías ${gui_pages[*]} y el submenú de cuentas, y valida títulos/capturas"
     else
         if [[ "$REQUIRE_GUI" -eq 1 ]]; then
             if command -v xvfb-run >/dev/null 2>&1 && command -v xdotool >/dev/null 2>&1 &&

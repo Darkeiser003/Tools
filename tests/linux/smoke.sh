@@ -413,8 +413,11 @@ if command -v xvfb-run >/dev/null 2>&1; then
             "$GUI_CAPTURE_DIR/linux-storage-menu.png"
             "$GUI_CAPTURE_DIR/linux-storage-menu-bottom.png"
             "$GUI_CAPTURE_DIR/linux-storage-partitions.png"
+            "$GUI_CAPTURE_DIR/linux-storage-partitions-bottom.png"
             "$GUI_CAPTURE_DIR/linux-storage-filesystems.png"
+            "$GUI_CAPTURE_DIR/linux-storage-filesystems-bottom.png"
             "$GUI_CAPTURE_DIR/linux-storage-volumes.png"
+            "$GUI_CAPTURE_DIR/linux-storage-volumes-bottom.png"
             "$GUI_CAPTURE_DIR/linux-network.png"
             "$GUI_CAPTURE_DIR/linux-network-bottom.png"
             "$GUI_CAPTURE_DIR/linux-boot-efi.png"
@@ -436,6 +439,15 @@ if command -v xvfb-run >/dev/null 2>&1; then
                     die "captura GUI recortada o con dimensiones insuficientes: $capture (${dimensions:-desconocidas})"
                 colors="$(identify -format '%k' "$capture" 2>/dev/null || echo 0)"
                 [[ "$colors" -ge 20 ]] || die "captura GUI sin contenido visual suficiente: $capture ($colors colores)"
+                if [[ "$capture" == "$GH_DIALOG_CAPTURE" ]]; then
+                    gh_field_colors="$(LC_ALL=C identify -crop '480x100+400+20' -format '%k' "$capture" 2>/dev/null || echo 0)"
+                    [[ "$gh_field_colors" -ge 20 ]] ||
+                        die "el diálogo gh parece vacío en la región de sus campos ($gh_field_colors colores)"
+                else
+                    entropy="$(LC_ALL=C identify -format '%[entropy]' "$capture" 2>/dev/null || true)"
+                    LC_ALL=C awk -v value="$entropy" 'BEGIN { exit !(value >= 0.06) }' ||
+                        die "captura GUI casi vacía aunque el borde tenga colores: $capture (entropía ${entropy:-no disponible})"
+                fi
             else
                 file_type="$(file -b --mime-type "$capture" 2>/dev/null || true)"
                 [[ "$file_type" == image/png ]] || die "captura GUI no es PNG: $capture ($file_type)"

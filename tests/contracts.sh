@@ -42,6 +42,8 @@ grep -Fxq '    "ISC",' "$ROOT_DIR/deny.toml" || fail 'cargo-deny no contempla IS
 grep -Fq 'tests/static-security.sh' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no ejecuta la revisión estática'
 grep -Fq -- '--security-review' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no ofrece revisión estática obligatoria'
 grep -Fq 'Invoke-StaticSecurityReview' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no revisa scripts/workflows cuando puede'
+grep -Fq "Get-Command 'zizmor'" "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows omite zizmor local cuando está disponible'
+grep -Fq "Invoke-NativeCommand 'zizmor' @('--offline'" "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows ejecuta zizmor con dependencia de red o no analiza .github'
 grep -Fq '[switch]$SecurityReview' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no permite exigir la revisión estática'
 grep -Fq 'actionlint@v1.7.12' "$ROOT_DIR/.github/workflows/ci.yml" || fail 'CI no instala actionlint para la revisión estricta'
 grep -Fq 'Compilar solo el backend GUI' "$ROOT_DIR/scripts/build.sh" || fail 'menú Linux sin build de backend aislada'
@@ -52,7 +54,7 @@ grep -Fq 'perfil rápido, conserva las pruebas' "$ROOT_DIR/scripts/build.ps1" ||
 grep -Fq 'El smoke también necesita ltools-cli.exe' "$ROOT_DIR/scripts/build.ps1" || fail 'menú Windows no verifica el perfil CLI previo al smoke'
 grep -Fxq '/dist/' "$ROOT_DIR/.gitignore" || fail 'Git no excluye la carpeta de salida predeterminada dist'
 grep -Fxq '/release/' "$ROOT_DIR/.gitignore" || fail 'Git no excluye la carpeta de releases locales predeterminada'
-for github_workflow in ci.yml workflow-security.yml dependency-review.yml; do
+for github_workflow in ci.yml workflow-security.yml dependency-review.yml scorecard.yml codeql.yml; do
     [[ -f "$ROOT_DIR/.github/workflows/$github_workflow" ]] ||
         fail "falta el workflow GitHub Actions $github_workflow"
 done
@@ -62,6 +64,8 @@ while IFS= read -r action_ref; do
         fail "acción GitHub sin SHA completo e inmutable: $action_ref"
     fi
 done < <(rg --no-filename '^[[:space:]]*uses:[[:space:]]+' "$ROOT_DIR/.github/workflows" -g '*.yml' -g '*.yaml' | sed -E 's/^[[:space:]]*uses:[[:space:]]+([^[:space:]]+).*/\1/')
+# Dependabot actualiza los SHA de estas acciones; validar el destino aquí y
+# el formato inmutable arriba evita bloquear sus PR por una versión antigua.
 grep -Fq 'branches: [main]' "$ROOT_DIR/.github/workflows/ci.yml" || fail 'CI no se ejecuta en main'
 grep -Fq '  pull_request:' "$ROOT_DIR/.github/workflows/ci.yml" || fail 'CI no revalida las dependencias en cada actualización de pull request'
 grep -Fq '  pull_request:' "$ROOT_DIR/.github/workflows/dependency-review.yml" || fail 'Dependency Review no analiza pull requests automáticamente'
@@ -69,7 +73,7 @@ grep -Fq -- '--windows-wine --no-appimage --allow-unsigned' "$ROOT_DIR/.github/w
 grep -Fq -- '-Force -AllowUnsigned -NonInteractive' "$ROOT_DIR/.github/workflows/ci.yml" || fail 'CI Windows no fuerza build y pruebas nativas completas'
 grep -Fq -- '--strict-security' "$ROOT_DIR/.github/workflows/ci.yml" || fail 'la build Linux de CI no exige ambas auditorías Rust'
 grep -Fq 'ripgrep' "$ROOT_DIR/.github/workflows/ci.yml" || fail 'CI no instala ripgrep, requerido por los contratos y scripts de prueba'
-grep -Fq 'taiki-e/install-action@6c6fd71fe4fb72c3697d269963d0e15df8adedad # v2.85.10' "$ROOT_DIR/.github/workflows/ci.yml" || fail 'la build estricta de CI no instala las herramientas Cargo verificadas'
+grep -Fq 'taiki-e/install-action@' "$ROOT_DIR/.github/workflows/ci.yml" || fail 'la build estricta de CI no instala las herramientas Cargo verificadas'
 grep -Fq 'tool: cargo-audit,cargo-deny' "$ROOT_DIR/.github/workflows/ci.yml" || fail 'la build estricta no prepara cargo-audit y cargo-deny'
 grep -Fq "LTOOLS_REQUIRE_LOOPBACK_TESTS: '1'" "$ROOT_DIR/.github/workflows/ci.yml" || fail 'CI permite omitir la integración HTTP local del actualizador'
 grep -Fq 'production_http_transport_fetches_metadata_and_streams_artifacts' "$ROOT_DIR/rust/src/updater.rs" || fail 'el cliente HTTP de producción no tiene una E2E de transporte'
@@ -85,9 +89,28 @@ grep -Fq -- '--strict-security' "$ROOT_DIR/scripts/build.sh" || fail 'builder Li
 grep -Fq -- '--security-review' "$ROOT_DIR/.github/workflows/ci.yml" || fail 'CI no exige escaneo estático dentro de la build Linux'
 grep -Fq 'shellcheck' "$ROOT_DIR/.github/workflows/ci.yml" || fail 'CI no instala ShellCheck para la revisión estricta'
 grep -Fq 'actionlint@v1.7.12' "$ROOT_DIR/.github/workflows/ci.yml" || fail 'CI no instala actionlint para la revisión estricta'
+grep -Fq 'ossf/scorecard-action@' "$ROOT_DIR/.github/workflows/scorecard.yml" || fail 'falta la acción Scorecard'
+grep -Fq 'github/codeql-action/upload-sarif@' "$ROOT_DIR/.github/workflows/scorecard.yml" || fail 'Scorecard no publica SARIF en GitHub Code Scanning'
+grep -Fq 'security-events: write' "$ROOT_DIR/.github/workflows/scorecard.yml" || fail 'Scorecard no tiene permiso acotado para cargar hallazgos SARIF'
+grep -Fq 'id-token: write' "$ROOT_DIR/.github/workflows/scorecard.yml" || fail 'Scorecard no tiene permiso OIDC requerido para publicar resultados'
+grep -Fq 'actions: read' "$ROOT_DIR/.github/workflows/scorecard.yml" || fail 'Scorecard no tiene permiso mínimo para inspeccionar las automatizaciones del repositorio'
+grep -Fq 'permissions: {}' "$ROOT_DIR/.github/workflows/scorecard.yml" || fail 'Scorecard no deniega permisos globales por defecto'
+if grep -Fq 'pull_request:' "$ROOT_DIR/.github/workflows/scorecard.yml"; then
+    fail 'Scorecard publica resultados con tokens de pull requests no confiables'
+fi
+grep -Fq 'zizmorcore/zizmor-action@' "$ROOT_DIR/.github/workflows/workflow-security.yml" || fail 'falta el análisis zizmor de workflows'
+grep -Fq 'inputs: ./.github/' "$ROOT_DIR/.github/workflows/workflow-security.yml" || fail 'zizmor no examina todos los workflows y automatizaciones de .github'
+grep -Fq 'version: 1.28.0' "$ROOT_DIR/.github/workflows/workflow-security.yml" || fail 'la versión del analizador zizmor no es reproducible'
+grep -Fq 'github/codeql-action/init@' "$ROOT_DIR/.github/workflows/codeql.yml" || fail 'falta la acción de inicialización CodeQL'
+grep -Fq 'language: [rust, actions]' "$ROOT_DIR/.github/workflows/codeql.yml" || fail 'CodeQL no cubre Rust y GitHub Actions como la terminal'
+grep -Fq 'build-mode: none' "$ROOT_DIR/.github/workflows/codeql.yml" || fail 'CodeQL compila innecesariamente en vez de usar el modo compatible Rust'
+grep -Fq "advanced-security: \${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}" "$ROOT_DIR/.github/workflows/workflow-security.yml" || fail 'zizmor no desactiva SARIF en PR externos sin permisos de escritura'
+grep -Fq 'permissions:' "$ROOT_DIR/.github/workflows/workflow-security.yml" || fail 'zizmor no declara permisos acotados'
+grep -Fq 'security-events: write' "$ROOT_DIR/.github/workflows/workflow-security.yml" || fail 'zizmor no publica hallazgos en Code Scanning'
 grep -Fq -- '--auto-fix' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no ofrece autocorrección Rust optativa'
 grep -Fq 'cargo_args=(--locked)' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux puede reescribir Cargo.lock durante el análisis'
 grep -Fq '[AUTO-FIX]' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no marca las autocorrecciones'
+grep -Fq '[AUTO-FIXED]' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no enumera archivos Rust autocorregidos'
 grep -Fq 'Normalizando formato después de Clippy' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no normaliza formato tras Clippy'
 grep -Fq 'Reescaneando Clippy estricto' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no vuelve a escanear tras aplicar autocorrecciones'
 grep -Fq 'cargo clippy --manifest-path "$MANIFEST" --all-targets' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no pasa Clippy por todos los targets'
@@ -98,6 +121,7 @@ grep -Fq '[switch]$AutoFix' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windo
 grep -Fq -- "-cnotin @('true', 'false')" "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no sanea el booleano de incremental heredado inválido para Cargo'
 grep -Fq "\$cargoArgs = @('build', '--locked'" "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows puede resolver dependencias distintas de Cargo.lock'
 grep -Fq '[AUTO-FIX]' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no marca las autocorrecciones'
+grep -Fq '[AUTO-FIXED]' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no enumera archivos Rust autocorregidos'
 grep -Fq 'rustfmt normalizó el resultado de Clippy' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no normaliza formato tras Clippy'
 grep -Fq 'Invoke-RustQualityChecks' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no reescanea formato y Clippy tras las autocorrecciones'
 grep -Fq 'Invoke-RustSecurityAudit' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no revisa vulnerabilidades/licencias/fuentes'
@@ -106,22 +130,21 @@ grep -Fq "\$formatCheck = @('fmt', '--manifest-path', \$CargoManifest, '--', '--
 grep -Fq "Invoke-Cargo @('audit', '--file'" "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no actualiza y ejecuta cargo-audit'
 grep -Fq "Invoke-Cargo @('deny', '--manifest-path'" "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no ejecuta cargo-deny'
 grep -Fq 'Exigir auditoría estricta de seguridad y continuar la build incremental' "$ROOT_DIR/scripts/build.ps1" || fail 'menú Windows no permite exigir auditoría estricta'
-grep -Fq 'marca como corregidas las alertas que ya no se reproducen' "$ROOT_DIR/README.md" || fail 'documentación no explica el cierre automático de alertas tras un nuevo análisis'
+grep -Fq 'marca como corregidos los hallazgos' "$ROOT_DIR/README.md" || fail 'documentación no explica cómo se actualiza el estado de hallazgos'
+grep -Fq 'no sustituye el análisis' "$ROOT_DIR/README.md" || fail 'documentación no advierte del conflicto CodeQL default/advanced'
 grep -Fq 'actionlint -color' "$ROOT_DIR/.github/workflows/workflow-security.yml" || fail 'falta la validación estática de GitHub Actions'
 grep -Fq 'shellcheck --severity=error' "$ROOT_DIR/.github/workflows/workflow-security.yml" || fail 'falta ShellCheck para scripts Bash'
-grep -Fq 'gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0' "$ROOT_DIR/.github/workflows/workflow-security.yml" || fail 'falta el escaneo de secretos Node 24 fijado a commit'
+grep -Fq 'zizmor --offline .github' "$ROOT_DIR/tests/static-security.sh" || fail 'la revisión estática local omite zizmor cuando está instalado'
+grep -Fq 'gitleaks/gitleaks-action@' "$ROOT_DIR/.github/workflows/workflow-security.yml" || fail 'falta el escaneo de secretos Gitleaks'
 grep -Fq 'Block newly introduced moderate-or-higher vulnerabilities' "$ROOT_DIR/.github/workflows/dependency-review.yml" || fail 'el nombre de Dependency Review no coincide con la severidad que bloquea'
 grep -Fq 'fail-on-severity: moderate' "$ROOT_DIR/.github/workflows/dependency-review.yml" || fail 'Dependency Review no bloquea vulnerabilidades moderadas o superiores'
 grep -Fq "GITLEAKS_ENABLE_COMMENTS: 'false'" "$ROOT_DIR/.github/workflows/workflow-security.yml" || fail 'Gitleaks puede comentar pull requests con resultados'
-if grep -Fq 'security-events: write' "$ROOT_DIR/.github/workflows/workflow-security.yml"; then
-    fail 'la auditoría de workflows solicita permisos de escritura en PR no confiables'
-fi
-grep -Fq 'advanced-security: false' "$ROOT_DIR/.github/workflows/workflow-security.yml" || fail 'zizmor necesita salida local y permisos de escritura innecesarios'
-grep -Fq 'actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0' "$ROOT_DIR/.github/workflows/dependency-review.yml" || fail 'la revisión de dependencias Node 24 no está fijada a commit'
-grep -Fq 'actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0' "$ROOT_DIR/.github/workflows/ci.yml" || fail 'la subida de artefactos Node 24 no está fijada a commit'
+grep -Fq 'actions/dependency-review-action@' "$ROOT_DIR/.github/workflows/dependency-review.yml" || fail 'falta la acción de revisión de dependencias'
+grep -Fq 'actions/upload-artifact@' "$ROOT_DIR/.github/workflows/ci.yml" || fail 'falta la subida de artefactos CI'
 grep -Fq 'fail-on-severity: moderate' "$ROOT_DIR/.github/workflows/dependency-review.yml" || fail 'la revisión de dependencias no bloquea vulnerabilidades moderadas o peores'
 grep -Fq 'package-ecosystem: cargo' "$ROOT_DIR/.github/dependabot.yml" || fail 'Dependabot no mantiene las dependencias Rust'
 grep -Fq 'package-ecosystem: github-actions' "$ROOT_DIR/.github/dependabot.yml" || fail 'Dependabot no mantiene las acciones GitHub'
+[[ "$(grep -Fc 'default-days: 7' "$ROOT_DIR/.github/dependabot.yml")" -eq 2 ]] || fail 'Dependabot no aplica el cooldown de siete días a versiones Cargo y Actions'
 if git -C "$ROOT_DIR" check-ignore -q .github/workflows/ci.yml; then
     fail '.gitignore oculta los workflows GitHub del repositorio'
 fi
@@ -158,15 +181,35 @@ grep -Fq "Tool = 'git'; Args = @('help', '-a')" "$ROOT_DIR/windows/tests/e2e.ps1
 grep -Fq '"winslim" => Some((7, "winslim"' "$ROOT_DIR/rust/src/guides.rs" || fail 'guía Windows no reconoce la pantalla WinSlim condicional'
 grep -Fq "gui_pages+=(7)" "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'E2E Wine no abre/captura la página WinSlim cuando WSCore existe'
 grep -Fq 'no tiene disponible la pantalla WinSlim' "$ROOT_DIR/windows/tests/e2e.ps1" || fail 'E2E Windows no valida el caso WinSlim sin WSCore'
-grep -Fq 'xdotool search --onlyvisible --name "WinSlim-Tools"' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'E2E Windows/Wine busca un título distinto del producto Windows'
-grep -Fq 'button_y=$((87 + page * 50))' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'E2E Windows/Wine no deriva la coordenada real de cada categoría'
-grep -Fq 'GUI_PAGE_OK=%s' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'E2E Windows/Wine no registra la apertura individual de cada categoría'
+grep -Fq "xdotool search --onlyvisible --name 'WinSlim-Tools'" "$ROOT_DIR/tests/linux/windows-wine-gui.sh" || fail 'E2E Windows/Wine busca un título distinto del producto Windows'
+grep -Fq 'button_y=$((87 + page * 50))' "$ROOT_DIR/tests/linux/windows-wine-gui.sh" || fail 'E2E Windows/Wine no deriva la coordenada real de cada categoría'
+grep -Fq 'GUI_PAGE_OK=%s' "$ROOT_DIR/tests/linux/windows-wine-gui.sh" || fail 'E2E Windows/Wine no registra la apertura individual de cada categoría'
 grep -Fq 'C:\\windows\\temp\\$gui_marker_name' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'E2E Windows/Wine guarda el marcador en una ruta visible desde Win32'
-grep -Fq 'for page in "${gui_pages[@]}"; do' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'E2E Windows/Wine no recorre todas las categorías visibles'
-grep -Fq '[[ "$page_colors" -ge 4 ]]' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'E2E Windows/Wine exige una paleta mayor que la GUI plana realmente usa'
+grep -Fq 'LTOOLS_GUI_SMOKE_READY_MARKER' "$ROOT_DIR/rust/src/gui.rs" || fail 'la GUI Win32 no expone un marcador de render listo para el E2E'
+grep -Fq 'LTOOLS_GUI_SMOKE_READY_MARKER="$gui_ready_marker_windows"' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'E2E Windows/Wine no comprueba que la interfaz inició el primer render'
+grep -Fq 'window-shown-and-updated' "$ROOT_DIR/rust/src/gui.rs" || fail 'el marcador GUI se escribe antes de mostrar y actualizar la ventana'
+main_window_init="$(sed -n '/let hwnd = CreateWindowExW(/,/while GetMessageW/p' "$ROOT_DIR/rust/src/gui.rs")"
+if sed -n '/let hwnd = CreateWindowExW(/,/if hwnd.is_null()/p' "$ROOT_DIR/rust/src/gui.rs" | grep -Fq 'WS_VISIBLE'; then
+    fail 'la GUI Win32 vuelve a mostrar la ventana antes de construir los controles'
+fi
+printf '%s\n' "$main_window_init" | awk '
+    /show_page\(hwnd, None\)/ { page_line = NR }
+    /ShowWindow\(hwnd, SW_SHOW\)/ { show_line = NR }
+    END { exit !(page_line > 0 && show_line > page_line) }
+' || fail 'la GUI Win32 muestra la ventana antes de crear la página inicial'
+[[ -f "$ROOT_DIR/tests/linux/windows-wine-gui.sh" ]] || fail 'falta el controlador GUI independiente para Windows/Wine'
+grep -Fq 'windows-wine-gui.sh' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'E2E Windows/Wine no ejecuta el controlador GUI comprobable'
+if grep -Fq "bash -c '" "$ROOT_DIR/tests/linux/windows-wine.sh"; then
+    fail 'E2E Windows/Wine vuelve a ocultar el flujo GUI dentro de un bloque bash -c'
+fi
+grep -Fq 'capture_when_rendered' "$ROOT_DIR/tests/linux/windows-wine-gui.sh" || fail 'E2E Windows/Wine no espera al primer render visual'
+grep -Fq 'no completó su primer render' "$ROOT_DIR/tests/linux/windows-wine-gui.sh" || fail 'E2E Windows/Wine no explica si falló el primer render'
+grep -Fq 'for page in "${gui_pages[@]}"; do' "$ROOT_DIR/tests/linux/windows-wine-gui.sh" || fail 'E2E Windows/Wine no recorre todas las categorías visibles'
+grep -Fq "identify_image -format '%[entropy]'" "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'E2E Windows/Wine no comprueba si el panel capturado está realmente pintado'
+grep -Fq 'value >= 0.10' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'E2E Windows/Wine puede aceptar una captura casi vacía por los colores del borde'
 grep -Fq 'windows-settings-wine.png' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'E2E Windows/Wine no valida una captura Win32 de Ajustes'
-grep -Fq 'import -window root "$capture"' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'E2E Windows/Wine captura el HWND negro en vez de la pantalla visible'
-grep -Fq 'xdotool windowclose "$window_id"' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'E2E Windows/Wine no cierra explícitamente la ventana temporal'
+grep -Fq 'import -window root "$capture_path"' "$ROOT_DIR/tests/linux/windows-wine-gui.sh" || fail 'E2E Windows/Wine captura el HWND negro en vez de la pantalla visible'
+grep -Fq 'xdotool windowclose "$window_id"' "$ROOT_DIR/tests/linux/windows-wine-gui.sh" || fail 'E2E Windows/Wine no cierra explícitamente la ventana temporal'
 grep -Fq 'wine_args+=(--require-gui)' "$ROOT_DIR/scripts/build.sh" || fail 'build completa puede aceptar la E2E GUI Windows/Wine omitida'
 grep -Fq 'REQUIRE_GUI=1' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'smoke Windows/Wine no ofrece exigir capturas y GUI'
 grep -Fq 'LTOOLS_GUI_CAPTURE_DIR=$WINDOWS_WINE_ARTIFACT_DIR/captures' "$ROOT_DIR/scripts/build.sh" || fail 'capturas Windows/Wine pueden sobrescribir capturas ajenas al build'
@@ -215,6 +258,11 @@ grep -Fq 'rust/target|windows/(target|bin|obj)|dist' "$ROOT_DIR/scripts/build.ps
 [[ -x "$ROOT_DIR/tests/linux/software-git-e2e.sh" ]] || fail 'falta la E2E de stores y Git'
 [[ -x "$ROOT_DIR/tests/linux/native-help-e2e.sh" ]] || fail 'falta la E2E ejecutable de ayudas nativas'
 grep -Fq 'capture_screen' "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" || fail 'E2E del mapa sin capturas verificadas'
+grep -Fq 'value >= 0.06' "$ROOT_DIR/tests/linux/smoke.sh" || fail 'E2E Linux puede aceptar páginas GUI vacías por los colores del marco'
+grep -Fq "identify -crop '480x100+400+20'" "$ROOT_DIR/tests/linux/smoke.sh" || fail 'captura del diálogo gh no comprueba visualmente la región de sus campos'
+for page in storage-partitions storage-filesystems storage-volumes; do
+    grep -Fq "linux-$page-bottom.png" "$ROOT_DIR/tests/linux/smoke.sh" || fail "E2E Linux no valida la captura desplazada de $page"
+done
 for localized_suite in smoke.sh menu-e2e.sh e2e.sh software-git-e2e.sh native-help-e2e.sh tarball-e2e.sh windows-wine.sh; do
     grep -Fq 'export LTOOLS_LANG=es' "$ROOT_DIR/tests/linux/$localized_suite" || fail "E2E $localized_suite hereda un idioma externo pese a comparar mensajes españoles"
 done
@@ -685,6 +733,11 @@ grep -Fq 'build-state.json' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windo
 grep -Fq 'Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows detecta cambios solo por tamaño/fecha'
 grep -Fq 'Test-BuildProfileChanged $oldState $BuildProfile' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no recompila al cambiar fast/release'
 grep -Fq 'profile = $BuildProfile' "$ROOT_DIR/scripts/build.ps1" || fail 'estado incremental Windows no guarda el perfil usado'
+grep -Fq 'Get-LToolsBuildBinaryHashes $Binary $GuiBinary $CliBinary' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no registra los binarios de compilación que luego empaqueta'
+grep -Fq 'Test-LToolsBuildBinariesTampered' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no detecta corrupción de sus binarios compilados'
+grep -Fq 'Test-LToolsBuildBinariesUntrusted' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no revalida una caché compilada sin línea base confiable'
+grep -Fq '$forceCleanTarget = $buildBinariesTampered -or $buildBinariesUntrusted' "$ROOT_DIR/scripts/build.ps1" || fail 'la corrupción incremental no activa una limpieza real del target'
+grep -Fq 'if ($Clean -or $forceCleanTarget)' "$ROOT_DIR/scripts/build.ps1" || fail 'Cargo podría reutilizar una caché binaria alterada al repaquetar'
 grep -Fq '$StatePath = Join-Path $CargoReleaseDir ".build-state.json"' "$ROOT_DIR/scripts/build.ps1" || fail 'estado de perfil Windows no es compartido entre rutas de salida'
 grep -Fq "[Environment]::SetEnvironmentVariable(\$name, \$previousCargoProfile[\$name], 'Process')" "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows deja variables de perfil rápido contaminando builds posteriores'
 grep -Fq 'Assert-SafeOutputPath $OutputDir' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows permite borrar desde una ruta de salida raíz/peligrosa'
@@ -764,7 +817,7 @@ grep -Fq 'unzip es necesario para validar el paquete portable Windows' "$ROOT_DI
 grep -Fq 'ltools-$VERSION-windows-$package_arch.zip' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'helper Wine no genera el ZIP portable'
 grep -Fq 'ZIP portable probado: integridad, contenido y perfiles GUI/CLI extraídos bajo Wine' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'E2E Wine no prueba los binarios extraídos del ZIP portable'
 grep -Fq 'windows-accounts-wine.png' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'E2E Wine no captura el submenú de cuentas Win32'
-grep -Fq "navigation-page=8" "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'E2E Wine no abre con clic el submenú de cuentas Win32'
+grep -Fq "wait_for_navigation 8 'Usuarios, grupos y sesiones'" "$ROOT_DIR/tests/linux/windows-wine-gui.sh" || fail 'E2E Wine no abre con clic el submenú de cuentas Win32'
 grep -Fq 'CREATED_TEMP_PREFIX" -eq 1' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'limpieza Wine puede borrar un prefijo explícito del usuario'
 grep -Fq 'ARTIFACT_STAGING="$(mktemp -d "$ARTIFACT_DIR/.windows-package.XXXXXX")"' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'paquetes Wine sobrescriben salidas antes de validar el ZIP'
 grep -Fq 'LOG_PATH="$log_directory/windows-wine-$$.log"' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'log Wine por defecto queda dentro del prefijo temporal que se elimina'

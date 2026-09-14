@@ -977,16 +977,27 @@ require_command cargo
 require_command rustc
 require_command tar
 require_command sed
-if [[ "$SECURITY_REVIEW" -eq 1 ]]; then
-    require_command shellcheck
-    require_command actionlint
-fi
 if [[ "$APPIMAGE" -eq 1 ]] && ! command -v appimagetool >/dev/null 2>&1; then
     if [[ "$APPIMAGE_REQUIRED" -eq 1 ]]; then
         die 'falta appimagetool; instálalo o ejecuta con --no-appimage'
     fi
     warn 'appimagetool no está disponible; se generará solo el tar.gz. Usa --appimage para exigirlo.'
     APPIMAGE=0
+fi
+if [[ "$STRICT_SECURITY" -eq 1 || "$SECURITY_REVIEW" -eq 1 ]]; then
+    missing_security_tools=()
+    required_security_tools=(shellcheck actionlint)
+    if [[ "$STRICT_SECURITY" -eq 1 ]]; then
+        required_security_tools+=(cargo-audit cargo-deny)
+    fi
+    for security_tool in "${required_security_tools[@]}"; do
+        if ! command -v "$security_tool" >/dev/null 2>&1; then
+            missing_security_tools+=("$security_tool")
+        fi
+    done
+    if ((${#missing_security_tools[@]})); then
+        die "la revisión estática solicitada no puede empezar; faltan: ${missing_security_tools[*]}"
+    fi
 fi
 if [[ "$APPIMAGE" -eq 1 ]]; then
     require_command appimagetool

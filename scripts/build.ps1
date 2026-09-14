@@ -267,7 +267,7 @@ function Show-Menu {
                     Write-Host '  3) Build portable completa con smoke y E2E'
                     Write-Host '  4) Build local sin firma (no publicable)'
                     Write-Host '  5) Exigir auditoría estricta de seguridad y continuar la build incremental'
-                    Write-Host '  6) Revisar scripts y workflows con ShellCheck y actionlint'
+                    Write-Host '  6) Revisar scripts y workflows con ShellCheck, actionlint y zizmor si está disponible'
                     Write-Host '  0) Volver'
                     $buildChoice = Read-Host 'Selecciona una opción'
                     if ($buildChoice -eq '0') { break }
@@ -514,12 +514,13 @@ function Invoke-RustSecurityAudit {
 function Invoke-StaticSecurityReview {
     $shellCheck = Get-Command 'shellcheck' -ErrorAction SilentlyContinue
     $actionLint = Get-Command 'actionlint' -ErrorAction SilentlyContinue
+    $zizmor = Get-Command 'zizmor' -ErrorAction SilentlyContinue
     $requireTools = $SecurityReview -or $StrictSecurity
     $missing = @()
     if (-not $shellCheck) { $missing += 'shellcheck' }
     if (-not $actionLint) { $missing += 'actionlint' }
     if ($requireTools -and $missing.Count -gt 0) {
-        throw "La revisión estática estricta requiere estas herramientas ausentes: $($missing -join ', ')."
+        throw "La revisión estática solicitada requiere estas herramientas ausentes: $($missing -join ', ')."
     }
 
     if ($shellCheck) {
@@ -553,6 +554,12 @@ function Invoke-StaticSecurityReview {
             }
         } else { Write-Log '[REVIEW][SKIP] No se encontraron workflows GitHub Actions.' }
     } else { Write-Log '[REVIEW][SKIP] actionlint no está instalado; no se considera superado.' }
+    if ($zizmor) {
+        Invoke-Step 'zizmor de workflows y automatizaciones GitHub' {
+            $exitCode = Invoke-NativeCommand 'zizmor' @('--offline', (Join-Path $Root '.github'))
+            if ($exitCode -ne 0) { throw "zizmor terminó con código $exitCode." }
+        }
+    } else { Write-Log '[REVIEW][SKIP] zizmor no está instalado; GitHub Actions lo ejecuta en el workflow de seguridad.' }
     if ($missing.Count -eq 0) { Write-Log '[REVIEW][PASS] ShellCheck y actionlint superados.' }
 }
 function Initialize-Signing {
@@ -669,6 +676,15 @@ if ($SshSigningConfiguration.PublicKey) {
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { throw "No se encontró cargo. Instala Rust mediante rustup." }
 if (-not (Get-Command rustc -ErrorAction SilentlyContinue)) { throw "No se encontró rustc." }
 Invoke-Step 'Validando sintaxis de scripts PowerShell' { Test-PowerShellSyntax }
+if ($StrictSecurity) {
+    $missingStrictSecurityTools = @()
+    foreach ($tool in @('cargo-audit', 'cargo-deny', 'shellcheck', 'actionlint')) {
+        if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) { $missingStrictSecurityTools += $tool }
+    }
+    if ($missingStrictSecurityTools.Count -gt 0) {
+        throw "La revisión estricta no puede empezar; faltan: $($missingStrictSecurityTools -join ', ')."
+    }
+}
 Invoke-StaticSecurityReview
 Ensure-Target
 
@@ -688,7 +704,18 @@ $sshPublicKeyFingerprint = if ($SshSigningConfiguration.PublicKey -and
 } else { $null }
 $previousSigning = Get-MapValue $oldState 'signing'
 $signingKeyChanged = Test-LToolsSigningKeyChanged $previousSigning $publicKeyFingerprint
-$needCompile = $Force -or $AutoFix -or $Clean -or $profileChanged -or $signingKeyChanged -or -not (Test-Path $Binary) -or -not (Test-Path $GuiBinary) -or -not (Test-Path $CliBinary) -or $impact.RustCompile.Count -gt 0
+$buildBinaryHashes = Get-LToolsBuildBinaryHashes $Binary $GuiBinary $CliBinary
+$previousBuildBinaryHashes = Get-MapValue $oldState 'buildBinaries'
+$buildBinariesMatch = Test-LToolsBuildBinariesMatch $previousBuildBinaryHashes $buildBinaryHashes
+$buildBinariesTampered = Test-LToolsBuildBinariesTampered $previousBuildBinaryHashes $buildBinaryHashes
+$buildBinariesUntrusted = Test-LToolsBuildBinariesUntrusted $previousBuildBinaryHashes $buildBinaryHashes
+$forceCleanTarget = $buildBinariesTampered -or $buildBinariesUntrusted
+$needCompile = $Force -or $AutoFix -or $Clean -or $profileChanged -or $signingKeyChanged -or
+    -not (Test-Path $Binary) -or -not (Test-Path $GuiBinary) -or -not (Test-Path $CliBinary) -or
+    $impact.RustCompile.Count -gt 0 -or -not $buildBinariesMatch
+if (-not $buildBinariesMatch) { Write-Log 'Hash de un binario compilado ausente o alterado; se recompilarán los perfiles antes de empaquetar.' }
+if ($buildBinariesTampered) { Write-Log 'La caché compilada no coincide con su hash anterior; se limpiará el target para que Cargo no reutilice el binario alterado.' }
+if ($buildBinariesUntrusted) { Write-Log 'El estado incremental aún no contiene hashes de compilación confiables; se limpiará el target para establecer una base verificada.' }
 $existingZip = Join-Path $OutputDir "ltools-$Version-windows-$PackageArch.zip"
 $existingCli = Join-Path $OutputDir "ltools-$Version-windows-$PackageArch-cli.exe"
 $publishedExe = Join-Path $PublishDir "ltools-$Version-windows-$PackageArch.exe"
@@ -753,7 +780,7 @@ if ($needRustReview) {
     Invoke-Step 'Validando formato y Clippy estricto de todo el código Rust' { Invoke-RustQualityChecks }
 } else { Write-Log '    SKIP: la firma incremental confirma que no cambió código ni configuración Rust.' }
 
-if ($Clean) {
+if ($Clean -or $forceCleanTarget) {
     Invoke-Step "Limpiando target Windows" { Remove-Item -LiteralPath $TargetDir -Recurse -Force -ErrorAction SilentlyContinue }
     $needCompile = $true
 }
@@ -1091,6 +1118,7 @@ $state = [ordered]@{
     profile = $BuildProfile
     builtAt = (Get-Date).ToUniversalTime().ToString('o')
     files = $newSignatures
+    buildBinaries = Get-LToolsBuildBinaryHashes $Binary $GuiBinary $CliBinary
     artifacts = $artifactHashes
     signing = $signingState
     packagePending = [bool]$packagePending

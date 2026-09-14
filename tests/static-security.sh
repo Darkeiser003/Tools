@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Revisión local de scripts y workflows, usando los mismos analizadores que CI.
+# Revisión local de scripts y workflows con los analizadores disponibles.
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -9,7 +9,7 @@ while (($#)); do
         --strict) STRICT=1 ;;
         -h|--help)
             printf 'Uso: %s [--strict]\n' "$0"
-            printf 'Ejecuta ShellCheck y actionlint; --strict falla si falta cualquiera.\n'
+            printf 'Ejecuta ShellCheck y actionlint; zizmor se añade si está instalado. --strict exige ShellCheck y actionlint.\n'
             exit 0
             ;;
         *) printf 'Opción desconocida: %s\n' "$1" >&2; exit 2 ;;
@@ -45,6 +45,15 @@ if command -v actionlint >/dev/null 2>&1; then
 else
     printf '[REVIEW][SKIP] actionlint no está instalado.\n'
     missing+=(actionlint)
+fi
+
+if command -v zizmor >/dev/null 2>&1; then
+    printf '[REVIEW] zizmor: workflows y automatizaciones de .github (offline)\n'
+    if ! (cd -- "$ROOT_DIR" && zizmor --offline .github); then
+        status=1
+    fi
+else
+    printf '[REVIEW][SKIP] zizmor no está instalado; GitHub Actions lo ejecuta en el workflow de seguridad.\n'
 fi
 
 if ((${#missing[@]})); then

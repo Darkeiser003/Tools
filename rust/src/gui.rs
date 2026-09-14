@@ -3106,7 +3106,8 @@ mod linux {
         let mut entries = Vec::with_capacity(fields.len());
         let mut entry_choices = Vec::with_capacity(fields.len());
         for (row, field) in fields.iter().enumerate() {
-            let prompt = CString::new(field.prompt).unwrap_or_default();
+            let localized_prompt = crate::i18n::gui_native_prompt(field.prompt);
+            let prompt = CString::new(localized_prompt).unwrap_or_default();
             let label = gtk_label_new(prompt.as_ptr());
             gtk_label_set_xalign(label, 0.0);
             let choices = (field.option == "--operation")
@@ -7177,12 +7178,20 @@ mod linux {
             add_back_button_at(system_page, navigation, 9);
 
             let network_page = (*navigation).pages[27];
-            add_section_heading(network_page, 0, "Red, rutas, DNS y puertos escuchando");
-            add_section_heading(network_page, 1, "Consulta de red");
+            add_section_heading(
+                network_page,
+                0,
+                crate::i18n::system_page_text("network_title"),
+            );
+            add_section_heading(
+                network_page,
+                1,
+                crate::i18n::system_page_text("network_inspection"),
+            );
             add_action(
                 network_page,
                 2,
-                "Estado general de red",
+                crate::i18n::system_page_text("network_status"),
                 "native",
                 &["network", "status"],
                 buffer,
@@ -7191,7 +7200,7 @@ mod linux {
             add_action(
                 network_page,
                 3,
-                "Interfaces y direcciones",
+                crate::i18n::system_page_text("network_interfaces"),
                 "native",
                 &["network", "interfaces"],
                 buffer,
@@ -7200,7 +7209,7 @@ mod linux {
             add_action(
                 network_page,
                 4,
-                "Tabla de rutas",
+                crate::i18n::system_page_text("network_routes"),
                 "native",
                 &["network", "routes"],
                 buffer,
@@ -7209,7 +7218,7 @@ mod linux {
             add_action(
                 network_page,
                 5,
-                "DNS y resolutores",
+                crate::i18n::system_page_text("network_dns"),
                 "native",
                 &["network", "dns"],
                 buffer,
@@ -7218,7 +7227,7 @@ mod linux {
             add_action(
                 network_page,
                 6,
-                "Puertos escuchando",
+                crate::i18n::system_page_text("network_listening"),
                 "native",
                 &["network", "listening"],
                 buffer,
@@ -7227,7 +7236,7 @@ mod linux {
             add_action(
                 network_page,
                 7,
-                "Conexiones NetworkManager",
+                crate::i18n::system_page_text("network_connections"),
                 "native",
                 &["network", "connections"],
                 buffer,
@@ -7236,17 +7245,21 @@ mod linux {
             add_action(
                 network_page,
                 8,
-                "Vaciar caché DNS",
+                crate::i18n::system_page_text("network_flush_dns"),
                 "native",
                 &["network", "flush-dns"],
                 buffer,
                 status,
             );
-            add_section_heading(network_page, 9, "Gestión de conexiones");
+            add_section_heading(
+                network_page,
+                9,
+                crate::i18n::system_page_text("network_management"),
+            );
             add_network_action_button(
                 network_page,
                 10,
-                "Activar / desactivar interfaz",
+                crate::i18n::system_page_text("network_interface_manage"),
                 "set-interface",
                 &NETWORK_INTERFACE_FIELDS,
                 buffer,
@@ -7255,7 +7268,7 @@ mod linux {
             add_network_action_button(
                 network_page,
                 11,
-                "Conectar NetworkManager",
+                crate::i18n::system_page_text("network_connect"),
                 "connection-up",
                 &NETWORK_CONNECTION_FIELDS,
                 buffer,
@@ -7264,7 +7277,7 @@ mod linux {
             add_network_action_button(
                 network_page,
                 12,
-                "Desconectar NetworkManager",
+                crate::i18n::system_page_text("network_disconnect"),
                 "connection-down",
                 &NETWORK_CONNECTION_FIELDS,
                 buffer,
@@ -7273,7 +7286,7 @@ mod linux {
             add_action(
                 network_page,
                 13,
-                "Guía de red",
+                crate::i18n::system_page_text("network_guide"),
                 "guide",
                 &["network"],
                 buffer,
@@ -7282,12 +7295,16 @@ mod linux {
             add_back_button_at(network_page, navigation, 14);
 
             let boot_page = (*navigation).pages[28];
-            add_section_heading(boot_page, 0, "Arranque, EFI y cargador del sistema");
-            add_section_heading(boot_page, 1, "Inspección del arranque");
+            add_section_heading(boot_page, 0, crate::i18n::system_page_text("boot_title"));
+            add_section_heading(
+                boot_page,
+                1,
+                crate::i18n::system_page_text("boot_inspection"),
+            );
             add_action(
                 boot_page,
                 2,
-                "Estado general del arranque",
+                crate::i18n::system_page_text("boot_status"),
                 "boot",
                 &["status"],
                 buffer,
@@ -7296,7 +7313,7 @@ mod linux {
             add_action(
                 boot_page,
                 3,
-                "Entradas EFI / NVRAM",
+                crate::i18n::system_page_text("efi_entries"),
                 "boot",
                 &["efi-entries"],
                 buffer,
@@ -7305,7 +7322,7 @@ mod linux {
             add_action(
                 boot_page,
                 4,
-                "Entradas GRUB",
+                crate::i18n::system_page_text("grub_entries"),
                 "boot",
                 &["grub-entries"],
                 buffer,
@@ -7314,7 +7331,7 @@ mod linux {
             add_action(
                 boot_page,
                 5,
-                "Estado de systemd-boot",
+                crate::i18n::system_page_text("systemd_boot"),
                 "boot",
                 &["systemd-boot"],
                 buffer,
@@ -7323,7 +7340,7 @@ mod linux {
             add_action(
                 boot_page,
                 6,
-                "Estado de Secure Boot",
+                crate::i18n::system_page_text("secure_boot"),
                 "boot",
                 &["secure-boot"],
                 buffer,
@@ -7332,17 +7349,21 @@ mod linux {
             add_action(
                 boot_page,
                 7,
-                "Generar plan seguro",
+                crate::i18n::system_page_text("boot_plan"),
                 "boot",
                 &["plan"],
                 buffer,
                 status,
             );
-            add_section_heading(boot_page, 8, "Cambios del siguiente arranque");
+            add_section_heading(
+                boot_page,
+                8,
+                crate::i18n::system_page_text("boot_next_changes"),
+            );
             add_boot_action_button(
                 boot_page,
                 9,
-                "Programar siguiente entrada GRUB",
+                crate::i18n::system_page_text("grub_schedule"),
                 &BOOT_ENTRY_FIELDS,
                 buffer,
                 status,
@@ -7350,7 +7371,7 @@ mod linux {
             add_action(
                 boot_page,
                 10,
-                "Cancelar siguiente entrada GRUB",
+                crate::i18n::system_page_text("grub_cancel"),
                 "boot",
                 &["clear-next", "--yes"],
                 buffer,
@@ -7359,7 +7380,7 @@ mod linux {
             add_action(
                 boot_page,
                 11,
-                "Guía de arranque, EFI y GRUB",
+                crate::i18n::system_page_text("boot_guide"),
                 "guide",
                 &["boot"],
                 buffer,
@@ -7368,12 +7389,20 @@ mod linux {
             add_back_button_at(boot_page, navigation, 12);
 
             let services_page = (*navigation).pages[29];
-            add_section_heading(services_page, 0, "Servicios del sistema");
-            add_section_heading(services_page, 1, "Inventario por ámbito y arranque");
+            add_section_heading(
+                services_page,
+                0,
+                crate::i18n::system_page_text("services_title"),
+            );
+            add_section_heading(
+                services_page,
+                1,
+                crate::i18n::system_page_text("services_inventory"),
+            );
             add_action(
                 services_page,
                 2,
-                "Automáticos y estáticos (system)",
+                crate::i18n::system_page_text("services_automatic"),
                 "system",
                 &[
                     "services",
@@ -7390,7 +7419,7 @@ mod linux {
             add_action(
                 services_page,
                 3,
-                "Manuales / desactivados (system)",
+                crate::i18n::system_page_text("services_manual"),
                 "system",
                 &[
                     "services", "--scope", "system", "--filter", "manual", "--limit", "100",
@@ -7401,7 +7430,7 @@ mod linux {
             add_action(
                 services_page,
                 4,
-                "Servicios del usuario",
+                crate::i18n::system_page_text("services_user"),
                 "system",
                 &[
                     "services", "--scope", "user", "--filter", "all", "--limit", "100",
@@ -7412,7 +7441,7 @@ mod linux {
             add_action(
                 services_page,
                 5,
-                "Todos: sistema y usuario",
+                crate::i18n::system_page_text("services_both"),
                 "system",
                 &[
                     "services", "--scope", "both", "--filter", "all", "--limit", "100",
@@ -7423,17 +7452,21 @@ mod linux {
             add_action(
                 services_page,
                 6,
-                "Servicios fallidos y journal",
+                crate::i18n::system_page_text("services_failed"),
                 "system",
                 &["failed", "--journal"],
                 buffer,
                 status,
             );
-            add_section_heading(services_page, 7, "Gestión y exportación");
+            add_section_heading(
+                services_page,
+                7,
+                crate::i18n::system_page_text("services_management"),
+            );
             add_service_action_button(
                 services_page,
                 8,
-                "Gestionar servicio",
+                crate::i18n::system_page_text("services_manage"),
                 &SERVICE_ACTION_FIELDS,
                 buffer,
                 status,
@@ -7441,7 +7474,7 @@ mod linux {
             add_action(
                 services_page,
                 9,
-                "Exportar informe completo",
+                crate::i18n::system_page_text("services_export"),
                 "system",
                 &["export", "--scope", "both", "--format", "tsv"],
                 buffer,
@@ -7450,7 +7483,7 @@ mod linux {
             add_action(
                 services_page,
                 10,
-                "Guía de servicios",
+                crate::i18n::system_page_text("services_guide"),
                 "guide",
                 &["services"],
                 buffer,
@@ -10091,7 +10124,10 @@ mod windows {
                     crate::VERSION
                 ))
                 .as_ptr(),
-                WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                // Mantén la ventana oculta mientras se construye el árbol de
+                // controles. Mostrarla aquí exponía durante la inicialización
+                // un panel vacío que parecía un bloqueo bajo Wine.
+                WS_OVERLAPPEDWINDOW,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
                 1040,
@@ -10544,6 +10580,15 @@ mod windows {
                 .and_then(|value| value.parse::<u32>().ok())
             {
                 SetTimer(hwnd, 1, delay.clamp(100, 60_000), None);
+            }
+            ShowWindow(hwnd, SW_SHOW);
+            UpdateWindow(hwnd);
+            if let Ok(marker) = std::env::var("LTOOLS_GUI_SMOKE_READY_MARKER") {
+                // El E2E espera a que la ventana se haya mostrado y actualizado;
+                // crear los controles por sí solo no garantiza que el primer
+                // frame vacío haya dejado de ser visible.
+                std::fs::write(marker, "window-shown-and-updated\n")
+                    .map_err(|error| format!("No se pudo escribir el marcador GUI: {error}"))?;
             }
             let mut message = std::mem::zeroed();
             while GetMessageW(&mut message, null_mut(), 0, 0) > 0 {

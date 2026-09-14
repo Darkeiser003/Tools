@@ -17,14 +17,20 @@
 *.png binary
 *.jpg binary
 *.jpeg binary
+*.avif binary
+*.bmp binary
 *.gif binary
 *.webp binary
 *.zip binary
 *.gz binary
+*.tar binary
 *.xz binary
 *.zst binary
 *.7z binary
 *.pdf binary
+*.mp4 binary
+*.webm binary
+*.mov binary
 *.dll binary
 *.exe binary
 *.msi binary
@@ -36,3 +42,8 @@
 *.ttf binary
 *.otf binary
 *.wasm binary
+
+# No se rastrean hoy binarios grandes con Git LFS: los recursos de runtime son
+# pequeños y las builds se publican como assets de GitHub Releases. Añadir una
+# regla filter=lfs solo cuando exista un recurso fuente grande que deba vivir
+# en Git; no versionar con LFS los artefactos regenerables de build.

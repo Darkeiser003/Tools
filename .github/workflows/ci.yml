@@ -58,9 +58,9 @@ jobs:
         run: >-
           bash scripts/build.sh --windows-wine --no-appimage --allow-unsigned --strict-security --security-review
           --non-interactive --jobs 2
-          --output "${{ runner.temp }}/ltools-linux-dist"
-          --release-dir "${{ runner.temp }}/ltools-linux-release"
-          --log "${{ runner.temp }}/ltools-linux-build.log"
+          --output "$RUNNER_TEMP/ltools-linux-dist"
+          --release-dir "$RUNNER_TEMP/ltools-linux-release"
+          --log "$RUNNER_TEMP/ltools-linux-build.log"
 
       - name: Preserve build outputs and diagnostic logs
         if: always()

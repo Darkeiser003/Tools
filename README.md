@@ -1352,24 +1352,41 @@ release ni necesita una clave de firma:
   antes de aceptar sus artefactos. La AppImage final se verifica con el builder
   de distribución que la genera.
 - `Workflow and secret security` valida sintaxis y expresiones de Actions con
-  actionlint, busca configuraciones inseguras con zizmor, pasa ShellCheck a los
-  scripts Bash y busca secretos en el código y el historial con Gitleaks. Las
-  acciones externas están fijadas a commits SHA completos y Dependabot las
-  actualiza semanalmente. Los comentarios automáticos de Gitleaks están
-  desactivados.
+  actionlint, pasa ShellCheck a los scripts Bash y busca secretos en el código
+  y el historial con Gitleaks. zizmor analiza todos los PR, incluidos los de
+  forks: publica hallazgos en Code Scanning cuando el token permite escritura y
+  en PRs externos los deja en el log, sin intentar la carga SARIF que GitHub
+  bloquea. Las acciones externas están fijadas a commits SHA completos y
+  Dependabot las actualiza semanalmente.
+  Los comentarios automáticos de Gitleaks están desactivados.
+- `codeql.yml` deja preparado el análisis avanzado de Rust y GitHub Actions para
+  push, pull request, ejecución semanal o manual. Sigue la estructura de
+  LTerminal, pero usa `build-mode: none` para no intentar compilar Rust con
+  `autobuild`. No estará activo mientras GitHub mantenga la configuración
+  predeterminada de CodeQL.
+- `Scorecard supply-chain security` revisa semanalmente y tras cada push a
+  `main` las prácticas de seguridad de la cadena de suministro del repositorio.
+  Publica los resultados en OpenSSF Scorecard y como SARIF en GitHub Code
+  Scanning. Ese workflow aislado es el único que recibe `security-events: write`
+  y `id-token: write`; solo corre sobre `main`, en el calendario o manualmente,
+  no sobre código no confiable de pull requests. zizmor y Scorecard pueden
+  publicar en repositorios públicos; en repositorios privados se requiere
+  GitHub Advanced Security.
 - `Dependency review` revisa los cambios de dependencias de cada pull request
   y falla el check si introducen vulnerabilidades moderadas, altas o críticas.
   Para que un check fallido impida fusionar, GitHub debe tenerlo marcado como
   obligatorio en la protección de la rama `main`. Dependabot propone semanalmente
-  actualizaciones de crates y GitHub Actions; cada PR sigue pasando por las
-  pruebas anteriores.
+  actualizaciones de crates y GitHub Actions, con una espera de siete días para
+  las actualizaciones de versión; las de seguridad no se retrasan por ese
+  cooldown. Cada PR sigue pasando por las pruebas anteriores.
 
 Cada cambio de `rust/Cargo.toml` o `rust/Cargo.lock` vuelve a pasar por build y
 pruebas Linux/Wine y Windows nativo, además de `cargo audit`, `cargo deny` y
 Dependency Review. La build busca ShellCheck y actionlint para analizar scripts
-y workflows: los ejecuta si están disponibles y registra cada omisión como
-`[REVIEW][SKIP]`, nunca como una comprobación superada. `--security-review`
-(Linux) o `-SecurityReview` (Windows) los exige; `--strict-security` /
+y workflows, y ejecuta zizmor offline tanto en Linux como en Windows si está
+instalado. Registra cada omisión como `[REVIEW][SKIP]`, nunca como una
+comprobación superada. `--security-review` (Linux) o `-SecurityReview`
+(Windows) exigen ShellCheck y actionlint; `--strict-security` /
 `-StrictSecurity` también los exige junto con `cargo audit` y `cargo deny`.
 La CI Linux instala los analizadores y los ejecuta obligatoriamente dentro del
 mismo pipeline de build. Si hay red, refresca los avisos de seguridad antes del
@@ -1383,9 +1400,10 @@ No se editan ni fusionan automáticamente las dependencias: GitHub marca los
 checks del PR como correctos o fallidos y una persona decide si acepta el cambio.
 Para arreglos mecánicos locales, `scripts/build.sh --auto-fix` o
 `scripts/build.ps1 -AutoFix` permite que rustfmt y las sugerencias automáticas de
-Clippy corrijan código Rust. El builder etiqueta cada cambio como `[AUTO-FIX]`,
-repite formato y Clippy con avisos tratados como errores, y solo después continúa
-con tests y empaquetado. Esta opción activa las validaciones aunque se desactiven
+Clippy corrijan código Rust. El builder etiqueta la acción como `[AUTO-FIX]` y
+cada archivo Rust realmente cambiado como `[AUTO-FIXED]`; luego repite formato y
+Clippy con avisos tratados como errores y solo continúa con tests y empaquetado
+si el reescaneo pasa. Esta opción activa las validaciones aunque se desactiven
 normalmente; no modifica dependencias ni intenta ocultar avisos de seguridad.
 Sin la opción, el build informa el fallo y cómo habilitar la reparación.
 ShellCheck y actionlint son analizadores, no autocorrectores: informan de los
@@ -1393,21 +1411,23 @@ archivos afectados y hacen fallar la build si encuentran errores, pero no
 reescriben scripts/workflows. Los cambios manuales vuelven a pasar por el mismo
 análisis. La build no intenta corregir vulnerabilidades de forma especulativa.
 
-Las alertas CodeQL las gestiona el análisis predeterminado ya activo en GitHub:
-tras cada push o actualización de PR, vuelve a escanear el código y GitHub
-marca como corregidas las alertas que ya no se reproducen. El CI no cierra ni
-silencia alertas por su cuenta. Una build local no puede cambiar el estado
-remoto de CodeQL: su log marca las autocorrecciones mecánicas como `[AUTO-FIX]`,
-y GitHub marca la alerta como corregida solo después de recibir y procesar el
-nuevo commit. Las alertas persistentes siguen abiertas para revisión humana.
+CodeQL, zizmor y Scorecard cubren ámbitos distintos: CodeQL analiza el código
+Rust y los workflows; zizmor analiza los riesgos de CI/CD y automatizaciones;
+Scorecard evalúa las prácticas de seguridad de la cadena de suministro. Los
+tres publican resultados que se actualizan con sus siguientes análisis; GitHub
+marca como corregidos los hallazgos que ya no se reproducen. No se cierran ni
+silencian findings manualmente. La build local etiqueta sus cambios mecánicos
+como `[AUTO-FIX]`/`[AUTO-FIXED]`; el estado de alertas remotas solo cambia cuando
+GitHub procesa el commit y el nuevo análisis.
 
-CodeQL ya aparece como analizador activo en las alertas del repositorio. Por eso
-no añado otro workflow CodeQL en paralelo: GitHub desactiva el workflow avanzado
-si está habilitado el análisis predeterminado y bloquea sus cargas, lo que puede
-dejar ejecuciones duplicadas o alertas obsoletas. Si más adelante hace falta
-personalizar el análisis, primero hay que cambiar en GitHub de configuración
-predeterminada a avanzada y mantener una única configuración. Consulta la
-[guía oficial para cambiar el modo de CodeQL](https://docs.github.com/en/code-security/reference/code-scanning/troubleshoot-analysis-errors/results-different-than-expected).
+El repositorio ya tenía activo el CodeQL predeterminado. GitHub deshabilita los
+workflows CodeQL avanzados mientras ese modo esté activo, así que el nuevo
+`codeql.yml` queda preparado al estilo de LTerminal pero no sustituye el análisis
+predeterminado automáticamente. Para activar expresamente la matriz Rust/Actions
+de este archivo, una persona con permisos de administración debe cambiar CodeQL
+de configuración predeterminada a avanzada en GitHub. No hago ese cambio remoto
+desde el código. Consulta la
+[documentación oficial sobre la convivencia de configuraciones](https://docs.github.com/en/code-security/reference/code-scanning/troubleshoot-analysis-errors/two-codeql-workflows).
 
 APIsec no se integra como prueba de commits de este producto: su acción inicia
 un análisis de un proyecto/API que ya debe estar registrado en la plataforma;
@@ -1571,13 +1591,16 @@ Para cambiar de repositorio o de etiqueta sin editar archivos, usa
 .\scripts\build.ps1 -Target x86_64-pc-windows-gnu
 ```
 
-Compara huellas SHA-256 y guarda el estado incremental junto al binario de cada
-target en `rust/target/windows/<target>/release/.build-state.json`. El estado
-compartido detecta los cambios entre `-Fast` (solo para iterar localmente) y la
-release optimizada, incluso si usan carpetas de salida diferentes; al cambiar
-de perfil recompila antes de empaquetar. También separa el staging de la carpeta
-publicable, genera un ZIP portable por arquitectura y publica el `.exe`, el
-perfil CLI, el ZIP y los JSON en `release/`. `-Output` controla el staging
+Compara firmas de fuentes y hashes SHA-256 de los binarios compilados y los
+artefactos distribuidos; guarda el estado junto al binario de cada target en
+`rust/target/windows/<target>/release/.build-state.json`. Si una copia compilada
+no coincide con su hash anterior —o todavía no hay una huella de confianza—,
+limpia el target para impedir que Cargo reutilice un ejecutable alterado. El
+estado compartido detecta los cambios entre `-Fast` (solo para iterar localmente)
+y la release optimizada, incluso si usan carpetas de salida diferentes; al
+cambiar de perfil recompila antes de empaquetar. También separa el staging de la
+carpeta publicable, genera un ZIP portable por arquitectura y publica el `.exe`,
+el perfil CLI, el ZIP y los JSON en `release/`. `-Output` controla el staging
 Windows y `-ReleaseOutput` la carpeta que se puede subir a GitHub; deben ser
 rutas independientes, no pueden anidarse ni atravesar junctions/symlinks, y no
 pueden ser la raíz del proyecto ni la de una unidad. La release se prepara en

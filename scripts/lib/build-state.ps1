@@ -61,7 +61,8 @@ function Get-LToolsBuildImpact($Old, $New) {
         if ($rustProduct -or $windowsProduct -or $path -eq 'windows/tests/e2e.ps1') {
             $impact.WindowsE2E.Add($path)
         }
-        if ($path -match '^scripts/lib/publish\.ps1$' -or $path -eq 'tests/build-publish.ps1') {
+        if ($path -match '^scripts/(build\.ps1|lib/(publish|third-party-licenses|ssh-signing)\.ps1)$' -or
+            $path -eq 'tests/build-publish.ps1') {
             $impact.PublishTests.Add($path)
         }
         if ($path -match '^scripts/build\.ps1$' -or $path -match '^scripts/lib/build-state\.ps1$' -or $path -eq 'tests/build-state.ps1') {
@@ -81,6 +82,57 @@ function Get-LToolsBuildImpact($Old, $New) {
 function Get-LToolsFileHash([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return 'missing' }
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function Get-LToolsBuildBinaryHashes([string]$Binary, [string]$GuiBinary, [string]$CliBinary) {
+    return [ordered]@{
+        gui = Get-LToolsFileHash $Binary
+        guiCopy = Get-LToolsFileHash $GuiBinary
+        cli = Get-LToolsFileHash $CliBinary
+    }
+}
+
+function Test-LToolsBuildBinariesMatch($PreviousHashes, $CurrentHashes) {
+    if ($null -eq $PreviousHashes -or $null -eq $CurrentHashes) { return $false }
+    foreach ($key in @('gui', 'guiCopy', 'cli')) {
+        $previous = Get-LToolsMapValue $PreviousHashes $key
+        $current = Get-LToolsMapValue $CurrentHashes $key
+        if ($null -eq $previous -or $previous -eq 'missing' -or
+            $null -eq $current -or $current -eq 'missing' -or $previous -ne $current) {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Test-LToolsBuildBinariesTampered($PreviousHashes, $CurrentHashes) {
+    if ($null -eq $PreviousHashes -or $null -eq $CurrentHashes) { return $false }
+    foreach ($key in @('gui', 'guiCopy', 'cli')) {
+        $previous = Get-LToolsMapValue $PreviousHashes $key
+        $current = Get-LToolsMapValue $CurrentHashes $key
+        if ($null -ne $previous -and $previous -ne 'missing' -and
+            $null -ne $current -and $current -ne 'missing' -and $previous -ne $current) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Test-LToolsBuildBinariesUntrusted($PreviousHashes, $CurrentHashes) {
+    if ($null -eq $CurrentHashes) { return $false }
+    $hasCurrentBinary = $false
+    foreach ($key in @('gui', 'guiCopy', 'cli')) {
+        $current = Get-LToolsMapValue $CurrentHashes $key
+        if ($null -ne $current -and $current -ne 'missing') { $hasCurrentBinary = $true }
+    }
+    if (-not $hasCurrentBinary) { return $false }
+    if ($null -eq $PreviousHashes) { return $true }
+    foreach ($key in @('gui', 'guiCopy', 'cli')) {
+        $previous = Get-LToolsMapValue $PreviousHashes $key
+        $current = Get-LToolsMapValue $CurrentHashes $key
+        if ($null -eq $previous -or ($previous -eq 'missing' -and $current -ne 'missing')) { return $true }
+    }
+    return $false
 }
 
 function Get-LToolsBuildArtifactHashes(
@@ -139,6 +191,12 @@ function Get-LToolsBuildArtifactHashes(
     return $hashes
 }
 
+function Get-LToolsSha256Fingerprint([byte[]]$Bytes) {
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($sha.ComputeHash($Bytes))).Replace('-', '').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+}
+
 function Get-LToolsPublicKeyFingerprint(
     [string]$PublicKeyFile,
     [string]$PublicKeyEnvironment
@@ -150,11 +208,26 @@ function Get-LToolsPublicKeyFingerprint(
         $keyText = [IO.File]::ReadAllText($PublicKeyFile)
     }
     if ($null -eq $keyText) { return $null }
-    $canonicalKey = ($keyText -replace '\s', '').ToLowerInvariant()
-    $bytes = [Text.Encoding]::UTF8.GetBytes($canonicalKey)
-    $sha = [Security.Cryptography.SHA256]::Create()
-    try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() }
-    finally { $sha.Dispose() }
+
+    # OpenSSH public-key blobs are Base64 and therefore case-sensitive. Hash
+    # the decoded key material (not its comment or whitespace) instead of
+    # lowercasing its textual representation, which can collapse distinct keys.
+    foreach ($line in ($keyText -split '\r?\n')) {
+        $fields = $line.Trim() -split '\s+'
+        if ($fields.Count -ge 2 -and $fields[0] -match '^(ssh-|sk-ssh-|ecdsa-)') {
+            try { $sshKeyBytes = [Convert]::FromBase64String([string]$fields[1]) }
+            catch [FormatException] { $sshKeyBytes = $null }
+            if ($null -ne $sshKeyBytes -and $sshKeyBytes.Length -gt 0) {
+                return Get-LToolsSha256Fingerprint $sshKeyBytes
+            }
+        }
+    }
+
+    # Release signing keys are hexadecimal. Normalize hex letter case and
+    # insignificant whitespace, but preserve case for other opaque formats.
+    $canonicalKey = $keyText -replace '\s', ''
+    if ($canonicalKey -match '^(?:0x)?[0-9a-fA-F]+$') { $canonicalKey = $canonicalKey.ToLowerInvariant() }
+    return Get-LToolsSha256Fingerprint ([Text.Encoding]::UTF8.GetBytes($canonicalKey))
 }
 
 function Test-LToolsSigningKeyChanged($OldSigning, [string]$CurrentFingerprint) {
