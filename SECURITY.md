@@ -4,7 +4,7 @@
 
 | Versión | Estado |
 | --- | --- |
-| 1.0.x | Recibe correcciones de seguridad mientras sea la versión estable vigente. |
+| 1.0.0 | Recibe correcciones de seguridad mientras sea la versión estable vigente. |
 
 Las versiones preliminares y las builds locales no tienen garantía de soporte.
 Cuando se publique una versión estable posterior, esta tabla indicará qué
