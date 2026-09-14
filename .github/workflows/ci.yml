@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  linux-wine:
+    name: Linux release tests + Windows under Wine
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Linux GUI, packaging and Wine test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential pkg-config libgtk-3-dev libglib2.0-dev \
+            libpango1.0-dev libcairo2-dev libgdk-pixbuf-2.0-dev \
+            libx11-dev libxtst-dev gcc-mingw-w64-x86-64 \
+            wine wine64 xvfb xdotool imagemagick x11-utils \
+            rsync trash-cli jq zip unzip file
+
+      - name: Install stable Rust and Windows GNU target
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable action, pinned 2026-07-16
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+          targets: x86_64-pc-windows-gnu
+
+      - name: Run complete Linux build and Wine E2E
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: >-
+          bash scripts/build.sh --windows-wine --no-appimage --allow-unsigned
+          --non-interactive --jobs 2
+          --output "${{ runner.temp }}/ltools-linux-dist"
+          --release-dir "${{ runner.temp }}/ltools-linux-release"
+          --log "${{ runner.temp }}/ltools-linux-build.log"
+
+      - name: Preserve build outputs and diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: linux-wine-build-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/ltools-linux-dist/
+            ${{ runner.temp }}/ltools-linux-release/
+            ${{ runner.temp }}/ltools-linux-build.log
+          if-no-files-found: warn
+
+  windows-native:
+    name: Native Windows release tests
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable action, pinned 2026-07-16
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+          targets: x86_64-pc-windows-msvc
+
+      - name: Run full native Windows build, tests, smoke and E2E
+        shell: pwsh
+        run: |
+          $dist = Join-Path $env:RUNNER_TEMP 'ltools-windows-dist'
+          $release = Join-Path $env:RUNNER_TEMP 'ltools-windows-release'
+          $log = Join-Path $env:RUNNER_TEMP 'ltools-windows-build.log'
+          & ./scripts/build.ps1 -Force -AllowUnsigned -NonInteractive `
+            -Output $dist -ReleaseOutput $release -Log $log
+
+      - name: Preserve build outputs and diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-native-build-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/ltools-windows-dist/
+            ${{ runner.temp }}/ltools-windows-release/
+            ${{ runner.temp }}/ltools-windows-build.log
+          if-no-files-found: warn
+
+  rust-supply-chain:
+    name: Rust advisories, licenses and sources
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable action, pinned 2026-07-16
+        with:
+          toolchain: stable
+
+      - name: Install checksum-verified Cargo security tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny
+
+      - name: Check Rust advisories
+        run: cargo audit --file rust/Cargo.lock
+
+      - name: Check licenses, duplicate crates and registry sources
+        run: cargo deny --manifest-path rust/Cargo.toml --config deny.toml check

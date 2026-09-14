@@ -1,0 +1,58 @@
+name: Workflow and secret security
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '41 4 * * 1'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  review:
+    name: Lint Actions, audit workflows and scan secrets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout full history for secret scanning
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install ShellCheck and actionlint
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends shellcheck
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Lint repository Bash scripts
+        run: |
+          mapfile -d '' scripts < <(find . -type f -name '*.sh' \
+            -not -path './.git/*' \
+            -not -path './rust/target/*' \
+            -not -path './dist/*' \
+            -not -path './release/*' -print0)
+          if ((${#scripts[@]})); then
+            shellcheck --severity=error "${scripts[@]}"
+          fi
+
+      - name: Validate workflow syntax and expressions
+        run: actionlint -color
+
+      - name: Review workflow security patterns
+        uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
+        with:
+          advanced-security: false
+          annotations: true
+
+      - name: Scan current changes and repository history for secrets
+        uses: gitleaks/gitleaks-action@v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: 'false'
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: 'false'

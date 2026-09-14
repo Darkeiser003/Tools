@@ -43,6 +43,7 @@ admiten `--dry-run` y generan planes reversibles cuando corresponde.
 - [Diagnóstico nativo](#diagnóstico-nativo)
 - [Discos, particiones y configuración nativa](#discos-particiones-y-configuración-nativa)
 - [Build y distribución](#build-y-distribución)
+- [Automatización y seguridad en GitHub](#automatización-y-seguridad-en-github)
 - [Descarga desde GitHub y manifiesto de release](#descarga-desde-github-y-manifiesto-de-release)
 - [Integración JSON y terminal](#integración-json-y-terminal)
 - [Arquitectura](#arquitectura)
@@ -1331,6 +1332,53 @@ prefijo para probar software Windows que sí lo necesite. El ejecutable se
 construye en `rust/target/windows-wine` por defecto, para no interferir con
 otros targets locales. Este flujo es una validación desde Linux; la release
 oficial continúa compilándose con el builder nativo Windows.
+
+### Automatización y seguridad en GitHub
+
+La carpeta `.github/` automatiza controles independientes; ninguno publica una
+release ni necesita una clave de firma:
+
+- `CI` ejecuta el builder completo de Linux con sus pruebas y Windows bajo Wine,
+  y en paralelo la build nativa Windows con tests, smoke y E2E. Guarda logs y
+  paquetes temporales como artefactos descargables de la ejecución. Las builds
+  CI se marcan explícitamente como no firmadas y no deben subirse como release
+  oficial. El job Linux omite AppImage si no hay `appimagetool`; prueba el
+  tarball y el ejecutable Windows bajo Wine. La AppImage final se verifica con
+  el builder de distribución que la genera.
+- `Rust supply chain` comprueba vulnerabilidades conocidas (`cargo audit`) y
+  licencias, versiones duplicadas y fuentes de crates (`cargo deny`), usando el
+  `deny.toml` del proyecto.
+- `Workflow and secret security` valida sintaxis y expresiones de Actions con
+  actionlint, busca configuraciones inseguras con zizmor, pasa ShellCheck a los
+  scripts Bash y busca secretos en el código y el historial con Gitleaks. Los
+  comentarios automáticos de Gitleaks están desactivados.
+- `Dependency review` revisa los cambios de dependencias de cada pull request
+  contra las alertas de GitHub y bloquea la incorporación de vulnerabilidades
+  altas o críticas. Dependabot propone semanalmente actualizaciones de crates y
+  GitHub Actions; cada PR sigue pasando por las pruebas anteriores.
+
+CodeQL ya aparece como analizador activo en las alertas del repositorio. Por eso
+no añado otro workflow CodeQL en paralelo: GitHub desactiva el workflow avanzado
+si está habilitado el análisis predeterminado y bloquea sus cargas, lo que puede
+dejar ejecuciones duplicadas o alertas obsoletas. Si más adelante hace falta
+personalizar el análisis, primero hay que cambiar en GitHub de configuración
+predeterminada a avanzada y mantener una única configuración. Consulta la
+[guía oficial para cambiar el modo de CodeQL](https://docs.github.com/en/code-security/reference/code-scanning/troubleshoot-analysis-errors/results-different-than-expected).
+
+APIsec no se integra como prueba de commits de este producto: su acción inicia
+un análisis de un proyecto/API que ya debe estar registrado en la plataforma;
+LTools es una aplicación local y no tiene un endpoint API propio que escanear.
+Si se añade un servicio API en el futuro, se puede crear un flujo manual
+separado que exija un entorno de pruebas autorizado, proyecto explícito y
+secretos; no se debe copiar `VAmPI` como destino automático.
+
+`.gitattributes` fija finales de línea coherentes entre Linux y Windows y marca
+como binarios los formatos no textuales. No activa Git LFS globalmente: ahora
+no hay recursos fuente grandes versionados que lo justifiquen. Ejecutables,
+AppImages, tarballs y ZIP generados se distribuyen en Releases, no en Git LFS ni
+como paquetes de dependencias. Si en el futuro se versionan assets fuente muy
+grandes, se pueden seleccionar patrones LFS específicos; no se deben añadir
+builds al historial Git.
 
 ### Descarga desde GitHub y manifiesto de release
 

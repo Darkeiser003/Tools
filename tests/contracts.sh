@@ -46,6 +46,35 @@ grep -Fq 'perfil rápido, conserva las pruebas' "$ROOT_DIR/scripts/build.ps1" ||
 grep -Fq 'El smoke también necesita ltools-cli.exe' "$ROOT_DIR/scripts/build.ps1" || fail 'menú Windows no verifica el perfil CLI previo al smoke'
 grep -Fxq '/dist/' "$ROOT_DIR/.gitignore" || fail 'Git no excluye la carpeta de salida predeterminada dist'
 grep -Fxq '/release/' "$ROOT_DIR/.gitignore" || fail 'Git no excluye la carpeta de releases locales predeterminada'
+for github_workflow in ci.yml workflow-security.yml dependency-review.yml; do
+    [[ -f "$ROOT_DIR/.github/workflows/$github_workflow" ]] ||
+        fail "falta el workflow GitHub Actions $github_workflow"
+done
+grep -Fq 'branches: [main]' "$ROOT_DIR/.github/workflows/ci.yml" || fail 'CI no se ejecuta en main'
+grep -Fq -- '--windows-wine --no-appimage --allow-unsigned' "$ROOT_DIR/.github/workflows/ci.yml" || fail 'CI Linux no ejecuta build completa con Wine'
+grep -Fq -- '-Force -AllowUnsigned -NonInteractive' "$ROOT_DIR/.github/workflows/ci.yml" || fail 'CI Windows no fuerza build y pruebas nativas completas'
+grep -Fq 'cargo audit --file rust/Cargo.lock' "$ROOT_DIR/.github/workflows/ci.yml" || fail 'CI no audita advisories del lockfile Rust'
+grep -Fq 'cargo deny --manifest-path rust/Cargo.toml --config deny.toml check' "$ROOT_DIR/.github/workflows/ci.yml" || fail 'CI no valida licencias/fuentes con deny.toml'
+grep -Fq 'actionlint -color' "$ROOT_DIR/.github/workflows/workflow-security.yml" || fail 'falta la validación estática de GitHub Actions'
+grep -Fq 'shellcheck --severity=error' "$ROOT_DIR/.github/workflows/workflow-security.yml" || fail 'falta ShellCheck para scripts Bash'
+grep -Fq 'gitleaks/gitleaks-action@v3' "$ROOT_DIR/.github/workflows/workflow-security.yml" || fail 'falta el escaneo de secretos compatible con Node 24'
+grep -Fq "GITLEAKS_ENABLE_COMMENTS: 'false'" "$ROOT_DIR/.github/workflows/workflow-security.yml" || fail 'Gitleaks puede comentar pull requests con resultados'
+if grep -Fq 'security-events: write' "$ROOT_DIR/.github/workflows/workflow-security.yml"; then
+    fail 'la auditoría de workflows solicita permisos de escritura en PR no confiables'
+fi
+grep -Fq 'advanced-security: false' "$ROOT_DIR/.github/workflows/workflow-security.yml" || fail 'zizmor necesita salida local y permisos de escritura innecesarios'
+grep -Fq 'actions/dependency-review-action@v5' "$ROOT_DIR/.github/workflows/dependency-review.yml" || fail 'la revisión de dependencias no usa la acción Node 24'
+grep -Fq 'fail-on-severity: high' "$ROOT_DIR/.github/workflows/dependency-review.yml" || fail 'la revisión de dependencias no bloquea vulnerabilidades altas/críticas'
+grep -Fq 'package-ecosystem: cargo' "$ROOT_DIR/.github/dependabot.yml" || fail 'Dependabot no mantiene las dependencias Rust'
+grep -Fq 'package-ecosystem: github-actions' "$ROOT_DIR/.github/dependabot.yml" || fail 'Dependabot no mantiene las acciones GitHub'
+if git -C "$ROOT_DIR" check-ignore -q .github/workflows/ci.yml; then
+    fail '.gitignore oculta los workflows GitHub del repositorio'
+fi
+if grep -Eq '^[*].*filter=lfs' "$ROOT_DIR/.gitattributes"; then
+    fail 'Git LFS se activa globalmente para todos los ficheros'
+fi
+grep -Fq '* text=auto eol=lf' "$ROOT_DIR/.gitattributes" || fail 'faltan finales de línea consistentes en .gitattributes'
+grep -Fq '*.png binary' "$ROOT_DIR/.gitattributes" || fail '.gitattributes no marca recursos PNG como binarios'
 if rg -n '^\*\.(AppImage|appimage|tar\.gz|tar\.xz|tar\.zst|zip|exe|dll|so|log)$' "$ROOT_DIR/.gitignore"; then
     fail '.gitignore oculta globalmente extensiones que podrían pertenecer a fuentes o fixtures'
 fi
