@@ -52,8 +52,16 @@ BACKEND="$PACKAGE_DIR/rust/target/release/ltools"
 [[ -x "$PACKAGE_DIR/ltools" ]] || die 'falta el lanzador distribuible ltools'
 [[ -x "$PACKAGE_DIR/ltools-cli" ]] || die 'falta el lanzador distribuible ltools-cli'
 [[ -x "$BACKEND" ]] || die 'falta el backend Rust release dentro del tarball'
+[[ -s "$PACKAGE_DIR/LICENSE" ]] || die 'falta la licencia MIT del proyecto en el tarball'
+grep -Fq 'MIT License' "$PACKAGE_DIR/LICENSE" || die 'la licencia del proyecto en el tarball no identifica MIT'
 [[ -s "$PACKAGE_DIR/ltools-capabilities.json" ]] || die 'falta el descriptor de capacidades'
 [[ -s "$PACKAGE_DIR/ltools-terminal.json" ]] || die 'falta el descriptor de integración de terminal'
+LICENSE_INDEX="$PACKAGE_DIR/THIRD-PARTY-LICENSES/INDEX.txt"
+[[ -s "$LICENSE_INDEX" ]] || die 'falta el índice de avisos/licencias de dependencias'
+grep -Fq 'ISC' "$LICENSE_INDEX" || die 'los avisos del tarball omiten dependencias ISC'
+grep -Fq 'CDLA-Permissive-2.0' "$LICENSE_INDEX" || die 'los avisos del tarball omiten la licencia CDLA de raíces TLS'
+find "$PACKAGE_DIR/THIRD-PARTY-LICENSES" -type f -iname 'license*' -print -quit | grep -q . ||
+    die 'el tarball no incluye los textos de licencia originales de las dependencias'
 
 export HOME="$TMP_DIR/home"
 export XDG_CONFIG_HOME="$TMP_DIR/config"
@@ -72,6 +80,8 @@ grep -Fq 'Uso: ltools' <<<"$help_output" || die 'el perfil CLI del tarball no ex
 grep -Fq 'ltools-capabilities-v1' "$TMP_DIR/capabilities.json" ||
     die 'el backend extraído devolvió un contrato de capacidades inesperado'
 ok 'tarball extraído: lanzadores, versión, ayuda CLI y backend funcionan'
+ok 'tarball extraído: índice y textos de licencias de las dependencias presentes'
+ok 'tarball extraído: licencia MIT del proyecto presente'
 
 if command -v jq >/dev/null 2>&1; then
     jq -e '.schema == "ltools-capabilities-v1"' "$PACKAGE_DIR/ltools-capabilities.json" >/dev/null ||

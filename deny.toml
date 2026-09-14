@@ -8,12 +8,23 @@ allow = [
     "MIT",
     "Apache-2.0",
     "BSD-3-Clause",
+    "ISC",
     "Unicode-3.0",
+]
+exceptions = [
+    # Los datos CA incluidos por esta dependencia se publican bajo CDLA;
+    # no se permite esa licencia automáticamente para otras dependencias.
+    { crate = "webpki-roots", allow = ["CDLA-Permissive-2.0"] },
 ]
 
 [bans]
 multiple-versions = "warn"
 wildcards = "allow"
+skip = [
+    # ring 0.17.14 aún usa windows-sys 0.52; LTools necesita 0.61 para su
+    # backend Windows. La excepción versionada deja de aplicar al actualizar ring.
+    { crate = "windows-sys@0.52.0", reason = "ring 0.17.14 fija esta versión transitiva; el backend LTools usa windows-sys 0.61.2" },
+]
 
 [sources]
 unknown-registry = "deny"

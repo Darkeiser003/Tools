@@ -64,10 +64,10 @@ fn registry_path() -> PathBuf {
     }
     #[cfg(windows)]
     {
-        return std::env::var_os("APPDATA")
+        std::env::var_os("APPDATA")
             .map(PathBuf::from)
             .unwrap_or_else(|| crate::common::home_dir().join("AppData/Roaming"))
-            .join("LTools/aliases.tsv");
+            .join("LTools/aliases.tsv")
     }
     #[cfg(not(windows))]
     {
@@ -84,10 +84,10 @@ fn managed_bin_dir() -> PathBuf {
     }
     #[cfg(windows)]
     {
-        return std::env::var_os("LOCALAPPDATA")
+        std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
             .unwrap_or_else(|| crate::common::home_dir().join("AppData/Local"))
-            .join("LTools/bin");
+            .join("LTools/bin")
     }
     #[cfg(not(windows))]
     {

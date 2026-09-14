@@ -13,6 +13,7 @@ while IFS= read -r -d '' file; do
 done < <(rg --files --hidden -0 -g '*.sh' -g '!.git/**' -g '!dist/**' -g '!rust/target/**' "$ROOT_DIR")
 
 bash "$ROOT_DIR/tests/publish-release.sh"
+bash "$ROOT_DIR/tests/update-signing.sh"
 bash "$ROOT_DIR/tests/temp-cleaner.sh"
 if command -v pwsh >/dev/null 2>&1; then
     pwsh -NoLogo -NoProfile -NonInteractive -File "$ROOT_DIR/tests/build-state.ps1"

@@ -5,11 +5,15 @@ param(
     [Parameter(Mandatory = $true)][string]$Architecture,
     [Parameter(Mandatory = $true)][string]$Binary,
     [switch]$RequireSignature,
-    [string]$PublicKeyFile
+    [string]$PublicKeyFile,
+    [switch]$RequireSshSignature,
+    [string]$SshPublicKeyFile,
+    [string]$SshIdentity
 )
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'native-process.ps1')
+. (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'scripts\lib\ssh-signing.ps1')
 
 function Assert-Release([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw "RELEASE E2E ERROR: $Message" }
@@ -19,6 +23,11 @@ $ReleaseDirectory = [IO.Path]::GetFullPath($ReleaseDirectory)
 Assert-Release (Test-Path -LiteralPath $ReleaseDirectory -PathType Container) "No existe la carpeta release: $ReleaseDirectory"
 Assert-Release ($Version -match '^\d+\.\d+\.\d+([.-][0-9A-Za-z.-]+)?$') "Versión inválida: $Version"
 Assert-Release ($Architecture -match '^(x86_64|arm64|x86)$') "Arquitectura inválida: $Architecture"
+$projectLicense = Join-Path $ReleaseDirectory 'LICENSE'
+Assert-Release ((Test-Path -LiteralPath $projectLicense -PathType Leaf) -and
+    (Select-String -LiteralPath $projectLicense -SimpleMatch 'MIT License' -Quiet) -and
+    (Select-String -LiteralPath $projectLicense -SimpleMatch 'Darkeiser003' -Quiet) -and
+    (Select-String -LiteralPath $projectLicense -SimpleMatch 'https://github.com/Darkeiser003' -Quiet)) 'Falta la licencia MIT del proyecto o no identifica correctamente al titular.'
 
 $requiredArtifacts = @(
     "ltools-$Version-windows-$Architecture.exe",
@@ -28,6 +37,25 @@ $requiredArtifacts = @(
 foreach ($name in $requiredArtifacts) {
     $path = Join-Path $ReleaseDirectory $name
     Assert-Release ((Test-Path -LiteralPath $path -PathType Leaf) -and (Get-Item -LiteralPath $path).Length -gt 0) "Falta o está vacío el artefacto requerido: $name"
+}
+$licenseArchive = Join-Path $ReleaseDirectory 'THIRD-PARTY-LICENSES-windows.zip'
+Assert-Release ((Test-Path -LiteralPath $licenseArchive -PathType Leaf) -and (Get-Item -LiteralPath $licenseArchive).Length -gt 0) 'Falta el ZIP independiente de licencias Windows.'
+$licenseCheckDir = Join-Path ([IO.Path]::GetTempPath()) ("ltools-release-licenses-" + [guid]::NewGuid().ToString('N'))
+try {
+    Expand-Archive -LiteralPath $licenseArchive -DestinationPath $licenseCheckDir
+    $licenseIndex = Join-Path $licenseCheckDir 'THIRD-PARTY-LICENSES\INDEX.txt'
+    $bundledProjectLicense = Join-Path $licenseCheckDir 'LICENSE'
+    Assert-Release (Test-Path -LiteralPath $licenseIndex -PathType Leaf) 'El ZIP independiente omite el índice de licencias.'
+    Assert-Release ((Test-Path -LiteralPath $bundledProjectLicense -PathType Leaf) -and
+        (Select-String -LiteralPath $bundledProjectLicense -SimpleMatch 'MIT License' -Quiet) -and
+        (Get-FileHash -LiteralPath $bundledProjectLicense -Algorithm SHA256).Hash -eq
+            (Get-FileHash -LiteralPath $projectLicense -Algorithm SHA256).Hash) 'El ZIP independiente omite la licencia MIT del proyecto o contiene otra versión.'
+    $licenseText = Get-Content -Raw -LiteralPath $licenseIndex
+    Assert-Release ($licenseText.Contains('ISC') -and $licenseText.Contains('CDLA-Permissive-2.0')) 'El ZIP independiente omite avisos ISC/CDLA.'
+} finally {
+    if (Test-Path -LiteralPath $licenseCheckDir -PathType Container) {
+        Remove-Item -LiteralPath $licenseCheckDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 $requiredJson = @(
@@ -105,7 +133,7 @@ foreach ($line in [IO.File]::ReadAllLines($checksumPath)) {
     $checksums[$name] = $true
 }
 $expectedFiles = @(Get-ChildItem -LiteralPath $ReleaseDirectory -File -Force |
-    Where-Object { $_.Name -notin @('SHA256SUMS.txt', 'SHA256SUMS.txt.sig') -and
+    Where-Object { $_.Name -notin @('SHA256SUMS.txt', 'SHA256SUMS.txt.sig', 'SHA256SUMS.txt.sshsig') -and
         $_.Name -cnotlike '*.tmp' -and $_.Name -cnotlike '*.bak' })
 Assert-Release ($checksums.Count -eq $expectedFiles.Count) 'SHA256SUMS.txt no cubre exactamente todos los archivos planos de release.'
 foreach ($file in $expectedFiles) {
@@ -122,6 +150,16 @@ if (Test-Path -LiteralPath $signaturePath -PathType Leaf) {
     if ($PublicKeyFile -and (Test-Path -LiteralPath $PublicKeyFile -PathType Leaf)) { $arguments += @('--public-key-file', $PublicKeyFile) }
     $verification = Invoke-NativeProcess -FileName $Binary -Arguments ($arguments + @('--verify')) -TimeoutSeconds 60
     Assert-Release ($verification.ExitCode -eq 0) (Format-NativeProcessFailure $verification 'Firma Ed25519 de release')
+}
+$sshSignaturePath = Join-Path $ReleaseDirectory 'SHA256SUMS.txt.sshsig'
+if ($RequireSshSignature) { Assert-Release (Test-Path -LiteralPath $sshSignaturePath -PathType Leaf) 'Se requiere firma OpenSSH, pero falta SHA256SUMS.txt.sshsig.' }
+if (Test-Path -LiteralPath $sshSignaturePath -PathType Leaf) {
+    if ($SshPublicKeyFile) { $env:LTOOLS_SSH_SIGNING_PUBLIC_KEY_FILE = $SshPublicKeyFile }
+    if ($SshIdentity) { $env:LTOOLS_SSH_SIGNING_IDENTITY = $SshIdentity }
+    $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    $sshConfiguration = Get-LToolsSshSigningConfiguration $root
+    try { Test-LToolsSshManifestSignature $checksumPath $sshSignaturePath $sshConfiguration }
+    catch { throw "RELEASE E2E ERROR: Firma OpenSSH inválida: $($_.Exception.Message)" }
 }
 
 Write-Output "E2E de release Windows correcto: $ReleaseDirectory"

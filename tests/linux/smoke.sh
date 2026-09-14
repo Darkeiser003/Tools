@@ -81,6 +81,26 @@ ok 'backend Rust responde a --version'
 HELP_OUTPUT="$("$BIN" --help)"
 grep -Fq 'doctor --install TOOL' <<<"$HELP_OUTPUT" || die 'la ayuda no documenta la instalación explícita'
 ok 'backend Rust responde a --help'
+UPDATE_HELP_OUTPUT="$("$BIN" update --help)"
+grep -Fq 'check' <<<"$UPDATE_HELP_OUTPUT" || die 'la ayuda del actualizador no explica check'
+grep -Fq 'download' <<<"$UPDATE_HELP_OUTPUT" || die 'la ayuda del actualizador no explica download'
+grep -Fq -- '--repository OWNER/REPO' <<<"$UPDATE_HELP_OUTPUT" || die 'la ayuda del actualizador no explica el repositorio'
+UPDATE_GUIDE_OUTPUT="$("$BIN" guide updates)"
+grep -Fq 'firma Ed25519' <<<"$UPDATE_GUIDE_OUTPUT" || die 'la guía del actualizador no explica la firma'
+grep -Fq 'No ejecuta ni reemplaza' <<<"$UPDATE_GUIDE_OUTPUT" || die 'la guía del actualizador no explica que la instalación es manual'
+UPDATE_GUI_GUIDE_OUTPUT="$("$BIN" guide gui updates)"
+grep -Fq 'GUÍA GRÁFICA: ACTUALIZACIONES' <<<"$UPDATE_GUI_GUIDE_OUTPUT" || die 'falta la guía gráfica del actualizador'
+grep -Fq 'Descargar actualización verificada' <<<"$UPDATE_GUI_GUIDE_OUTPUT" || die 'la guía gráfica no coincide con el botón de descarga'
+ok 'actualizador CLI/GUI documentado; el smoke no contacta con GitHub'
+set +e
+PAUSED_UPDATE_STATUS=0
+printf '\n' | "$BIN" update invalid --pause >"$TMP_DIR/update-paused-error.log" 2>&1 || PAUSED_UPDATE_STATUS=$?
+set -e
+(( PAUSED_UPDATE_STATUS != 0 )) || die 'un error del actualizador pausado devolvió éxito'
+UPDATE_ERROR_LINE="$(grep -n 'Error: acción update desconocida' "$TMP_DIR/update-paused-error.log" | head -n1 | cut -d: -f1)"
+UPDATE_PAUSE_LINE="$(grep -n 'Pulsa Enter para cerrar esta consulta' "$TMP_DIR/update-paused-error.log" | head -n1 | cut -d: -f1)"
+[[ -n "$UPDATE_ERROR_LINE" && -n "$UPDATE_PAUSE_LINE" && "$UPDATE_ERROR_LINE" -lt "$UPDATE_PAUSE_LINE" ]] || die 'el error del actualizador debe mostrarse antes de pedir Enter para cerrar'
+ok 'errores de actualizador GUI visibles antes de cerrar la consola'
 GUIDE_GIT_OUTPUT="$("$BIN" guide git)" || die 'la guía de Git no responde'
 grep -Fq 'GIT Y GITHUB' <<<"$GUIDE_GIT_OUTPUT" || die 'la guía de Git no documenta GitHub'
 grep -Fq 'clone' <<<"$GUIDE_GIT_OUTPUT" || die 'la guía de Git no documenta clone'

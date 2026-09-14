@@ -34,6 +34,7 @@ mod storage_map;
 mod system;
 mod theme;
 mod tools;
+mod updater;
 #[cfg(not(windows))]
 mod wine;
 mod winslim;
@@ -178,6 +179,7 @@ fn usage() {
     println!("  release-manifest  Genera el manifiesto verificable de una release de GitHub");
     println!("  release-checksums  Genera SHA256SUMS.txt para los artefactos publicables");
     println!("  release-signature  Firma o verifica SHA256SUMS.txt con Ed25519");
+    println!("  update      {}", updater::help());
     println!();
     println!(
         "{}",
@@ -281,6 +283,7 @@ fn execute_action(command: &str, ctx: &Context, args: &[String]) -> Result<(), S
         "defaults" | "paths" => show_defaults(ctx),
         "capabilities" | "compat" => compat::run(args),
         "release-manifest" | "release" => release::run(args),
+        "update" | "self-update" => updater::run(args),
         _ => {
             usage();
             Err(format!("comando desconocido: {command}"))
@@ -1023,8 +1026,12 @@ fn main() {
         plan,
     };
     let result = execute_action(&command, &ctx, &filtered);
+    let paused_update = matches!(command.as_str(), "update" | "self-update")
+        && filtered.iter().any(|argument| argument == "--pause");
     if let Err(error) = result {
-        eprintln!("Error: {error}");
+        if !paused_update {
+            eprintln!("Error: {error}");
+        }
         finalize_failed_plan(&ctx);
         std::process::exit(1);
     }
@@ -1076,7 +1083,7 @@ fn main() {
 fn menu_choice() -> MenuSelection {
     #[cfg(windows)]
     {
-        return menu_choice_windows();
+        menu_choice_windows()
     }
     #[cfg(not(windows))]
     {
@@ -1217,6 +1224,8 @@ fn category_menu(ctx: &Context, category: MenuCategory) -> Result<(), String> {
                         "no"
                     }
                 );
+                println!("  5) {}", i18n::settings_text("update_check"));
+                println!("  6) {}", i18n::settings_text("update_download"));
             }
             MenuCategory::WinSlim => {
                 #[cfg(windows)]
@@ -1295,6 +1304,8 @@ fn category_menu(ctx: &Context, category: MenuCategory) -> Result<(), String> {
                 "2" => settings_language_menu(),
                 "3" => settings_color_menu(),
                 "4" => settings_elevation_menu(),
+                "5" => category_leaf(ctx, "update", Some(vec!["check".into()])),
+                "6" => category_leaf(ctx, "update", Some(vec!["download".into()])),
                 _ => category_invalid(),
             },
             MenuCategory::WinSlim => match answer.as_str() {
@@ -1724,7 +1735,7 @@ fn value(args: &[String], key: &str) -> Option<String> {
 fn show_defaults(ctx: &Context) -> Result<(), String> {
     #[cfg(windows)]
     {
-        return games::windows_defaults(ctx);
+        games::windows_defaults(ctx)
     }
     #[cfg(not(windows))]
     {
@@ -1931,6 +1942,8 @@ mod tests {
             "diagnostics",
             "accounts",
             "boot",
+            "update",
+            "self-update",
         ] {
             assert!(!command_needs_plan(command, &[], false, false), "{command}");
         }

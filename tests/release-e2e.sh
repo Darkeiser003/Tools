@@ -10,10 +10,13 @@ REQUIRE_WINDOWS=0
 REQUIRE_WINDOWS_EXECUTABLES=0
 REQUIRE_APPIMAGE=1
 REQUIRE_PACKAGE=1
+REQUIRE_SSH_SIGNATURE=0
 LINUX_ARCH="$(uname -m)"
 WINDOWS_ARCH=x86_64
 SIGNATURE_PUBLIC_KEY_FILE=""
 SIGNATURE_VERIFIER=""
+SSH_SIGNATURE_PUBLIC_KEY_FILE=""
+SSH_SIGNATURE_IDENTITY=""
 
 die() { printf 'RELEASE E2E ERROR: %s\n' "$1" >&2; exit 1; }
 ok() { printf '  OK    %s\n' "$1"; }
@@ -31,10 +34,16 @@ Uso: $0 [opciones]
   --windows-arch ARCH  Arquitectura Windows del paquete esperado (por defecto: x86_64).
   --no-appimage       No exige los dos perfiles AppImage Linux.
   --no-package        No exige el tarball runtime Linux.
+  --require-ssh-signature
+                      Exige y verifica la firma OpenSSH de los checksums.
   --signature-public-key-file FICHERO
                       Clave pública para verificar SHA256SUMS.txt.sig.
   --signature-verifier FICHERO
                       Backend LTools/WinSlim-Tools que verifica la firma.
+  --ssh-public-key-file FICHERO
+                      Clave OpenSSH pública que valida SHA256SUMS.txt.sshsig.
+  --ssh-identity IDENTIDAD
+                      Principal OpenSSH para validar la firma de release.
   -h, --help          Muestra esta ayuda.
 EOF
 }
@@ -49,8 +58,11 @@ while (($#)); do
         --windows-arch) (($# >= 2)) || die '--windows-arch necesita una arquitectura'; WINDOWS_ARCH="$2"; shift ;;
         --no-appimage) REQUIRE_APPIMAGE=0 ;;
         --no-package) REQUIRE_PACKAGE=0 ;;
+        --require-ssh-signature) REQUIRE_SSH_SIGNATURE=1 ;;
         --signature-public-key-file) (($# >= 2)) || die '--signature-public-key-file necesita una ruta'; SIGNATURE_PUBLIC_KEY_FILE="$2"; shift ;;
         --signature-verifier) (($# >= 2)) || die '--signature-verifier necesita una ruta'; SIGNATURE_VERIFIER="$2"; shift ;;
+        --ssh-public-key-file) (($# >= 2)) || die '--ssh-public-key-file necesita una ruta'; SSH_SIGNATURE_PUBLIC_KEY_FILE="$2"; shift ;;
+        --ssh-identity) (($# >= 2)) || die '--ssh-identity necesita un valor'; SSH_SIGNATURE_IDENTITY="$2"; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "argumento desconocido: $1" ;;
     esac
@@ -64,6 +76,9 @@ fi
 [[ "$LINUX_ARCH" =~ ^[A-Za-z0-9_]+$ ]] || die "arquitectura Linux no válida: $LINUX_ARCH"
 [[ "$WINDOWS_ARCH" =~ ^[A-Za-z0-9_]+$ ]] || die "arquitectura Windows no válida: $WINDOWS_ARCH"
 [[ -d "$RELEASE_DIR" && ! -L "$RELEASE_DIR" ]] || die "no existe o no es una carpeta release normal: $RELEASE_DIR"
+[[ -f "$RELEASE_DIR/LICENSE" && ! -L "$RELEASE_DIR/LICENSE" ]] || die 'falta la licencia MIT del proyecto en la release'
+grep -Fq 'MIT License' "$RELEASE_DIR/LICENSE" || die 'la licencia del proyecto en release no identifica MIT'
+grep -Fq 'Darkeiser003' "$RELEASE_DIR/LICENSE" || die 'la licencia del proyecto no identifica al titular'
 command -v jq >/dev/null 2>&1 || die 'jq es necesario para validar la release'
 command -v sha256sum >/dev/null 2>&1 || die 'sha256sum es necesario para validar la release'
 command -v stat >/dev/null 2>&1 || die 'stat es necesario para validar la release'
@@ -109,6 +124,7 @@ for schema in \
     jq empty "$RELEASE_DIR/$schema" >/dev/null || die "$schema no es JSON válido"
 done
 ok 'JSON y esquemas publicables válidos'
+ok 'licencia MIT del proyecto y titular presentes'
 
 required_linux=()
 if (( REQUIRE_APPIMAGE )); then
@@ -138,7 +154,8 @@ if (( REQUIRE_WINDOWS )); then
     for artifact in "${required_windows[@]}"; do
         [[ -f "$RELEASE_DIR/$artifact" && ! -L "$RELEASE_DIR/$artifact" && -s "$RELEASE_DIR/$artifact" ]] || die "falta el artefacto Windows regular $artifact"
     done
-    ok 'artefactos Windows principal, CLI y ZIP presentes'
+    [[ -f "$RELEASE_DIR/THIRD-PARTY-LICENSES-windows.zip" && ! -L "$RELEASE_DIR/THIRD-PARTY-LICENSES-windows.zip" && -s "$RELEASE_DIR/THIRD-PARTY-LICENSES-windows.zip" ]] || die 'falta el ZIP independiente de licencias Windows'
+    ok 'artefactos Windows principal, CLI, ZIP portable y avisos de licencias presentes'
 fi
 
 if (( REQUIRE_WINDOWS_EXECUTABLES )); then
@@ -205,18 +222,37 @@ if [[ -e "$checksums" || -L "$checksums" ]]; then
         [[ "${actual,,}" == "${expected,,}" ]] || die "SHA256SUMS.txt no coincide para $name"
         checksum_count=$((checksum_count + 1))
     done < "$checksums"
-    expected_count="$(find "$RELEASE_DIR" -maxdepth 1 -type f ! -name 'SHA256SUMS.txt' ! -name 'SHA256SUMS.txt.sig' ! -name '*.tmp' ! -name '*.bak' -printf '%f\n' | wc -l)"
+    expected_count="$(find "$RELEASE_DIR" -maxdepth 1 -type f ! -name 'SHA256SUMS.txt' ! -name 'SHA256SUMS.txt.sig' ! -name 'SHA256SUMS.txt.sshsig' ! -name '*.tmp' ! -name '*.bak' -printf '%f\n' | wc -l)"
     [[ "$checksum_count" == "$expected_count" ]] || die "SHA256SUMS.txt no cubre todos los ficheros publicables"
     ok 'SHA256SUMS.txt cubre todos los artefactos y sus hashes coinciden'
     if [[ -e "$signature" || -L "$signature" ]]; then
         [[ -f "$signature" && ! -L "$signature" && -s "$signature" ]] || die 'SHA256SUMS.txt.sig está vacío o no es un fichero normal'
-        [[ -n "$SIGNATURE_PUBLIC_KEY_FILE" && -s "$SIGNATURE_PUBLIC_KEY_FILE" ]] || die 'hay firma, pero falta --signature-public-key-file para verificarla'
+        [[ ( -n "$SIGNATURE_PUBLIC_KEY_FILE" && -s "$SIGNATURE_PUBLIC_KEY_FILE" ) || -n "${LTOOLS_UPDATE_PUBLIC_KEY:-${LTERMINAL_UPDATE_PUBLIC_KEY:-}}" ]] || die 'hay firma, pero falta --signature-public-key-file o una clave pública Ed25519 de entorno para verificarla'
         [[ -x "$SIGNATURE_VERIFIER" ]] || die 'hay firma, pero falta --signature-verifier ejecutable'
-        "$SIGNATURE_VERIFIER" release-signature \
-            --manifest "$checksums" --signature "$signature" \
-            --public-key-file "$SIGNATURE_PUBLIC_KEY_FILE" --verify >/dev/null \
+        signature_args=(release-signature --manifest "$checksums" --signature "$signature")
+        if [[ -n "$SIGNATURE_PUBLIC_KEY_FILE" ]]; then
+            signature_args+=(--public-key-file "$SIGNATURE_PUBLIC_KEY_FILE")
+        fi
+        "$SIGNATURE_VERIFIER" "${signature_args[@]}" --verify >/dev/null \
             || die 'la firma Ed25519 de SHA256SUMS.txt no es válida'
         ok 'firma Ed25519 de SHA256SUMS.txt verificada'
+    fi
+    ssh_signature="$RELEASE_DIR/SHA256SUMS.txt.sshsig"
+    if (( REQUIRE_SSH_SIGNATURE )); then
+        [[ -f "$ssh_signature" && ! -L "$ssh_signature" && -s "$ssh_signature" ]] || die 'se requiere SHA256SUMS.txt.sshsig y está ausente'
+    fi
+    if [[ -e "$ssh_signature" || -L "$ssh_signature" ]]; then
+        [[ -f "$ssh_signature" && ! -L "$ssh_signature" && -s "$ssh_signature" ]] || die 'SHA256SUMS.txt.sshsig está vacío o no es un fichero normal'
+        source "$ROOT_DIR/scripts/lib/ssh-signing.sh"
+        if [[ -n "$SSH_SIGNATURE_PUBLIC_KEY_FILE" ]]; then
+            export LTOOLS_SSH_SIGNING_PUBLIC_KEY_FILE="$SSH_SIGNATURE_PUBLIC_KEY_FILE"
+        fi
+        if [[ -n "$SSH_SIGNATURE_IDENTITY" ]]; then
+            export LTOOLS_SSH_SIGNING_IDENTITY="$SSH_SIGNATURE_IDENTITY"
+        fi
+        ltools_ssh_verify_manifest "$checksums" "$ssh_signature" >/dev/null \
+            || die 'la firma OpenSSH de SHA256SUMS.txt.sshsig no es válida'
+        ok 'firma OpenSSH de SHA256SUMS.txt verificada'
     fi
 fi
 

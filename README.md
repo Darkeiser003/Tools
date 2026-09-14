@@ -1194,8 +1194,8 @@ empaquetar usa `Build → Validar backend`. El argumento `--fast` por sí solo
 cambia la configuración de optimización, pero conserva la cobertura de pruebas
 que se haya seleccionado para esa ejecución. Las salidas locales del menú se
 separan entre `dist/local/` (staging) y `dist/local-release/` (paquete local)
-y permiten una excepción sin firma; la release publicable conserva la firma
-Ed25519 obligatoria en `release/`.
+y permiten una excepción sin firma; la release publicable conserva las firmas
+Ed25519 y SSH obligatorias en `release/`.
 En Windows, `scripts/build.ps1` ofrece preview, pruebas sin recompilar,
 builds y limpieza para el ejecutable nativo y el ZIP portable. Su perfil rápido
 de desarrollo conserva las pruebas; solo la opción explícita de compilar
@@ -1281,6 +1281,11 @@ La salida Linux ofrece tres entregables de uso:
   portable. El builder Windows deja también el `.exe` suelto para lanzarlo
   desde el explorador y abrir su consola propia.
 
+Los paquetes Linux y el ZIP portable Windows incluyen la carpeta
+`THIRD-PARTY-LICENSES`, con el índice de dependencias y sus avisos/licencias
+originales, además de `LICENSE` con la licencia MIT del proyecto. La release Windows publica además
+`THIRD-PARTY-LICENSES-windows.zip` para quien descargue solo el `.exe`.
+
 Cada paquete incluye `ltools-capabilities.json`. Además, `ltools-terminal.json`
 es un tercer entregable lógico, exclusivo para integraciones como LTerminal:
 contiene el protocolo, los argumentos de apertura y la capacidad que debe
@@ -1340,10 +1345,36 @@ con su plataforma, arquitectura, tipo, tamaño, URL directa de GitHub y hash
 SHA-256. El generador es Rust y no depende de scripts Bash para calcular ni
 verificar los datos.
 
-Las releases publicables generan además `SHA256SUMS.txt` y su firma separada
-`SHA256SUMS.txt.sig`. La firma usa Ed25519 y contiene Base64 de la firma del
-contenido exacto de `SHA256SUMS.txt`, el mismo formato que usa LTerminal. El
-builder busca automáticamente estas claves, sin incluirlas en el paquete:
+Las releases publicables generan `SHA256SUMS.txt` y dos firmas separadas:
+`SHA256SUMS.txt.sig`, en Ed25519 y Base64, que conserva compatibilidad con el
+verificador de actualizaciones de LTerminal, y `SHA256SUMS.txt.sshsig`, una
+firma OpenSSH del contenido exacto de checksums con el namespace
+`ltools-release`. Esta última usa la clave SSH configurada en Git o, si no hay
+una, `~/.ssh/id_ed25519`; se puede elegir otra con
+`LTOOLS_SSH_SIGNING_KEY_FILE` y ajustar la identidad firmante con
+`LTOOLS_SSH_SIGNING_IDENTITY`. Para verificación manual hacen falta la clave
+pública correspondiente y `ssh-keygen`:
+
+```bash
+printf '%s %s %s\n' "$(git config user.email)" \
+  "$(cut -d' ' -f1-2 ~/.ssh/id_ed25519.pub)" > /tmp/ltools-allowed-signers
+ssh-keygen -Y verify -f /tmp/ltools-allowed-signers \
+  -I "$(git config user.email)" -n ltools-release \
+  -s release/SHA256SUMS.txt.sshsig < release/SHA256SUMS.txt
+```
+
+GitHub muestra el estado «Verified» para commits y tags firmados con una clave
+SSH reconocida; no asigna ese distintivo automáticamente a un archivo adjunto
+por tener una firma SSH lateral. Por eso la build no crea ni publica tags: el
+tag de una versión debe apuntar al commit elegido explícitamente. Para que
+GitHub verifique el tag de release, configúralo en Git con la clave SSH de
+firma (`gpg.format=ssh` y `user.signingkey`) y créalo firmado, por ejemplo con
+`git tag -s vVERSION -m "LTools VERSION"`; después comprueba localmente con
+`git tag -v vVERSION` antes de subirlo. La clave privada no se empaqueta ni se
+sube.
+
+La firma Ed25519 que usa el actualizador continúa configurándose por separado
+con estas claves, que no se incluyen en el paquete:
 
 ```text
 ~/.config/lterminal/release-signing-private.pem
@@ -1394,11 +1425,48 @@ VERSION="$(sed -n 's/^version = "\([^" ]*\)"/\1/p' rust/Cargo.toml | head -n1)"
 ```
 
 Sube a la release de GitHub todos los archivos publicables de `release/`,
-incluidos `ltools-release.json`, `SHA256SUMS.txt` y `SHA256SUMS.txt.sig` con
-esos nombres exactos. La terminal puede leer primero el descriptor
+incluidos `ltools-release.json`, `SHA256SUMS.txt`, sus firmas `.sig` y
+`.sshsig`, y `LICENSE`. La terminal puede leer primero el descriptor
 del proyecto, seleccionar el artefacto apropiado para el sistema y verificar el
 SHA-256 y la firma Ed25519 antes de ofrecer la instalación. El descriptor de
 integración de terminal sigue siendo opcional y separado.
+
+#### Comprobar y descargar actualizaciones
+
+La GUI ofrece en **Ajustes** las opciones «Comprobar actualizaciones» y
+«Descargar actualización verificada». También se puede usar la CLI:
+
+```bash
+./ltools.sh update check
+./ltools.sh update download
+```
+
+`check` consulta la release estable del repositorio predeterminado
+`Darkeiser003/Tools`; `--repository OWNER/REPO` permite indicar otro. La
+descarga solo se habilita cuando el binario tiene una clave pública de
+confianza configurada o integrada. Se comprueban la firma Ed25519 de
+`SHA256SUMS.txt`, el hash del manifiesto, el hash del paquete y su tamaño. El
+paquete se guarda en **Descargas** del usuario actual con un nombre libre, sin
+sobrescribir archivos ni elevar privilegios. La herramienta no ejecuta ni
+reemplaza el programa: informa dónde quedó el paquete y deja la instalación
+final en manos del usuario.
+
+Los builds oficiales integran su clave pública de release; el builder no
+incluye la clave privada. Para builds locales se puede proporcionar
+`LTOOLS_UPDATE_PUBLIC_KEY_FILE` (o `LTOOLS_UPDATE_PUBLIC_KEY`) con la clave
+pública correspondiente a la clave privada que firma esa release. Sin una clave
+de confianza, `check` puede informar de la versión publicada, pero la descarga
+verificada se bloquea. Si una build se hace con una clave distinta a la usada
+para firmar GitHub Releases, no aceptará esas firmas; conserva coordinadas la
+clave privada del publicador y la pública que se integra en los binarios.
+
+El paquete se elige según plataforma y perfil: Linux descarga el AppImage si
+LTools se está ejecutando desde uno y, en otro caso, el tarball portable;
+Windows descarga el EXE GUI o CLI que corresponde al ejecutable actual. En
+Windows cierra la aplicación antes de sustituir el EXE; en Linux sigue las
+instrucciones del tipo de paquete y conserva una copia anterior. `update
+install` no está habilitado: la sustitución automática podría fallar por
+permisos, ubicación de instalación o empaquetado y no se hace silenciosamente.
 
 Para cambiar de repositorio o de etiqueta sin editar archivos, usa
 `LTOOLS_GITHUB_REPOSITORY` y `LTOOLS_GITHUB_TAG` al ejecutar los builders.
@@ -1528,9 +1596,12 @@ se eliminan si la operación no registró ningún paso reversible. Una nueva
 operación del mismo módulo reemplaza su plan automático anterior; para
 conservar un plan concreto y poder recuperarlo después, usa `--plan FICHERO`.
 
-Los logs, informes, planes, targets, staging y artefactos de distribución son
-locales y están excluidos por `.gitignore`. Para inspeccionar qué residuos
-regenerables existen antes de limpiar el árbol de trabajo:
+Los logs e informes guardados en las carpetas de salida predeterminadas
+(`dist/` y `reports/`), planes, targets, staging y releases locales están
+excluidos por `.gitignore`. Las rutas personalizadas de salida no se ignoran
+por su extensión, para que un archivo fuente o fixture `.zip`, `.exe`, `.log`
+o similar no desaparezca silenciosamente del control de versiones. Para
+inspeccionar qué residuos regenerables existen antes de limpiar el árbol:
 
 ```bash
 bash scripts/build.sh clean --dry-run
@@ -1671,6 +1742,7 @@ fuerza. Usa un prefijo temporal y no activa la lógica Linux de prefijos.
   lectura; `doctor --install TOOL` y las acciones que necesitan una dependencia
   solo muestran una instalación concreta, piden confirmación y la registran en
   el plan. Nunca existe una instalación masiva.
-- Los artefactos generados, caches, informes, logs, targets y dependencias de
-  frontend están excluidos por `.gitignore`; `Cargo.lock` sí se versiona. Antes
-  de un commit se recomienda revisar `git status --short --ignored`.
+- Los artefactos generados en las carpetas de salida predeterminadas, caches,
+  informes, logs y targets están excluidos por `.gitignore`; no se ignoran
+  globalmente las extensiones de ejecutables/paquetes/logs, y `Cargo.lock` sí
+  se versiona. Antes de un commit revisa `git status --short --ignored`.

@@ -809,14 +809,10 @@ fn tools_direct(ctx: &Context, action: &str, args: &[String]) -> Result<(), Stri
                 action,
                 &engine,
                 &command,
-                if matches!(
+                !matches!(
                     operation.as_str(),
                     "ps" | "logs" | "config" | "images" | "top"
-                ) {
-                    false
-                } else {
-                    true
-                },
+                ),
                 if matches!(
                     operation.as_str(),
                     "ps" | "logs" | "config" | "images" | "top"

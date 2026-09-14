@@ -533,18 +533,18 @@ fn menu(ctx: &Context) -> Result<(), String> {
             "3" => run(ctx, &["sessions".into()]),
             "4" => prompt(ctx, "Usuario: ", |_, value| inspect(value)),
             "5" => prompt(ctx, "Nuevo usuario: ", |c, value| {
-                create_user(c, &vec!["create".into(), value.into()])
+                create_user(c, &["create".into(), value.into()])
             }),
             "6" => prompt(ctx, "Usuario: ", |c, value| {
-                modify_user(c, &vec!["modify".into(), value.into()])
+                modify_user(c, &["modify".into(), value.into()])
             }),
             "7" => prompt(ctx, "Usuario: ", |c, value| {
-                change_password(c, &vec!["password".into(), value.into()])
+                change_password(c, &["password".into(), value.into()])
             }),
             "8" => prompt(ctx, "Usuario: ", |c, value| {
                 simple_user_mutation(
                     c,
-                    &vec!["enable".into(), value.into()],
+                    &["enable".into(), value.into()],
                     "activar la cuenta",
                     "Enable-LocalUser",
                 )
@@ -552,28 +552,28 @@ fn menu(ctx: &Context) -> Result<(), String> {
             "9" => prompt(ctx, "Usuario: ", |c, value| {
                 simple_user_mutation(
                     c,
-                    &vec!["disable".into(), value.into()],
+                    &["disable".into(), value.into()],
                     "desactivar la cuenta",
                     "Disable-LocalUser",
                 )
             }),
             "10" => prompt(ctx, "Usuario: ", |c, value| {
-                delete_user(c, &vec!["delete".into(), value.into()])
+                delete_user(c, &["delete".into(), value.into()])
             }),
             "11" => prompt(ctx, "Usuario: ", |c, value| {
-                expire_user(c, &vec!["expire".into(), value.into()])
+                expire_user(c, &["expire".into(), value.into()])
             }),
             "12" => prompt(ctx, "Grupo nuevo: ", |c, value| {
-                group_mutation(c, &vec!["group-create".into(), value.into()], true, false)
+                group_mutation(c, &["group-create".into(), value.into()], true, false)
             }),
             "13" => prompt(ctx, "Grupo: ", |c, value| {
-                group_mutation(c, &vec!["group-delete".into(), value.into()], false, false)
+                group_mutation(c, &["group-delete".into(), value.into()], false, false)
             }),
             "14" => prompt(ctx, "Usuario:Grupo: ", |c, value| {
-                group_mutation(c, &vec!["group-add".into(), value.into()], true, true)
+                group_mutation(c, &["group-add".into(), value.into()], true, true)
             }),
             "15" => prompt(ctx, "Usuario:Grupo: ", |c, value| {
-                group_mutation(c, &vec!["group-remove".into(), value.into()], false, true)
+                group_mutation(c, &["group-remove".into(), value.into()], false, true)
             }),
             "16" => open_lusrmgr(ctx),
             "17" => add_administrator_access(ctx, &["admin-add".into()]),

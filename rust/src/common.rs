@@ -999,6 +999,7 @@ pub fn restore_plan(path: &Path, dry_run: bool) -> io::Result<()> {
 
 #[cfg(test)]
 mod process_tests {
+    #[cfg(unix)]
     use super::{command_output_detailed, command_output_detailed_owned, run_command};
 
     #[cfg(unix)]

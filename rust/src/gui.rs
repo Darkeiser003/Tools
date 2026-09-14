@@ -292,6 +292,7 @@ mod gtk_legacy {
 
 #[cfg(target_os = "linux")]
 mod linux {
+    use std::cell::Cell;
     use std::ffi::{c_char, c_int, c_void, CStr, CString};
     use std::fs::OpenOptions;
     use std::io::{Read, Write};
@@ -693,6 +694,13 @@ mod linux {
         topbar: *mut Widget,
     }
 
+    struct StorageTreeColumnData {
+        column: *mut Widget,
+        renderer: *mut Widget,
+        column_width: Cell<c_int>,
+        wrap_width: Cell<c_int>,
+    }
+
     struct PreferenceData {
         kind: u8,
         value: &'static str,
@@ -902,6 +910,70 @@ mod linux {
             callback,
             data as *mut c_void,
             None,
+            0,
+        );
+    }
+
+    pub(super) fn storage_tree_column_widths(view_width: c_int) -> (c_int, c_int) {
+        let column_width = view_width.saturating_sub(8).clamp(180, 780);
+        let wrap_width = column_width.saturating_sub(48).max(132);
+        (column_width, wrap_width)
+    }
+
+    unsafe extern "C" fn on_storage_tree_size_allocate(
+        widget: *mut Widget,
+        _allocation: *mut c_void,
+        pointer: *mut c_void,
+    ) {
+        if widget.is_null() || pointer.is_null() {
+            return;
+        }
+        let data = &*(pointer as *const StorageTreeColumnData);
+        let view_width = gtk_widget_get_allocated_width(widget);
+        if view_width <= 0 {
+            return;
+        }
+        let (column_width, wrap_width) = storage_tree_column_widths(view_width);
+        if data.column_width.get() != column_width {
+            data.column_width.set(column_width);
+            gtk_tree_view_column_set_fixed_width(data.column, column_width);
+        }
+        if data.wrap_width.get() != wrap_width {
+            data.wrap_width.set(wrap_width);
+            let property = CString::new("wrap-width").expect("propiedad GTK sin NUL");
+            g_object_set(
+                data.renderer,
+                property.as_ptr(),
+                wrap_width,
+                std::ptr::null::<c_char>(),
+            );
+        }
+        gui_audit_event(&format!(
+            "STORAGE_TREE_LAYOUT\t{view_width}\t{column_width}\t{wrap_width}"
+        ));
+    }
+
+    unsafe extern "C" fn destroy_storage_tree_column_data(pointer: *mut c_void) {
+        if !pointer.is_null() {
+            drop(Box::from_raw(pointer as *mut StorageTreeColumnData));
+        }
+    }
+
+    unsafe fn connect_storage_tree_size_allocate(
+        tree: *mut Widget,
+        data: *mut StorageTreeColumnData,
+    ) {
+        let signal = CString::new("size-allocate").expect("señal GTK sin NUL");
+        let callback: Callback = Some(std::mem::transmute::<
+            unsafe extern "C" fn(*mut Widget, *mut c_void, *mut c_void),
+            unsafe extern "C" fn(),
+        >(on_storage_tree_size_allocate));
+        g_signal_connect_data(
+            tree,
+            signal.as_ptr(),
+            callback,
+            data.cast(),
+            Some(destroy_storage_tree_column_data),
             0,
         );
     }
@@ -2876,80 +2948,6 @@ mod linux {
         }
     }
 
-    #[cfg(test)]
-    mod storage_operation_choice_tests {
-        use super::storage_operation_choices;
-
-        #[test]
-        fn dropdowns_cover_every_supported_volume_action_once() {
-            for (title, expected) in [
-                (
-                    "Gestionar volúmenes LVM",
-                    [
-                        "pvcreate", "pvremove", "vgcreate", "vgremove", "lvcreate", "lvremove",
-                        "lvextend", "lvreduce",
-                    ]
-                    .as_slice(),
-                ),
-                (
-                    "Gestionar volúmenes Btrfs",
-                    [
-                        "subvolume-create",
-                        "subvolume-delete",
-                        "snapshot",
-                        "filesystem-resize",
-                        "balance",
-                        "device-add",
-                        "device-remove",
-                        "device-replace",
-                        "check-readonly",
-                    ]
-                    .as_slice(),
-                ),
-                (
-                    "Gestionar volúmenes ZFS",
-                    [
-                        "pool-create",
-                        "pool-destroy",
-                        "pool-export",
-                        "pool-import",
-                        "dataset-create",
-                        "dataset-destroy",
-                        "snapshot",
-                        "scrub",
-                        "set",
-                        "rename",
-                        "rollback",
-                    ]
-                    .as_slice(),
-                ),
-                (
-                    "Gestionar conjuntos RAID",
-                    [
-                        "detail", "examine", "assemble", "create", "add", "replace", "remove",
-                        "fail", "re-add", "stop", "check", "repair", "grow",
-                    ]
-                    .as_slice(),
-                ),
-            ] {
-                let choices = storage_operation_choices(title).expect("selector de acciones");
-                let actual = choices.iter().map(|(_, value)| *value).collect::<Vec<_>>();
-                assert_eq!(actual, expected, "selector incorrecto: {title}");
-                let labels = choices.iter().map(|(label, _)| *label).collect::<Vec<_>>();
-                assert!(labels.iter().all(|label| !label.is_empty()));
-                assert_eq!(
-                    labels.len(),
-                    labels
-                        .iter()
-                        .copied()
-                        .collect::<std::collections::HashSet<_>>()
-                        .len()
-                );
-            }
-            assert!(storage_operation_choices("No es un formulario de almacenamiento").is_none());
-        }
-    }
-
     unsafe fn native_action_dialog(title: &str, fields: &[NativeField]) -> Option<Vec<String>> {
         native_action_dialog_with_initial(title, fields, &[])
     }
@@ -3707,6 +3705,9 @@ mod linux {
         // it on the stack is enough while the store copies the row.
         let mut iter = [0_usize; 4];
         gtk_tree_store_append(store, iter.as_mut_ptr().cast(), parent);
+        if let Some(explanation) = node.explanation {
+            gui_audit_event(&format!("STORAGE_TREE_EXPLANATION\t{explanation}"));
+        }
         let row = CString::new(storage_tree_row_text(node)).unwrap_or_default();
         let path = CString::new(node.path.to_string_lossy().replace('\0', " ")).unwrap_or_default();
         gtk_tree_store_set(
@@ -3929,7 +3930,9 @@ mod linux {
             CString::new(crate::i18n::storage_map_text("column")).unwrap_or_default();
         gtk_tree_view_column_set_title(column, column_title.as_ptr());
         gtk_tree_view_column_set_sizing(column, 2);
-        gtk_tree_view_column_set_fixed_width(column, 780);
+        let (initial_tree_column_width, initial_tree_wrap_width) =
+            storage_tree_column_widths(screen_width.saturating_sub(120));
+        gtk_tree_view_column_set_fixed_width(column, initial_tree_column_width);
         let renderer = gtk_cell_renderer_text_new();
         let wrap_mode = CString::new("wrap-mode").unwrap_or_default();
         let wrap_width = CString::new("wrap-width").unwrap_or_default();
@@ -3938,13 +3941,20 @@ mod linux {
             wrap_mode.as_ptr(),
             2 as c_int,
             wrap_width.as_ptr(),
-            720 as c_int,
+            initial_tree_wrap_width,
             std::ptr::null::<c_char>(),
         );
         gtk_tree_view_column_pack_start(column, renderer, 1);
         let attribute = CString::new("text").unwrap();
         gtk_tree_view_column_add_attribute(column, renderer, attribute.as_ptr(), 0);
         gtk_tree_view_append_column(tree, column);
+        let tree_column_data = Box::into_raw(Box::new(StorageTreeColumnData {
+            column,
+            renderer,
+            column_width: Cell::new(initial_tree_column_width),
+            wrap_width: Cell::new(initial_tree_wrap_width),
+        }));
+        connect_storage_tree_size_allocate(tree, tree_column_data);
         let scrolled = gtk_scrolled_window_new(null_mut(), null_mut());
         gtk_scrolled_window_set_policy(scrolled, 1, 1);
         // Large trees must scroll inside a bounded viewport instead of
@@ -3952,7 +3962,9 @@ mod linux {
         // Probe GTK properties before setting them so older GTK 3 releases
         // still start; the widget request is a conservative fallback.
         bound_storage_viewport_height(scrolled);
-        gtk_widget_set_size_request(scrolled, 0, 64);
+        // Leave enough room for the name, mode, volume metrics and a wrapped
+        // standard-path explanation even on a 640x480 display.
+        gtk_widget_set_size_request(scrolled, 0, 96);
         gtk_widget_set_hexpand(scrolled, 1);
         gtk_container_add(scrolled, tree);
         gtk_box_pack_start(body, scrolled, 1, 1, 0);
@@ -5092,6 +5104,8 @@ mod linux {
                 ("guide", vec!["network"]),
                 ("guide", vec!["boot"]),
                 ("guide", vec!["services"]),
+                ("guide", vec!["updates"]),
+                ("update", vec!["--help"]),
                 ("automation", vec!["list"]),
             ];
             let mut report = vec!["GUI_SAFE_ACTIONS_BEGIN".to_owned()];
@@ -5135,6 +5149,7 @@ mod linux {
             report.push("SKIP\tstorage open-native-manager (external UI)".to_owned());
             report.push("SKIP\tautomation register/run/remove (user fields)".to_owned());
             report.push("SKIP\tsoftware search (user query field)".to_owned());
+            report.push("SKIP\tupdate check/download (external release network; local signed fixture test runs in cargo test)".to_owned());
             report.push("GUI_SAFE_ACTIONS_END".to_owned());
             let _ = std::fs::write(&marker, report.join("\n") + "\n");
             unsafe {
@@ -6164,6 +6179,24 @@ mod linux {
                 crate::i18n::gui_text("settings_guide"),
                 "guide",
                 &["settings"],
+                buffer,
+                status,
+            );
+            add_action(
+                settings_page,
+                visibility_heading_row + 11,
+                crate::i18n::gui_text("update_check"),
+                "update",
+                &["check"],
+                buffer,
+                status,
+            );
+            add_action(
+                settings_page,
+                visibility_heading_row + 12,
+                crate::i18n::gui_text("update_download"),
+                "update",
+                &["download"],
                 buffer,
                 status,
             );
@@ -8605,11 +8638,85 @@ mod linux {
             Ok(())
         }
     }
+
+    #[cfg(test)]
+    mod storage_operation_choice_tests {
+        use super::storage_operation_choices;
+
+        #[test]
+        fn dropdowns_cover_every_supported_volume_action_once() {
+            for (title, expected) in [
+                (
+                    "Gestionar volúmenes LVM",
+                    [
+                        "pvcreate", "pvremove", "vgcreate", "vgremove", "lvcreate", "lvremove",
+                        "lvextend", "lvreduce",
+                    ]
+                    .as_slice(),
+                ),
+                (
+                    "Gestionar volúmenes Btrfs",
+                    [
+                        "subvolume-create",
+                        "subvolume-delete",
+                        "snapshot",
+                        "filesystem-resize",
+                        "balance",
+                        "device-add",
+                        "device-remove",
+                        "device-replace",
+                        "check-readonly",
+                    ]
+                    .as_slice(),
+                ),
+                (
+                    "Gestionar volúmenes ZFS",
+                    [
+                        "pool-create",
+                        "pool-destroy",
+                        "pool-export",
+                        "pool-import",
+                        "dataset-create",
+                        "dataset-destroy",
+                        "snapshot",
+                        "scrub",
+                        "set",
+                        "rename",
+                        "rollback",
+                    ]
+                    .as_slice(),
+                ),
+                (
+                    "Gestionar conjuntos RAID",
+                    [
+                        "detail", "examine", "assemble", "create", "add", "replace", "remove",
+                        "fail", "re-add", "stop", "check", "repair", "grow",
+                    ]
+                    .as_slice(),
+                ),
+            ] {
+                let choices = storage_operation_choices(title).expect("selector de acciones");
+                let actual = choices.iter().map(|(_, value)| *value).collect::<Vec<_>>();
+                assert_eq!(actual, expected, "selector incorrecto: {title}");
+                let labels = choices.iter().map(|(label, _)| *label).collect::<Vec<_>>();
+                assert!(labels.iter().all(|label| !label.is_empty()));
+                assert_eq!(
+                    labels.len(),
+                    labels
+                        .iter()
+                        .copied()
+                        .collect::<std::collections::HashSet<_>>()
+                        .len()
+                );
+            }
+            assert!(storage_operation_choices("No es un formulario de almacenamiento").is_none());
+        }
+    }
 }
 
 #[cfg(all(test, target_os = "linux"))]
 mod storage_tree_row_tests {
-    use super::linux::storage_tree_row_text;
+    use super::linux::{storage_tree_column_widths, storage_tree_row_text};
     use crate::storage_map::Node;
     use std::path::PathBuf;
 
@@ -8628,15 +8735,40 @@ mod storage_tree_row_tests {
             writable: true,
             protected: false,
             permission: "755".to_owned(),
-            explanation: None,
+            explanation: Some("Caché de usuario; suele poder limpiarse, pero regenerarla puede ralentizar el siguiente inicio."),
             error: None,
             children: Vec::new(),
         };
         let row = storage_tree_row_text(&node);
-        assert_eq!(row.lines().count(), 3);
-        for value in ["fixture-root", "mode 755", "2.0MiB", "1.0MiB", "512.0KiB"] {
+        assert_eq!(row.lines().count(), 4);
+        for value in [
+            "fixture-root",
+            "mode 755",
+            "2.0MiB",
+            "1.0MiB",
+            "512.0KiB",
+            "Caché de usuario; suele poder limpiarse",
+        ] {
             assert!(row.contains(value), "map row lost {value}: {row}");
         }
+    }
+
+    #[test]
+    fn storage_tree_text_width_tracks_the_actual_viewport() {
+        for view_width in [180, 240, 320, 520, 640, 1280] {
+            let (column_width, wrap_width) = storage_tree_column_widths(view_width);
+            assert!(
+                column_width <= view_width,
+                "column {column_width}px exceeds viewport {view_width}px"
+            );
+            assert!(
+                wrap_width < column_width,
+                "wrap width {wrap_width}px must leave room for tree indentation"
+            );
+            assert!(wrap_width >= 132);
+        }
+        assert_eq!(storage_tree_column_widths(520), (512, 464));
+        assert_eq!(storage_tree_column_widths(1280), (780, 732));
     }
 }
 
@@ -8918,6 +9050,8 @@ mod windows {
                 Some(("winslim", &["menu"], "winslim_launch"))
             }
             (WINSLIM_PAGE, 2) => Some(("winslim", &["guide"], "winslim_guide")),
+            (SETTINGS_PAGE, 0) => Some(("update", &["check", "--pause"], "update_check")),
+            (SETTINGS_PAGE, 1) => Some(("update", &["download", "--pause"], "update_download")),
             _ => None,
         }
     }
@@ -9005,6 +9139,25 @@ mod windows {
         }
     }
 
+    fn launch_update_console(args: &[&str]) -> String {
+        let executable = match std::env::current_exe() {
+            Ok(path) => path,
+            Err(error) => return format!("No se pudo localizar WinSlim-Tools: {error}"),
+        };
+        match std::process::Command::new(executable)
+            .env("LTOOLS_CLI", "1")
+            .env("LTOOLS_NO_AUTO_TERMINAL", "1")
+            .arg("update")
+            .args(args.iter().copied().filter(|argument| *argument != "--pause"))
+            .arg("--pause")
+            .creation_flags(0x0000_0010) // CREATE_NEW_CONSOLE
+            .spawn()
+        {
+            Ok(_) => "Se abrió una consola independiente para comprobar o descargar una actualización. No se eleva el proceso ni se sustituye automáticamente la instalación.".into(),
+            Err(error) => format!("No se pudo abrir la consola de actualización: {error}"),
+        }
+    }
+
     pub(super) fn menu_labels(page: usize) -> Vec<String> {
         (0..ACTION_COUNT)
             .filter_map(|index| {
@@ -9070,11 +9223,12 @@ mod windows {
 
     unsafe fn navigate_to(hwnd: HWND, page: usize) {
         if let Some(state) = state_mut(hwnd) {
-            if state.current_page >= 0 && state.current_page as usize != page {
-                if state.history_len < state.history.len() {
-                    state.history[state.history_len] = state.current_page as usize;
-                    state.history_len += 1;
-                }
+            if state.current_page >= 0
+                && state.current_page as usize != page
+                && state.history_len < state.history.len()
+            {
+                state.history[state.history_len] = state.current_page as usize;
+                state.history_len += 1;
             }
             state.current_page = page as isize;
         }
@@ -9195,6 +9349,20 @@ mod windows {
                 }
             }
             if page == SETTINGS_PAGE {
+                move_control(
+                    state.action_buttons[SETTINGS_PAGE][0],
+                    12,
+                    350,
+                    (content_width - 24).max(150),
+                    button_height,
+                );
+                move_control(
+                    state.action_buttons[SETTINGS_PAGE][1],
+                    12,
+                    392,
+                    (content_width - 24).max(150),
+                    button_height,
+                );
                 move_control(
                     state.settings_theme,
                     190,
@@ -9561,7 +9729,9 @@ mod windows {
                             return 0;
                         }
                     }
-                    let result = if page == ACCOUNT_PAGE {
+                    let result = if command == "update" {
+                        launch_update_console(args)
+                    } else if page == ACCOUNT_PAGE {
                         let Some(state) = state(hwnd) else {
                             return 0;
                         };
@@ -10196,7 +10366,7 @@ mod windows_menu_tests {
 
     #[test]
     fn every_visible_win32_action_has_a_label() {
-        for page in [0, 1, 2, 3, 4, 5, 7, 8] {
+        for page in [0, 1, 2, 3, 4, 5, 6, 7, 8] {
             let labels = windows_menu_labels(page);
             assert!(!labels.is_empty(), "visible page {page} has no actions");
             for (index, label) in labels.iter().enumerate() {
@@ -10206,6 +10376,19 @@ mod windows_menu_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn windows_settings_exposes_both_update_actions() {
+        let _language_guard = crate::i18n::language_test_guard();
+        crate::i18n::set("es");
+        let settings = windows_menu_labels(6);
+        assert!(settings
+            .iter()
+            .any(|label| label == "Comprobar actualizaciones"));
+        assert!(settings
+            .iter()
+            .any(|label| label == "Descargar actualización verificada"));
     }
 
     #[test]

@@ -25,9 +25,9 @@ pub fn descriptor_json() -> String {
         "ltools"
     };
     let features = if cfg!(windows) {
-        "\"audit\", \"games\", \"packages\", \"protected-cleanup\",\n    \"storage\", \"registry\", \"defaults\", \"system-control\", \"native-diagnostics\", \"native-actions\",\n    \"rollback\", \"dry-run\", \"plans\", \"tsv-export\", \"json-export\""
+        "\"audit\", \"games\", \"packages\", \"protected-cleanup\",\n    \"storage\", \"registry\", \"defaults\", \"system-control\", \"native-diagnostics\", \"native-actions\",\n    \"rollback\", \"dry-run\", \"plans\", \"tsv-export\", \"json-export\", \"verified-updates\", \"verified-update-download\""
     } else {
-        "\"audit\", \"games\", \"packages\", \"protected-cleanup\", \"wine-prefixes\",\n    \"storage\", \"registry\", \"defaults\", \"system-control\", \"native-diagnostics\", \"native-actions\",\n    \"rollback\", \"dry-run\", \"plans\", \"tsv-export\", \"json-export\""
+        "\"audit\", \"games\", \"packages\", \"protected-cleanup\", \"wine-prefixes\",\n    \"storage\", \"registry\", \"defaults\", \"system-control\", \"native-diagnostics\", \"native-actions\",\n    \"rollback\", \"dry-run\", \"plans\", \"tsv-export\", \"json-export\", \"verified-updates\", \"verified-update-download\""
     };
     let language_values = crate::i18n::SUPPORTED
         .iter()
@@ -92,13 +92,29 @@ pub fn descriptor_json() -> String {
       "artifacts": ["AppImage", "AppImage-cli", "tar.gz"],
       "standalone": true,
       "no_arguments": "opens-native-graphical-window",
-      "shell": "LTOOLS_SHELL or SHELL, then bash/sh"
+      "shell": "LTOOLS_SHELL or SHELL, then bash/sh",
+      "updates": {{
+        "check_args": ["update", "check"],
+        "download_args": ["update", "download"],
+        "package_selection": "AppImage when running inside AppImage, otherwise tar.gz; matches GUI/CLI profile",
+        "destination": "user Downloads directory; never overwrites an existing file",
+        "automatic_install": false,
+        "integrity": "Ed25519 update signature and OpenSSH SSHSIG release signature, signed manifest checksum, artifact SHA-256 and size"
+      }}
     }},
     "windows": {{
       "artifacts": ["exe", "portable-zip"],
       "standalone": true,
       "no_arguments": "opens-native-graphical-window",
-      "shell": "cmd.exe or PowerShell host"
+      "shell": "cmd.exe or PowerShell host",
+      "updates": {{
+        "check_args": ["update", "check"],
+        "download_args": ["update", "download"],
+        "package_selection": "Windows EXE matching GUI/CLI profile and architecture",
+        "destination": "user Downloads directory; never overwrites an existing file",
+        "automatic_install": false,
+        "integrity": "Ed25519 update signature and OpenSSH SSHSIG release signature, signed manifest checksum, artifact SHA-256 and size"
+      }}
     }}
   }},
   "host_tools": [
@@ -1150,6 +1166,8 @@ mod tests {
     #[test]
     fn descriptor_declara_esquema_y_arranque_de_terminal() {
         let json = descriptor_json();
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json).expect("el descriptor de capacidades debe ser JSON válido");
         assert!(json.contains("ltools-capabilities-v1"));
         assert!(json.contains("lterminal-startup-v1"));
         assert!(json.contains("--open-path"));
@@ -1176,6 +1194,27 @@ mod tests {
         assert!(json.contains("\"default\": \"ocean\""));
         assert!(json.contains("\"winslim\""));
         assert!(json.contains("\"zh\""));
+        assert!(parsed["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|feature| feature == "verified-updates"));
+        assert_eq!(
+            parsed["distribution"]["linux"]["updates"]["automatic_install"],
+            false
+        );
+        assert_eq!(
+            parsed["distribution"]["windows"]["updates"]["automatic_install"],
+            false
+        );
+        assert_eq!(
+            parsed["distribution"]["linux"]["updates"]["download_args"][1],
+            "download"
+        );
+        assert_eq!(
+            parsed["distribution"]["windows"]["updates"]["download_args"][1],
+            "download"
+        );
         // El catálogo de herramientas es específico de cada plataforma:
         // Linux expone auditoría/prefijos y Windows herramientas nativas.
         if cfg!(windows) {

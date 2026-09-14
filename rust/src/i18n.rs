@@ -159,7 +159,7 @@ pub fn visual_options() -> String {
 pub fn games_label() -> &'static str {
     #[cfg(windows)]
     {
-        return match current() {
+        match current() {
             "en" => "Inventory native Windows games and launchers",
             "de" => "Native Windows-Spiele und Launcher inventarisieren",
             "fr" => "Inventorier les jeux et lanceurs Windows natifs",
@@ -169,7 +169,7 @@ pub fn games_label() -> &'static str {
             "nl" => "Native Windows-games en launchers inventariseren",
             "pl" => "Inwentaryzuj natywne gry i launchery Windows",
             _ => "Inventario de juegos y lanzadores Windows nativos",
-        };
+        }
     }
     #[cfg(not(windows))]
     {
@@ -180,7 +180,7 @@ pub fn games_label() -> &'static str {
 pub fn games_help() -> &'static str {
     #[cfg(windows)]
     {
-        return match current() {
+        match current() {
             "en" => "Native Windows game and launcher inventory",
             "de" => "Inventar nativer Windows-Spiele und Launcher",
             "fr" => "Inventaire des jeux et lanceurs Windows natifs",
@@ -190,7 +190,7 @@ pub fn games_help() -> &'static str {
             "nl" => "Inventaris van native Windows-games en launchers",
             "pl" => "Inwentaryzacja natywnych gier i launcherów Windows",
             _ => "Inventario nativo de juegos y lanzadores Windows",
-        };
+        }
     }
     #[cfg(not(windows))]
     {
@@ -202,7 +202,7 @@ pub fn games_help() -> &'static str {
 pub fn prefix_label() -> &'static str {
     #[cfg(windows)]
     {
-        return match current() {
+        match current() {
             "en" => "Wine/Proton prefixes (not applicable on Windows)",
             "de" => "Wine-/Proton-Präfixe (unter Windows nicht anwendbar)",
             "fr" => "Préfixes Wine/Proton (inapplicables sous Windows)",
@@ -212,7 +212,7 @@ pub fn prefix_label() -> &'static str {
             "nl" => "Wine-/Proton-prefixes (niet van toepassing op Windows)",
             "pl" => "Prefiksy Wine/Proton (nie dotyczą Windows)",
             _ => "Prefijos Wine/Proton (no aplicable en Windows)",
-        };
+        }
     }
     #[cfg(not(windows))]
     {
@@ -223,7 +223,7 @@ pub fn prefix_label() -> &'static str {
 pub fn prefix_help() -> &'static str {
     #[cfg(windows)]
     {
-        return match current() {
+        match current() {
             "en" => "Not available in native Windows mode; no Wine/Proton paths are scanned",
             "de" => "Im nativen Windows-Modus nicht verfügbar; keine Wine-/Proton-Pfade werden geprüft",
             "fr" => "Indisponible en mode Windows natif ; aucun chemin Wine/Proton n’est analysé",
@@ -233,7 +233,7 @@ pub fn prefix_help() -> &'static str {
             "nl" => "Niet beschikbaar in native Windows-modus; er worden geen Wine-/Proton-paden gescand",
             "pl" => "Niedostępne w natywnym trybie Windows; ścieżki Wine/Proton nie są skanowane",
             _ => "No aplicable en Windows nativo; no se escanean rutas Wine/Proton",
-        };
+        }
     }
     #[cfg(not(windows))]
     {
@@ -244,7 +244,7 @@ pub fn prefix_help() -> &'static str {
 pub fn defaults_help() -> &'static str {
     #[cfg(windows)]
     {
-        return match current() {
+        match current() {
             "en" => "Show native Windows launcher locations",
             "de" => "Native Windows-Launcherpfade anzeigen",
             "fr" => "Afficher les emplacements des lanceurs Windows natifs",
@@ -254,7 +254,7 @@ pub fn defaults_help() -> &'static str {
             "nl" => "Native Windows-launcherlocaties tonen",
             "pl" => "Pokaż lokalizacje natywnych launcherów Windows",
             _ => "Mostrar rutas de lanzadores nativos de Windows",
-        };
+        }
     }
     #[cfg(not(windows))]
     {
@@ -265,7 +265,7 @@ pub fn defaults_help() -> &'static str {
 pub fn system_help() -> &'static str {
     #[cfg(windows)]
     {
-        return match current() {
+        match current() {
             "en" => "Windows services, processes, event log and controlled actions",
             "de" => "Windows-Dienste, Prozesse, Ereignisprotokoll und kontrollierte Aktionen",
             "fr" => "Services Windows, processus, journal des événements et actions contrôlées",
@@ -275,7 +275,7 @@ pub fn system_help() -> &'static str {
             "nl" => "Windows-services, processen, gebeurtenislogboek en gecontroleerde acties",
             "pl" => "Usługi Windows, procesy, dziennik zdarzeń i kontrolowane działania",
             _ => "Servicios, procesos, eventos y acciones controladas de Windows",
-        };
+        }
     }
     #[cfg(not(windows))]
     {
@@ -377,7 +377,7 @@ pub fn diagnostics_no_output() -> &'static str {
 pub fn storage_label() -> &'static str {
     #[cfg(windows)]
     {
-        return match current() {
+        match current() {
             "en" => "Manage Windows disks and partitions",
             "de" => "Windows-Datenträger und Partitionen verwalten",
             "fr" => "Gérer les disques et partitions Windows",
@@ -387,7 +387,7 @@ pub fn storage_label() -> &'static str {
             "nl" => "Windows-schijven en partities beheren",
             "pl" => "Zarządzaj dyskami i partycjami Windows",
             _ => "Gestionar discos y particiones Windows",
-        };
+        }
     }
     #[cfg(not(windows))]
     {
@@ -456,7 +456,7 @@ pub fn boot_label() -> &'static str {
 pub fn registry_label() -> &'static str {
     #[cfg(windows)]
     {
-        return match current() {
+        match current() {
             "en" => "Inspect Windows Registry",
             "de" => "Windows-Registrierung prüfen",
             "fr" => "Inspecter le registre Windows",
@@ -466,7 +466,7 @@ pub fn registry_label() -> &'static str {
             "nl" => "Windows-register inspecteren",
             "pl" => "Inspekcja rejestru Windows",
             _ => "Inspeccionar el Registro de Windows",
-        };
+        }
     }
     #[cfg(not(windows))]
     {
@@ -1208,6 +1208,9 @@ pub fn prefix_flags() -> &'static str {
 /// cruzada en los módulos gráficos.
 #[cfg(any(target_os = "linux", windows))]
 pub fn gui_text(key: &str) -> &'static str {
+    if matches!(key, "update_check" | "update_download") {
+        return update_text(key);
+    }
     if matches!(
         key,
         "settings_apply" | "settings_guide" | "elevation_default"
@@ -3325,6 +3328,9 @@ pub fn category_text(key: &str) -> &'static str {
 /// que el binario de consola conserve portabilidad incluso en plataformas
 /// donde no se compila una GUI nativa.
 pub fn settings_text(key: &str) -> &'static str {
+    if matches!(key, "update_check" | "update_download") {
+        return update_text(key);
+    }
     match (current(), key) {
         ("en", "theme") => "Theme",
         ("en", "language") => "Language",
@@ -3394,6 +3400,47 @@ pub fn settings_text(key: &str) -> &'static str {
         (_, "language") => "Idioma",
         (_, "color") => "Modo de color",
         (_, "current") => "Actual",
+        (_, _) => "",
+    }
+}
+
+/// Etiquetas de actualización, compartidas por la GUI y la navegación CLI.
+pub fn update_text(key: &str) -> &'static str {
+    match (current(), key) {
+        ("ar", "update_check") => "التحقق من وجود تحديثات",
+        ("ar", "update_download") => "تنزيل التحديث بعد التحقق",
+        ("de", "update_check") => "Nach Updates suchen",
+        ("de", "update_download") => "Verifiziertes Update herunterladen",
+        ("en", "update_check") => "Check for updates",
+        ("en", "update_download") => "Download verified update",
+        ("es", "update_check") => "Comprobar actualizaciones",
+        ("es", "update_download") => "Descargar actualización verificada",
+        ("fr", "update_check") => "Rechercher des mises à jour",
+        ("fr", "update_download") => "Télécharger la mise à jour vérifiée",
+        ("hi", "update_check") => "अपडेट जाँचें",
+        ("hi", "update_download") => "सत्यापित अपडेट डाउनलोड करें",
+        ("it", "update_check") => "Controlla aggiornamenti",
+        ("it", "update_download") => "Scarica l’aggiornamento verificato",
+        ("ja", "update_check") => "更新を確認",
+        ("ja", "update_download") => "検証済み更新をダウンロード",
+        ("ko", "update_check") => "업데이트 확인",
+        ("ko", "update_download") => "검증된 업데이트 다운로드",
+        ("nl", "update_check") => "Controleren op updates",
+        ("nl", "update_download") => "Geverifieerde update downloaden",
+        ("pl", "update_check") => "Sprawdź aktualizacje",
+        ("pl", "update_download") => "Pobierz zweryfikowaną aktualizację",
+        ("pt", "update_check") => "Procurar atualizações",
+        ("pt", "update_download") => "Transferir atualização verificada",
+        ("ro", "update_check") => "Verifică actualizările",
+        ("ro", "update_download") => "Descarcă actualizarea verificată",
+        ("ru", "update_check") => "Проверить обновления",
+        ("ru", "update_download") => "Скачать проверенное обновление",
+        ("uk", "update_check") => "Перевірити оновлення",
+        ("uk", "update_download") => "Завантажити перевірене оновлення",
+        ("zh", "update_check") => "检查更新",
+        ("zh", "update_download") => "下载已验证的更新",
+        (_, "update_check") => "Comprobar actualizaciones",
+        (_, "update_download") => "Descargar actualización verificada",
         (_, _) => "",
     }
 }
@@ -4069,7 +4116,14 @@ mod tests {
         let _guard = language_test_guard();
         for language in SUPPORTED {
             set(language);
-            for key in ["theme", "language", "color", "current"] {
+            for key in [
+                "theme",
+                "language",
+                "color",
+                "current",
+                "update_check",
+                "update_download",
+            ] {
                 assert!(!settings_text(key).is_empty());
             }
         }
@@ -4157,6 +4211,8 @@ mod tests {
                 "settings_apply",
                 "settings_guide",
                 "elevation_default",
+                "update_check",
+                "update_download",
                 "visible",
                 "hidden",
             ] {

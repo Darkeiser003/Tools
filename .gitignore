@@ -3,45 +3,18 @@
 
 # Artefactos distribuibles y staging local. Todo se puede regenerar con el
 # builder; no se guardan releases ni resultados de una máquina concreta.
-dist/
-build/
-out/
-artifacts/
-release/
-**/dist/
-**/build/
-**/out/
-**/artifacts/
-.ltools-build.*
-.appimage-builder/
-*.AppImage
-*.appimage
-*.tar.gz
-*.tar.xz
-*.tar.zst
-*.zip
-SHA256SUMS.txt
-SHA256SUMS.txt.sig
-*.sig
-*.7z
-*.deb
-*.rpm
-*.pkg.tar
-*.pkg.tar.*
-*.msi
-*.dmg
+/dist/
+/build/
+/out/
+/artifacts/
+/release/
+/.ltools-build.*
+/.appimage-builder/
 
 # Rust/Cargo. Cargo.lock se conserva: LTools es una aplicación distribuible.
-target/
-rust/target/
-**/target/
+/target/
+/rust/target/
 *.rs.bk
-*.pdb
-*.exe
-*.dll
-*.lib
-*.ilk
-*.dSYM/
 
 # Node, JavaScript y gestores de frontend/herramientas auxiliares.
 node_modules/
@@ -64,7 +37,6 @@ pnpm-debug.log*
 __pycache__/
 **/__pycache__/
 *.py[cod]
-*.so
 .venv/
 venv/
 env/
@@ -74,8 +46,7 @@ env/
 .tox/
 
 # Informes, planes, resultados y temporales de pruebas.
-reports/
-**/reports/
+/reports/
 rust-audit-*/
 rust-games-*/
 rust-package-audit-*/
@@ -95,12 +66,6 @@ cleanup-plan.tsv
 windows/target/
 windows/bin/
 windows/obj/
-
-# Logs generados por builds, smoke/E2E y herramientas locales.
-*.log
-*.log.*
-build-*.tsv
-*-timings.tsv
 
 # Backups creados por migraciones y editores.
 *.bak

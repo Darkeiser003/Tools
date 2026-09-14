@@ -9,6 +9,7 @@ set -Eeuo pipefail
 export LTOOLS_LANG=es
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+source "$ROOT_DIR/scripts/lib/third-party-licenses.sh"
 TARGET="${LTOOLS_WINDOWS_TARGET:-x86_64-pc-windows-gnu}"
 RUNNER="${LTOOLS_WINE_RUNNER:-}"
 # Este builder puede ejecutarse desde el builder Linux, que también usa
@@ -33,6 +34,7 @@ REQUIRE_GUI=0
 WINE_TIMEOUT_SECONDS="${LTOOLS_WINE_TIMEOUT_SECONDS:-60}"
 ARTIFACT_STAGING=""
 PACKAGE_TEST_DIR=""
+LICENSE_TEST_DIR=""
 
 die() { printf 'WINDOWS-WINE ERROR: %s\n' "$1" >&2; exit 1; }
 ok() { printf '  OK    %s\n' "$1"; }
@@ -95,6 +97,8 @@ done
 
 [[ "$TARGET" =~ ^[A-Za-z0-9_\.-]+$ ]] || die "target Rust inválido: $TARGET"
 WINDOWS_CARGO_TARGET_DIR="$(realpath -m -- "$WINDOWS_CARGO_TARGET_DIR")"
+TEMP_ROOT="$(realpath -m -- "${TMPDIR:-/tmp}")"
+[[ -d "$TEMP_ROOT" ]] || die "TMPDIR no existe o no es un directorio: $TEMP_ROOT"
 mkdir -p -- "$WINDOWS_CARGO_TARGET_DIR"
 export CARGO_TARGET_DIR="$WINDOWS_CARGO_TARGET_DIR"
 
@@ -150,6 +154,9 @@ cleanup_e2e_staging() {
     if [[ -n "$PACKAGE_TEST_DIR" && -d "$PACKAGE_TEST_DIR" ]]; then
         rm -rf -- "$PACKAGE_TEST_DIR" 2>/dev/null || true
     fi
+    if [[ -n "$LICENSE_TEST_DIR" && -d "$LICENSE_TEST_DIR" ]]; then
+        rm -rf -- "$LICENSE_TEST_DIR" 2>/dev/null || true
+    fi
     if [[ -n "$ARTIFACT_STAGING" && -d "$ARTIFACT_STAGING" ]]; then
         rm -rf -- "$ARTIFACT_STAGING" 2>/dev/null || true
     fi
@@ -158,7 +165,7 @@ cleanup_e2e_staging() {
 trap cleanup_e2e_staging EXIT
 
 if [[ -z "$PREFIX" ]]; then
-    PREFIX="$(mktemp -d "${TMPDIR:-/tmp}/ltools-windows-wine.XXXXXX")"
+    PREFIX="$(mktemp -d "$TEMP_ROOT/ltools-windows-wine.XXXXXX")"
     CREATED_TEMP_PREFIX=1
     if [[ "$KEEP_PREFIX" -eq 1 ]]; then
         printf 'Prefijo conservado en: %s\n' "$PREFIX"
@@ -323,6 +330,7 @@ package_windows_artifact() {
     local artifact="$ARTIFACT_STAGING/ltools-$VERSION-windows-$package_arch.exe"
     local cli_artifact="$ARTIFACT_STAGING/ltools-$VERSION-windows-$package_arch-cli.exe"
     local package_zip="$ARTIFACT_STAGING/ltools-$VERSION-windows-$package_arch.zip"
+    local licenses_zip="$ARTIFACT_STAGING/THIRD-PARTY-LICENSES-windows.zip"
     local metadata="$ARTIFACT_STAGING/ltools-$VERSION-windows-$package_arch-wine.json"
     command -v zip >/dev/null 2>&1 || die 'zip es necesario para generar el paquete portable Windows'
     command -v unzip >/dev/null 2>&1 || die 'unzip es necesario para validar el paquete portable Windows'
@@ -339,6 +347,10 @@ package_windows_artifact() {
         }
         cp -a -- "$ROOT_DIR/windows/$launcher" "$portable_dir/$launcher"
     done
+    ltools_create_third_party_license_bundle "$portable_dir/THIRD-PARTY-LICENSES" "$TARGET" \
+        || die 'no se pudieron reunir las licencias de las dependencias Windows'
+    grep -Fq 'ISC' "$portable_dir/THIRD-PARTY-LICENSES/INDEX.txt" || die 'bundle Windows sin dependencias ISC'
+    grep -Fq 'CDLA-Permissive-2.0' "$portable_dir/THIRD-PARTY-LICENSES/INDEX.txt" || die 'bundle Windows sin licencia de raíces CDLA'
     # Una release combinada puede tener el descriptor Linux como canónico;
     # publica además la variante Windows para WinSlim Terminal.
     if [[ -z "${CAPABILITIES:-}" ]]; then
@@ -356,6 +368,7 @@ package_windows_artifact() {
     cp -a -- "$ROOT_DIR/appimage/ltools-capabilities.schema.json" "$portable_dir/"
     cp -a -- "$ROOT_DIR/appimage/ltools-terminal.schema.json" "$portable_dir/"
     cp -a -- "$ROOT_DIR/README.md" "$portable_dir/"
+    cp -a -- "$ROOT_DIR/LICENSE" "$portable_dir/"
     cat > "$portable_dir/BUILD-INFO.txt" <<EOF
 WinSlim-Tools $VERSION
 Platform: Windows
@@ -367,6 +380,19 @@ EOF
     (cd "$portable_dir" && zip -q -r "$package_zip" .) || die 'no se pudo crear el ZIP portable Windows'
     [[ -s "$package_zip" ]] || die 'el ZIP portable Windows está vacío'
     unzip -tq "$package_zip" >/dev/null || die 'el ZIP portable Windows está corrupto'
+    (cd "$portable_dir" && zip -q -r "$licenses_zip" LICENSE THIRD-PARTY-LICENSES) || die 'no se pudo crear el ZIP independiente de licencias Windows'
+    unzip -tq "$licenses_zip" >/dev/null || die 'el ZIP independiente de licencias Windows está corrupto'
+    LICENSE_TEST_DIR="$PREFIX/drive_c/ltools-license-e2e-$$"
+    mkdir -p -- "$LICENSE_TEST_DIR"
+    unzip -q "$licenses_zip" -d "$LICENSE_TEST_DIR" || die 'no se pudo extraer el ZIP independiente de licencias Windows'
+    [[ -s "$LICENSE_TEST_DIR/LICENSE" && -s "$LICENSE_TEST_DIR/THIRD-PARTY-LICENSES/INDEX.txt" ]] ||
+        die 'el ZIP independiente de licencias Windows omite la licencia del proyecto o el índice'
+    cmp -s -- "$LICENSE_TEST_DIR/LICENSE" "$ROOT_DIR/LICENSE" || die 'el ZIP independiente de licencias contiene otra licencia de proyecto'
+    grep -Fq 'ISC' "$LICENSE_TEST_DIR/THIRD-PARTY-LICENSES/INDEX.txt" || die 'el ZIP independiente de licencias omite ISC'
+    grep -Fq 'CDLA-Permissive-2.0' "$LICENSE_TEST_DIR/THIRD-PARTY-LICENSES/INDEX.txt" || die 'el ZIP independiente de licencias omite CDLA'
+    rm -rf -- "$LICENSE_TEST_DIR"
+    LICENSE_TEST_DIR=""
+    ok 'ZIP independiente de licencias Windows extraído y validado'
 
     # La validación se hace desde el ZIP extraído dentro del prefijo aislado,
     # no desde los binarios del target. Así se comprueba el contenido real que
@@ -377,9 +403,13 @@ EOF
     for required_file in \
         ltools.exe ltools-cli.exe ltools.ps1 ltools.cmd ltools-cli.ps1 ltools-cli.cmd \
         ltools-capabilities-windows.json ltools-terminal-windows.json \
-        ltools-capabilities.schema.json ltools-terminal.schema.json README.md BUILD-INFO.txt; do
+        ltools-capabilities.schema.json ltools-terminal.schema.json README.md LICENSE BUILD-INFO.txt \
+        THIRD-PARTY-LICENSES/INDEX.txt; do
         [[ -s "$PACKAGE_TEST_DIR/$required_file" ]] || die "el ZIP portable omite $required_file"
     done
+    grep -Fq 'ISC' "$PACKAGE_TEST_DIR/THIRD-PARTY-LICENSES/INDEX.txt" || die 'el ZIP Windows extraído omite ISC'
+    grep -Fq 'CDLA-Permissive-2.0' "$PACKAGE_TEST_DIR/THIRD-PARTY-LICENSES/INDEX.txt" || die 'el ZIP Windows extraído omite CDLA'
+    grep -Fq 'MIT License' "$PACKAGE_TEST_DIR/LICENSE" || die 'el ZIP Windows extraído omite la licencia MIT del proyecto'
     cmp -s -- "$PACKAGE_TEST_DIR/ltools.exe" "$WINEXE" || die 'el perfil GUI extraído del ZIP difiere del ejecutable probado'
     cmp -s -- "$PACKAGE_TEST_DIR/ltools-cli.exe" "$WINEXE_CLI" || die 'el perfil CLI extraído del ZIP difiere del ejecutable probado'
     local package_gui_windows='C:\ltools-package-e2e-'"$$"'\ltools.exe'
@@ -421,10 +451,11 @@ EOF
     local published_artifact="$ARTIFACT_DIR/ltools-$VERSION-windows-$package_arch.exe"
     local published_cli_artifact="$ARTIFACT_DIR/ltools-$VERSION-windows-$package_arch-cli.exe"
     local published_package_zip="$ARTIFACT_DIR/ltools-$VERSION-windows-$package_arch.zip"
+    local published_licenses_zip="$ARTIFACT_DIR/THIRD-PARTY-LICENSES-windows.zip"
     local completed_staging="$ARTIFACT_STAGING"
     ARTIFACT_STAGING=""
     rm -rf -- "$completed_staging"
-    ok "artefactos Windows bajo Wine validados y publicados: $published_artifact, $published_cli_artifact y $published_package_zip"
+    ok "artefactos Windows bajo Wine validados y publicados: $published_artifact, $published_cli_artifact, $published_package_zip y $published_licenses_zip"
 }
 
 run_windows_timeout() {
@@ -757,7 +788,7 @@ else
     if command -v xvfb-run >/dev/null 2>&1 && command -v xdotool >/dev/null 2>&1 &&
         command -v import >/dev/null 2>&1 &&
         timeout 10 xvfb-run -a -s '-screen 0 1280x900x24' true >/dev/null 2>&1; then
-        gui_output="$(mktemp "${TMPDIR:-/tmp}/ltools-windows-gui.XXXXXX.log")"
+        gui_output="$(mktemp "$TEMP_ROOT/ltools-windows-gui.XXXXXX.log")"
         gui_marker_name="ltools-gui-smoke-$$.marker"
         gui_marker="$PREFIX/drive_c/windows/temp/$gui_marker_name"
         gui_marker_windows="C:\\windows\\temp\\$gui_marker_name"

@@ -81,6 +81,14 @@
       "manifest": "SHA256SUMS.txt",
       "detached_signature": "SHA256SUMS.txt.sig",
       "encoding": "base64"
-    }
+    },
+    "additional_signatures": [
+      {
+        "algorithm": "openssh-sshsig",
+        "manifest": "SHA256SUMS.txt",
+        "detached_signature": "SHA256SUMS.txt.sshsig",
+        "namespace": "ltools-release"
+      }
+    ]
   }
 }

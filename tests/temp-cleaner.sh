@@ -8,6 +8,7 @@ suffix="${owned_dir##*.}"
 link_path="/tmp/ltools-menu-e2e.$suffix"
 report_path="/tmp/ltools-registry-dry-run-$((900000000 + $$)).reg"
 active_dir="/tmp/ltools-cleaner-active-$$-$(date +%s%N)"
+license_dir="$(mktemp -d "/tmp/ltools-third-party-licenses-$$-XXXXXX")"
 link_created=0
 report_created=0
 active_created=0
@@ -16,6 +17,7 @@ cleanup_fixture() {
     ((report_created == 0)) || rm -f -- "$report_path"
     ((active_created == 0)) || rm -rf -- "$active_dir"
     rm -rf -- "$owned_dir"
+    rm -rf -- "$license_dir"
 }
 for fixture in "$link_path" "$report_path" "$active_dir"; do
     if [[ -e "$fixture" || -L "$fixture" ]]; then
@@ -34,10 +36,15 @@ active_created=1
 
 ltools_temp_name_is_owned ltools-native-help.Abc123 || { echo 'No reconoció un directorio de prueba permitido.' >&2; exit 1; }
 ltools_temp_name_is_owned ltools-storage-map-123-456-2 || { echo 'No reconoció el formato temporal del mapa.' >&2; exit 1; }
+ltools_temp_name_is_owned "ltools-third-party-licenses-$$-Abc123" || { echo 'No reconoció el temporal del bundle legal.' >&2; exit 1; }
 ltools_temp_name_is_owned "ltools-registry-dry-run-$((900000000 + $$)).reg" || { echo 'No reconoció el informe temporal Wine.' >&2; exit 1; }
 ltools_temp_name_is_owned ltools-cleaner-preserved-123-456 || { echo 'No reconoció el temporal de prueba del limpiador.' >&2; exit 1; }
 [[ "$(ltools_temp_embedded_pid "ltools-cleaner-preserved-$$-456")" == "$$" ]] || {
     echo 'No reconoció el PID de un temporal activo del limpiador.' >&2
+    exit 1
+}
+[[ "$(ltools_temp_embedded_pid "${license_dir##*/}")" == "$$" ]] || {
+    echo 'No reconoció el PID del bundle legal en curso.' >&2
     exit 1
 }
 ! ltools_temp_name_is_owned ltools-not-an-ltools-output.Abc123 || { echo 'Aceptó un nombre ajeno.' >&2; exit 1; }
@@ -58,6 +65,16 @@ else
     status=$?
     [[ "$status" -eq 3 ]] || {
         echo "La comprobación del temporal activo devolvió un estado inesperado: $status" >&2
+        exit 1
+    }
+fi
+if ltools_temp_candidate_check "$license_dir" /tmp; then
+    echo 'Aceptó un bundle de licencias cuyo proceso sigue activo.' >&2
+    exit 1
+else
+    status=$?
+    [[ "$status" -eq 3 ]] || {
+        echo "La comprobación del bundle legal activo devolvió un estado inesperado: $status" >&2
         exit 1
     }
 fi
@@ -85,6 +102,10 @@ grep -Fq -- "$link_path" <<<"$preview" || {
 }
 grep -Fq -- "$active_dir (parece estar en uso)" <<<"$preview" || {
     echo 'La simulación no protegió el temporal del proceso de prueba todavía activo.' >&2
+    exit 1
+}
+grep -Fq -- "$license_dir (parece estar en uso)" <<<"$preview" || {
+    echo 'La simulación no protegió el bundle de licencias en curso.' >&2
     exit 1
 }
 grep -Fq 'Simulación terminada; no se ha modificado ningún archivo.' <<<"$preview" || {

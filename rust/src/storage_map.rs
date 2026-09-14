@@ -1008,11 +1008,11 @@ fn permission_summary(metadata: &fs::Metadata) -> String {
     }
     #[cfg(windows)]
     {
-        return if metadata.permissions().readonly() {
+        if metadata.permissions().readonly() {
             "readonly".into()
         } else {
             "read-write".into()
-        };
+        }
     }
 }
 
@@ -1124,11 +1124,7 @@ fn explain_path_key(path: &Path) -> Option<&'static str> {
         if components
             .iter()
             .position(|component| *component == "users")
-            .is_some_and(|users_index| {
-                components[users_index + 1..]
-                    .iter()
-                    .any(|component| *component == "appdata")
-            })
+            .is_some_and(|users_index| components[users_index + 1..].contains(&"appdata"))
         {
             return Some("explain_user_appdata");
         }
@@ -1787,9 +1783,11 @@ fn open_path(ctx: &Context, raw: &str, yes: bool) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use super::resolve_future_path;
     use super::{
-        copy_new_path, explain_path_key, manage_operation, parse_options, render_json,
-        resolve_future_path, scan, scan_with_progress, MapOptions,
+        copy_new_path, explain_path_key, manage_operation, parse_options, render_json, scan,
+        scan_with_progress, MapOptions,
     };
     use std::path::PathBuf;
 

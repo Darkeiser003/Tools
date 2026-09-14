@@ -87,6 +87,21 @@
             "encoding": { "const": "base64" }
           },
           "additionalProperties": false
+        },
+        "additional_signatures": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["algorithm", "manifest", "detached_signature", "namespace"],
+            "properties": {
+              "algorithm": { "const": "openssh-sshsig" },
+              "manifest": { "const": "SHA256SUMS.txt" },
+              "detached_signature": { "const": "SHA256SUMS.txt.sshsig" },
+              "namespace": { "const": "ltools-release" }
+            },
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false

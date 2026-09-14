@@ -245,6 +245,8 @@ pub(crate) fn classify(command: &str, args: &[String]) -> ActionPrivilege {
                 | "automations"
                 | "import"
                 | "winslim"
+                | "update"
+                | "self-update"
         ) {
             ActionPrivilege::Never
         } else {
@@ -563,6 +565,11 @@ mod tests {
             classify("winslim", &args(&["launch", "--identity", "system"])),
             ActionPrivilege::Never,
             "the selected NSudo profile is handled explicitly by winslim, not global elevation"
+        );
+        assert_eq!(
+            classify("update", &args(&["download"])),
+            ActionPrivilege::Never,
+            "downloading a user-scoped update must never elevate the updater process"
         );
         assert_eq!(
             classify("storage", &args(&["manage", "delete"])),

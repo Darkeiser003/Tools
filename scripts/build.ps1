@@ -35,6 +35,8 @@ $Root = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $WindowsDir = Join-Path $Root 'windows'
 $PublishHelpers = Join-Path $PSScriptRoot 'lib\publish.ps1'
 . $PublishHelpers
+. (Join-Path $PSScriptRoot 'lib\third-party-licenses.ps1')
+. (Join-Path $PSScriptRoot 'lib\ssh-signing.ps1')
 . (Join-Path $PSScriptRoot 'lib\build-state.ps1')
 $CargoManifest = Join-Path $Root "rust\Cargo.toml"
 $DefaultOutput = Join-Path $Root "dist\windows"
@@ -117,6 +119,7 @@ $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $SigningPrivateKeyFile = $null
 $SigningPublicKeyFile = $null
 $SigningRequired = $true
+$PublicKeyEnvironmentActive = $false
 
 function Show-Help {
     @"
@@ -138,7 +141,7 @@ con parámetros y -Help para mostrar esta ayuda.
   -ReleaseOutput RUTA
                   Carpeta canónica de publicación (por defecto ..\release).
   -Log FICHERO    Fichero de log; -NoLog desactiva logs.
-  -RequireSigning Exige claves Ed25519 y firma válida para release (predeterminado).
+  -RequireSigning Exige firmas Ed25519 y OpenSSH válidas para release (predeterminado).
   -AllowUnsigned  Excepción explícita para una release local sin firma.
   -NonInteractive No solicita confirmaciones.
 
@@ -413,6 +416,14 @@ function Initialize-Signing {
     if ($env:LTOOLS_UPDATE_PUBLIC_KEY_FILE) { $script:SigningPublicKeyFile = $env:LTOOLS_UPDATE_PUBLIC_KEY_FILE }
     elseif ($env:LTERMINAL_UPDATE_PUBLIC_KEY_FILE) { $script:SigningPublicKeyFile = $env:LTERMINAL_UPDATE_PUBLIC_KEY_FILE }
     elseif ($configHome) { $script:SigningPublicKeyFile = Join-Path $configHome 'lterminal\release-signing-public.hex' }
+    # La clave pública se fija en el binario distribuible para permitir que
+    # el actualizador verifique releases sin pedir configuración al usuario.
+    $publicKeyEnvironment = if (-not [string]::IsNullOrWhiteSpace($env:LTOOLS_UPDATE_PUBLIC_KEY)) { $env:LTOOLS_UPDATE_PUBLIC_KEY } elseif (-not [string]::IsNullOrWhiteSpace($env:LTERMINAL_UPDATE_PUBLIC_KEY)) { $env:LTERMINAL_UPDATE_PUBLIC_KEY } else { $null }
+    $script:PublicKeyEnvironmentActive = $null -ne $publicKeyEnvironment
+    $publicKeyText = if ($script:PublicKeyEnvironmentActive) { $publicKeyEnvironment } elseif ($script:SigningPublicKeyFile -and (Test-Path -LiteralPath $script:SigningPublicKeyFile -PathType Leaf)) { [IO.File]::ReadAllText($script:SigningPublicKeyFile) } else { $null }
+    $canonicalPublicKey = if ($null -ne $publicKeyText) { $publicKeyText -replace '\s', '' } else { $null }
+    if (-not [string]::IsNullOrWhiteSpace($canonicalPublicKey)) { $env:LTOOLS_EMBEDDED_UPDATE_PUBLIC_KEY = $canonicalPublicKey }
+    else { Remove-Item Env:LTOOLS_EMBEDDED_UPDATE_PUBLIC_KEY -ErrorAction SilentlyContinue }
     # Las releases son firmadas por defecto. Los switches/variables de
     # exigencia se conservan como compatibilidad explícita; la única vía
     # normal para una build local sin firma es -AllowUnsigned.
@@ -421,20 +432,28 @@ function Initialize-Signing {
         $script:SigningRequired = $true
     }
     if ($AllowUnsigned -or ($env:LTOOLS_ALLOW_UNSIGNED -match '^(1|true|yes)$')) { $script:SigningRequired = $false }
+    $script:SshSigningConfiguration = Get-LToolsSshSigningConfiguration $Root
+    if ($script:SshSigningConfiguration.PrivateKey) { $env:LTOOLS_SSH_SIGNING_KEY_FILE = $script:SshSigningConfiguration.PrivateKey }
+    if ($script:SshSigningConfiguration.PublicKey) { $env:LTOOLS_SSH_SIGNING_PUBLIC_KEY_FILE = $script:SshSigningConfiguration.PublicKey }
+    if ($script:SshSigningConfiguration.Identity) { $env:LTOOLS_SSH_SIGNING_IDENTITY = $script:SshSigningConfiguration.Identity }
 }
 function Invoke-ReleaseSigning([string]$ReleaseDirectory) {
     $checksums = Join-Path $ReleaseDirectory 'SHA256SUMS.txt'
     $signature = Join-Path $ReleaseDirectory 'SHA256SUMS.txt.sig'
+    $sshSignature = Join-Path $ReleaseDirectory 'SHA256SUMS.txt.sshsig'
     Invoke-Step 'Generando SHA256SUMS.txt' {
         $exitCode = Invoke-NativeCommand $Binary @('release-checksums', '--output', $checksums, '--artifacts-dir', $ReleaseDirectory)
         if ($exitCode -ne 0) { throw "no se pudo generar SHA256SUMS.txt (código $exitCode)" }
     }
     $privateAvailable = ($SigningPrivateKeyFile -and (Test-Path -LiteralPath $SigningPrivateKeyFile -PathType Leaf)) -or $env:LTOOLS_SIGNING_PRIVATE_KEY -or $env:LTERMINAL_SIGNING_PRIVATE_KEY
-    $publicAvailable = ($SigningPublicKeyFile -and (Test-Path -LiteralPath $SigningPublicKeyFile -PathType Leaf)) -or $env:LTOOLS_UPDATE_PUBLIC_KEY -or $env:LTERMINAL_UPDATE_PUBLIC_KEY
+    $publicAvailable = ($SigningPublicKeyFile -and (Test-Path -LiteralPath $SigningPublicKeyFile -PathType Leaf)) -or $PublicKeyEnvironmentActive
     if ($privateAvailable -and $publicAvailable) {
         $signArgs = @('release-signature', '--manifest', $checksums, '--signature', $signature)
         if ($SigningPrivateKeyFile -and (Test-Path -LiteralPath $SigningPrivateKeyFile -PathType Leaf)) { $signArgs += @('--private-key-file', $SigningPrivateKeyFile) }
-        if ($SigningPublicKeyFile -and (Test-Path -LiteralPath $SigningPublicKeyFile -PathType Leaf)) { $signArgs += @('--public-key-file', $SigningPublicKeyFile) }
+        if (-not $PublicKeyEnvironmentActive -and
+            $SigningPublicKeyFile -and (Test-Path -LiteralPath $SigningPublicKeyFile -PathType Leaf)) {
+            $signArgs += @('--public-key-file', $SigningPublicKeyFile)
+        }
         Invoke-Step 'Firmando SHA256SUMS.txt con Ed25519' {
             $exitCode = Invoke-NativeCommand $Binary $signArgs
             if ($exitCode -ne 0) { throw "la firma Ed25519 terminó con código $exitCode" }
@@ -450,8 +469,23 @@ function Invoke-ReleaseSigning([string]$ReleaseDirectory) {
         if ($SigningRequired) { throw "release estricta: faltan las claves Ed25519; se esperaban $SigningPrivateKeyFile y $SigningPublicKeyFile" }
         Write-Log 'AVISO: release local sin firma; se conserva SHA256SUMS.txt y se retira cualquier firma antigua.'
     }
+    $sshConfiguration = Get-LToolsSshSigningConfiguration $Root
+    if ($sshConfiguration.CanSign -and $sshConfiguration.CanVerify) {
+        Invoke-Step 'Firmando SHA256SUMS.txt con la clave SSH de GitHub' {
+            Invoke-LToolsSshManifestSigning $checksums $sshSignature $sshConfiguration
+        }
+        Invoke-Step 'Verificando firma SSH de release' {
+            Test-LToolsSshManifestSignature $checksums $sshSignature $sshConfiguration
+        }
+        Write-Log 'Firma SSH de la release generada y verificada correctamente.'
+    } else {
+        Remove-Item -LiteralPath $sshSignature -Force -ErrorAction SilentlyContinue
+        if ($SigningRequired) { throw 'release estricta: falta una clave SSH de firma, ssh-keygen o user.email; configure LTOOLS_SSH_SIGNING_KEY_FILE / LTOOLS_SSH_SIGNING_IDENTITY.' }
+        Write-Log 'AVISO: release local sin firma SSH; no se generó SHA256SUMS.txt.sshsig.'
+    }
     Write-Log "Checksums release: $checksums"
     if (Test-Path -LiteralPath $signature -PathType Leaf) { Write-Log "Firma release: $signature" }
+    if (Test-Path -LiteralPath $sshSignature -PathType Leaf) { Write-Log "Firma SSH de release: $sshSignature" }
 }
 function Ensure-Target {
     $rustup = Get-Command rustup -ErrorAction SilentlyContinue
@@ -481,6 +515,10 @@ Initialize-Signing
 Write-Log "Firma requerida: $SigningRequired"
 Write-Log "Clave privada: $SigningPrivateKeyFile"
 Write-Log "Clave pública: $SigningPublicKeyFile"
+if ($SshSigningConfiguration.PublicKey) {
+    Write-Log "Clave pública SSH: $($SshSigningConfiguration.PublicKey)"
+    Write-Log "Identidad de firma SSH: $($SshSigningConfiguration.Identity)"
+} else { Write-Log 'Clave pública SSH: no configurada' }
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { throw "No se encontró cargo. Instala Rust mediante rustup." }
 if (-not (Get-Command rustc -ErrorAction SilentlyContinue)) { throw "No se encontró rustc." }
 Invoke-Step 'Validando sintaxis de scripts PowerShell' { Test-PowerShellSyntax }
@@ -494,23 +532,33 @@ $newSignatures = Get-Signatures
 $oldSignatures = if ($oldState) { $oldState.files } else { $null }
 $impact = Get-LToolsBuildImpact $oldSignatures $newSignatures
 $profileChanged = Test-BuildProfileChanged $oldState $BuildProfile
-$needCompile = $Force -or $Clean -or $profileChanged -or -not (Test-Path $Binary) -or -not (Test-Path $GuiBinary) -or -not (Test-Path $CliBinary) -or $impact.RustCompile.Count -gt 0
+$publicKeyEnvironment = if ($PublicKeyEnvironmentActive) { if (-not [string]::IsNullOrWhiteSpace($env:LTOOLS_UPDATE_PUBLIC_KEY)) { $env:LTOOLS_UPDATE_PUBLIC_KEY } else { $env:LTERMINAL_UPDATE_PUBLIC_KEY } } else { $null }
+$publicKeyFingerprint = Get-LToolsPublicKeyFingerprint $SigningPublicKeyFile $publicKeyEnvironment
+$sshPublicKeyFingerprint = if ($SshSigningConfiguration.PublicKey -and
+    (Test-Path -LiteralPath $SshSigningConfiguration.PublicKey -PathType Leaf)) {
+    Get-LToolsPublicKeyFingerprint $SshSigningConfiguration.PublicKey $null
+} else { $null }
+$previousSigning = Get-MapValue $oldState 'signing'
+$signingKeyChanged = Test-LToolsSigningKeyChanged $previousSigning $publicKeyFingerprint
+$needCompile = $Force -or $Clean -or $profileChanged -or $signingKeyChanged -or -not (Test-Path $Binary) -or -not (Test-Path $GuiBinary) -or -not (Test-Path $CliBinary) -or $impact.RustCompile.Count -gt 0
 $existingZip = Join-Path $OutputDir "ltools-$Version-windows-$PackageArch.zip"
 $existingCli = Join-Path $OutputDir "ltools-$Version-windows-$PackageArch-cli.exe"
 $publishedExe = Join-Path $PublishDir "ltools-$Version-windows-$PackageArch.exe"
 $publishedCli = Join-Path $PublishDir "ltools-$Version-windows-$PackageArch-cli.exe"
 $publishedZip = Join-Path $PublishDir "ltools-$Version-windows-$PackageArch.zip"
+$licenseZipName = 'THIRD-PARTY-LICENSES-windows.zip'
+$existingLicenseZip = Join-Path $OutputDir $licenseZipName
+$publishedLicenseZip = Join-Path $PublishDir $licenseZipName
 $needPackage = $Force -or $needCompile -or $impact.Package.Count -gt 0 -or
     (Get-MapValue $oldState 'packagePending') -eq $true -or
     -not (Test-Path $existingZip) -or -not (Test-Path $existingCli)
 $needPackage = $needPackage -or -not (Test-Path $publishedExe) -or -not (Test-Path $publishedCli) -or -not (Test-Path $publishedZip)
+$needPackage = $needPackage -or -not (Test-Path $existingLicenseZip) -or -not (Test-Path $publishedLicenseZip)
 $distDirectory = Join-Path $Root 'dist'
 $artifactHashes = Get-LToolsBuildArtifactHashes $OutputDir $PublishDir $distDirectory $Version $PackageArch
-$publicKeyEnvironment = if ($env:LTOOLS_UPDATE_PUBLIC_KEY) { $env:LTOOLS_UPDATE_PUBLIC_KEY } else { $env:LTERMINAL_UPDATE_PUBLIC_KEY }
-$publicKeyFingerprint = Get-LToolsPublicKeyFingerprint $SigningPublicKeyFile $publicKeyEnvironment
-$previousSigning = Get-MapValue $oldState 'signing'
 $previousArtifactHashes = Get-MapValue $oldState 'artifacts'
-$artifactsMatch = Test-LToolsBuildArtifactsMatch $previousArtifactHashes $artifactHashes $previousSigning $SigningRequired $publicKeyFingerprint
+$artifactsMatch = Test-LToolsBuildArtifactsMatch $previousArtifactHashes $artifactHashes $previousSigning `
+    $SigningRequired $publicKeyFingerprint $sshPublicKeyFingerprint $SshSigningConfiguration.Identity
 if (-not $artifactsMatch) { $needPackage = $true }
 if ($SigningRequired -and -not $publicKeyFingerprint) {
     Write-Log 'La clave pública actual no está disponible para validar identidad; se regenerará/verificará la release.'
@@ -519,13 +567,24 @@ if ($SigningRequired -and -not $publicKeyFingerprint) {
     $publishedChecksums = Join-Path $PublishDir 'SHA256SUMS.txt'
     $publishedSignature = Join-Path $PublishDir 'SHA256SUMS.txt.sig'
     $verifyArguments = @('release-signature', '--manifest', $publishedChecksums, '--signature', $publishedSignature, '--verify')
-    if ($SigningPublicKeyFile -and (Test-Path -LiteralPath $SigningPublicKeyFile -PathType Leaf)) {
+    if (-not $PublicKeyEnvironmentActive -and
+        $SigningPublicKeyFile -and (Test-Path -LiteralPath $SigningPublicKeyFile -PathType Leaf)) {
         $verifyArguments += @('--public-key-file', $SigningPublicKeyFile)
     }
     $verifyExitCode = Invoke-NativeCommand $Binary $verifyArguments
     if ($verifyExitCode -ne 0) {
         Write-Log 'La firma de los artefactos actuales no coincide con la clave pública configurada; se volverá a empaquetar.'
         $needPackage = $true
+    }
+    $publishedSshSignature = Join-Path $PublishDir 'SHA256SUMS.txt.sshsig'
+    if (-not $needPackage) {
+        if (-not $SshSigningConfiguration.CanVerify -or -not (Test-Path -LiteralPath $publishedSshSignature -PathType Leaf)) {
+            Write-Log 'La firma SSH de la release actual falta o no se puede verificar; se volverá a empaquetar.'
+            $needPackage = $true
+        } else {
+            try { Test-LToolsSshManifestSignature $publishedChecksums $publishedSshSignature $SshSigningConfiguration }
+            catch { Write-Log "La firma SSH de la release actual no es válida: $($_.Exception.Message)"; $needPackage = $true }
+        }
     }
 }
 $needCargoTests = -not $NoTests -and ($Force -or $impact.CargoTests.Count -gt 0)
@@ -642,6 +701,15 @@ if ($needPackage -and -not $NoPackage) {
         Copy-Item -LiteralPath (Join-Path $WindowsDir 'ltools-cli.ps1') -Destination $portableStage
         Copy-Item -LiteralPath (Join-Path $WindowsDir 'ltools-cli.cmd') -Destination $portableStage
         Copy-Item -LiteralPath (Join-Path $Root 'README.md') -Destination $portableStage
+        Copy-Item -LiteralPath (Join-Path $Root 'LICENSE') -Destination $portableStage
+        New-LToolsThirdPartyLicenseBundle -Destination (Join-Path $portableStage 'THIRD-PARTY-LICENSES') `
+            -ManifestPath $CargoManifest -Platform $Target | Out-Null
+        $licenseIndex = Join-Path $portableStage 'THIRD-PARTY-LICENSES\INDEX.txt'
+        if (-not (Test-Path -LiteralPath $licenseIndex -PathType Leaf) -or
+            -not (Select-String -LiteralPath $licenseIndex -SimpleMatch 'ISC' -Quiet) -or
+            -not (Select-String -LiteralPath $licenseIndex -SimpleMatch 'CDLA-Permissive-2.0' -Quiet)) {
+            throw 'El bundle Windows no incluye el índice y las licencias obligatorias ISC/CDLA.'
+        }
 
         $capabilities = & $Binary capabilities --format json 2>&1
         if ($LASTEXITCODE -ne 0) { throw "No se pudo generar ltools-capabilities.json: $capabilities" }
@@ -681,6 +749,8 @@ if ($needPackage -and -not $NoPackage) {
 
         Invoke-Step 'Empaquetando ZIP portable Windows en staging' {
             Compress-Archive -Path (Join-Path $portableStage '*') -DestinationPath $stagedZip -CompressionLevel Optimal
+            Compress-Archive -Path @((Join-Path $portableStage 'LICENSE'), (Join-Path $portableStage 'THIRD-PARTY-LICENSES')) `
+                -DestinationPath (Join-Path $packageStageDir $licenseZipName) -CompressionLevel Optimal
         }
         if (-not (Test-Path -LiteralPath $stagedZip -PathType Leaf) -or (Get-Item -LiteralPath $stagedZip).Length -eq 0) {
             throw 'El ZIP portable Windows no existe o está vacío.'
@@ -691,11 +761,23 @@ if ($needPackage -and -not $NoPackage) {
             'ltools.exe', 'ltools-cli.exe', 'ltools.ps1', 'ltools.cmd', 'ltools-cli.ps1', 'ltools-cli.cmd',
             'ltools-capabilities.json', 'ltools-capabilities-windows.json',
             'ltools-terminal.json', 'ltools-terminal-windows.json',
-            'ltools-capabilities.schema.json', 'ltools-terminal.schema.json', 'README.md', 'BUILD-INFO.txt'
+            'ltools-capabilities.schema.json', 'ltools-terminal.schema.json', 'README.md', 'LICENSE', 'BUILD-INFO.txt',
+            'THIRD-PARTY-LICENSES\INDEX.txt'
         )) {
             if (-not (Test-Path -LiteralPath (Join-Path $archiveCheckDir $requiredFile) -PathType Leaf)) {
                 throw "El ZIP portable omite $requiredFile"
             }
+        }
+        $licenseArchiveCheckDir = Join-Path $packageStageDir 'license-zip-extracted'
+        Expand-Archive -LiteralPath (Join-Path $packageStageDir $licenseZipName) -DestinationPath $licenseArchiveCheckDir
+        $licenseArchiveIndex = Join-Path $licenseArchiveCheckDir 'THIRD-PARTY-LICENSES\INDEX.txt'
+        $licenseArchiveProject = Join-Path $licenseArchiveCheckDir 'LICENSE'
+        if (-not (Test-Path -LiteralPath $licenseArchiveIndex -PathType Leaf) -or
+            -not (Test-Path -LiteralPath $licenseArchiveProject -PathType Leaf) -or
+            -not (Select-String -LiteralPath $licenseArchiveProject -SimpleMatch 'MIT License' -Quiet) -or
+            -not (Select-String -LiteralPath $licenseArchiveIndex -SimpleMatch 'ISC' -Quiet) -or
+            -not (Select-String -LiteralPath $licenseArchiveIndex -SimpleMatch 'CDLA-Permissive-2.0' -Quiet)) {
+            throw 'El ZIP de licencias independiente está incompleto o dañado.'
         }
         foreach ($pair in @(
             @((Join-Path $archiveCheckDir 'ltools.exe'), $Binary),
@@ -745,6 +827,7 @@ if ($needPackage -and -not $NoPackage) {
             $ExecutableArtifact,
             $CliExecutableArtifact,
             $zip,
+            (Join-Path $packageStageDir $licenseZipName),
             (Join-Path $OutputDir 'ltools-capabilities.json'),
             (Join-Path $OutputDir 'ltools-capabilities-windows.json'),
             (Join-Path $OutputDir 'ltools-terminal.json'),
@@ -756,6 +839,7 @@ if ($needPackage -and -not $NoPackage) {
             Copy-Item -LiteralPath $file -Destination $releaseStageDir -Force
         }
         foreach ($file in @(
+            (Join-Path $Root 'LICENSE'),
             (Join-Path $Root 'distribution\ltools-project.json'),
             (Join-Path $Root 'distribution\ltools-project.schema.json'),
             (Join-Path $Root 'distribution\ltools-release.schema.json')
@@ -783,8 +867,13 @@ if ($needPackage -and -not $NoPackage) {
         Invoke-Step 'Validando manifiesto, checksums y firma de release' {
             $arguments = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $releaseE2E,
                 '-ReleaseDirectory', $releaseStageDir, '-Version', $Version, '-Architecture', $PackageArch, '-Binary', $Binary)
-            if ($SigningRequired) { $arguments += '-RequireSignature' }
-            if ($SigningPublicKeyFile -and (Test-Path -LiteralPath $SigningPublicKeyFile -PathType Leaf)) {
+            if ($SigningRequired) { $arguments += @('-RequireSignature', '-RequireSshSignature') }
+            if ($SshSigningConfiguration.PublicKey -and (Test-Path -LiteralPath $SshSigningConfiguration.PublicKey -PathType Leaf)) {
+                $arguments += @('-SshPublicKeyFile', $SshSigningConfiguration.PublicKey)
+            }
+            if ($SshSigningConfiguration.Identity) { $arguments += @('-SshIdentity', $SshSigningConfiguration.Identity) }
+            if (-not $PublicKeyEnvironmentActive -and
+                $SigningPublicKeyFile -and (Test-Path -LiteralPath $SigningPublicKeyFile -PathType Leaf)) {
                 $arguments += @('-PublicKeyFile', $SigningPublicKeyFile)
             }
             $exitCode = Invoke-NativeCommand 'powershell.exe' $arguments
@@ -796,12 +885,12 @@ if ($needPackage -and -not $NoPackage) {
         New-Item -ItemType Directory -Force -Path (Join-Path $Root 'dist') | Out-Null
         foreach ($file in @(
             'ltools-release.json', 'ltools-project.json', 'ltools-project.schema.json',
-            'ltools-release.schema.json', 'SHA256SUMS.txt', 'SHA256SUMS.txt.sig'
+            'ltools-release.schema.json', 'SHA256SUMS.txt', 'SHA256SUMS.txt.sig', 'SHA256SUMS.txt.sshsig'
         )) {
             $publishedFile = Join-Path $PublishDir $file
             $distFile = Join-Path $Root "dist\$file"
             if (Test-Path -LiteralPath $publishedFile -PathType Leaf) { Copy-Item -LiteralPath $publishedFile -Destination $distFile -Force }
-            elseif ($file -eq 'SHA256SUMS.txt.sig') { Remove-Item -LiteralPath $distFile -Force -ErrorAction SilentlyContinue }
+            elseif ($file -in @('SHA256SUMS.txt.sig', 'SHA256SUMS.txt.sshsig')) { Remove-Item -LiteralPath $distFile -Force -ErrorAction SilentlyContinue }
         }
         Write-Log "Release verificada y publicada: $PublishDir"
         $packageCompleted = $true
@@ -818,6 +907,9 @@ if ($packageCompleted) {
         required = [bool]$SigningRequired
         publicKeyFingerprint = $publicKeyFingerprint
         signed = Test-Path -LiteralPath (Join-Path $PublishDir 'SHA256SUMS.txt.sig') -PathType Leaf
+        sshPublicKeyFingerprint = $sshPublicKeyFingerprint
+        sshIdentity = $SshSigningConfiguration.Identity
+        sshSigned = Test-Path -LiteralPath (Join-Path $PublishDir 'SHA256SUMS.txt.sshsig') -PathType Leaf
     }
     $packagePending = $false
 } elseif ($needPackage) {
@@ -832,6 +924,9 @@ if ($packageCompleted) {
         required = [bool]$SigningRequired
         publicKeyFingerprint = $publicKeyFingerprint
         signed = Test-Path -LiteralPath (Join-Path $PublishDir 'SHA256SUMS.txt.sig') -PathType Leaf
+        sshPublicKeyFingerprint = $sshPublicKeyFingerprint
+        sshIdentity = $SshSigningConfiguration.Identity
+        sshSigned = Test-Path -LiteralPath (Join-Path $PublishDir 'SHA256SUMS.txt.sshsig') -PathType Leaf
     }
     $packagePending = $false
 }

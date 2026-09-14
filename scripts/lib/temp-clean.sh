@@ -8,6 +8,7 @@ ltools_temp_name_is_owned() {
         [[ "$name" =~ ^ltools-(windows-disabled-alias-[0-9]+\.log|registry-dry-run-[0-9]+\.reg|alias-test-[0-9]+\.tsv)$ ]] ||
         [[ "$name" =~ ^ltools-(timestamped-reports|identity-failures|linux-cross-tools|windows-cross-tools|broad-install|host-catalog-forbidden|windows-cross-catalog|shell-backend|windows-fragile-runner|windows-array-match|wine-tests)\.txt$ ]] ||
         [[ "$name" =~ ^ltools-storage-map-[0-9]+-[0-9]+-[0-9]+$ ]] ||
+        [[ "$name" =~ ^ltools-third-party-licenses-[0-9]+-[[:alnum:]]{6}$ ]] ||
         [[ "$name" =~ ^ltools-storage-map-(depth-zero|denied)-[0-9]+-[0-9]+$ ]] ||
         [[ "$name" =~ ^ltools-storage-copy-[[:alnum:]_-]+-[0-9]+-[0-9]+$ ]] ||
         [[ "$name" =~ ^ltools-plan-[[:alnum:]_-]+-[0-9]+-[0-9]+$ ]] ||
@@ -17,7 +18,7 @@ ltools_temp_name_is_owned() {
 
 ltools_temp_embedded_pid() {
     local name="$1"
-    if [[ "$name" =~ ^ltools-(storage-map|storage-map-depth-zero|storage-map-denied|storage-copy-[[:alnum:]_-]+|plan-[[:alnum:]_-]+|flatpak-installations|release-test|git-test|not-a-git-repo|git-recovery-dry-run)-([0-9]+)- ]] ||
+    if [[ "$name" =~ ^ltools-(storage-map|storage-map-depth-zero|storage-map-denied|storage-copy-[[:alnum:]_-]+|third-party-licenses|plan-[[:alnum:]_-]+|flatpak-installations|release-test|git-test|not-a-git-repo|git-recovery-dry-run)-([0-9]+)- ]] ||
         [[ "$name" =~ ^ltools-(windows-disabled-alias|registry-dry-run|alias-test)-([0-9]+)\.(log|reg|tsv)$ ]] ||
         [[ "$name" =~ ^ltools-(cleaner-[[:alnum:]_-]+)-([0-9]+)- ]]; then
         printf '%s' "${BASH_REMATCH[2]}"

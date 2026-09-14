@@ -7,12 +7,12 @@ use crate::common::Context;
 
 #[cfg(windows)]
 pub fn help() -> &'static str {
-    "guide [cli|gui] [all|audit|packages|software|installable|git|gh|aliases|automation|automation-register|clean|storage|storage-partitions|storage-filesystems|storage-volumes|system|services|accounts|native|network|connectivity|boot|registry|diagnostics|wine|defaults|settings|containers|containers-lifecycle|containers-images|containers-volumes|containers-compose|kubernetes|ssh|adb|utilities|actions|privileges|winslim]"
+    "guide [cli|gui] [all|audit|packages|software|installable|git|gh|aliases|automation|automation-register|clean|storage|storage-partitions|storage-filesystems|storage-volumes|system|services|accounts|native|network|connectivity|boot|registry|diagnostics|wine|defaults|settings|updates|containers|containers-lifecycle|containers-images|containers-volumes|containers-compose|kubernetes|ssh|adb|utilities|actions|privileges|winslim]"
 }
 
 #[cfg(not(windows))]
 pub fn help() -> &'static str {
-    "guide [cli|gui] [all|audit|packages|software|installable|git|gh|aliases|automation|automation-register|clean|storage|storage-partitions|storage-filesystems|storage-volumes|system|services|accounts|native|network|connectivity|boot|registry|diagnostics|wine|defaults|settings|containers|containers-lifecycle|containers-images|containers-volumes|containers-compose|kubernetes|ssh|adb|utilities|actions|privileges]"
+    "guide [cli|gui] [all|audit|packages|software|installable|git|gh|aliases|automation|automation-register|clean|storage|storage-partitions|storage-filesystems|storage-volumes|system|services|accounts|native|network|connectivity|boot|registry|diagnostics|wine|defaults|settings|updates|containers|containers-lifecycle|containers-images|containers-volumes|containers-compose|kubernetes|ssh|adb|utilities|actions|privileges]"
 }
 
 const INDEX: &str = r#"GUÍAS DE USO DE LTOOLS
@@ -57,12 +57,43 @@ Familias disponibles:
   utilities   utilidades detectadas e instalables
   defaults    rutas, configuración y valores efectivos
   settings    preferencias visuales, visibilidad y elevación por defecto
+  updates     comprobar releases y descargar el paquete verificado para esta plataforma
   actions     catálogo de acciones y contratos para automatizar
   privileges  política de elevación, sudo/UAC y acciones que nunca se elevan
 
 En la GUI, las categorías que tienen pantalla propia ofrecen una guía
 contextual con las opciones de esa pantalla. El gestor de alias es una función
 CLI y no se presenta como un menú gráfico inexistente.
+"#;
+
+const UPDATES: &str = r#"GUÍA: ACTUALIZACIONES DE LTOOLS
+
+Consulta:
+  `ltools update check` consulta la release estable del repositorio configurado
+  (por defecto `Darkeiser003/Tools`), muestra la versión actual y la disponible,
+  selecciona el paquete compatible con este binario y no modifica archivos.
+  `--repository OWNER/REPO` permite usar otro repositorio.
+
+Descarga:
+  `ltools update download` solo descarga una versión posterior. Antes comprueba
+  el manifiesto, la firma Ed25519 de `SHA256SUMS.txt`, el hash del manifiesto,
+  el hash del artefacto y su tamaño. Guarda el paquete en Descargas con un
+  nombre que no sobrescribe archivos existentes. No ejecuta ni reemplaza el
+  binario; cierra LTools, conserva una copia anterior y usa el procedimiento
+  de instalación de tu paquete. `update install` no instala automáticamente.
+
+Confianza y compatibilidad:
+  Los binarios producidos por los builders oficiales incluyen la clave pública
+  de release para verificar actualizaciones sin configuración adicional. Las
+  builds locales sin esa clave solo informan; para permitir una descarga se
+  debe configurar `LTOOLS_UPDATE_PUBLIC_KEY_FILE` o `LTOOLS_UPDATE_PUBLIC_KEY`.
+  No se usa `gh`, no se solicita elevación y el actualizador nunca cambia de
+  usuario: solo escribe en la carpeta Descargas del usuario actual.
+
+Linux elige el AppImage si se ejecuta desde uno; en caso contrario ofrece el
+tarball portable. Windows ofrece el ejecutable correspondiente al perfil GUI
+o CLI. Tras la descarga, sustituye la instalación siguiendo las instrucciones
+de su ubicación; no ejecutes un instalador o EXE sin revisar el origen.
 "#;
 
 const GIT: &str = r#"GUÍA: GIT Y GITHUB (git + gh)
@@ -508,13 +539,16 @@ Modos:
 
 Familias: audit, packages, software, git, gh, aliases, automation, clean,
 storage, system, services, accounts, network, boot, registry, diagnostics,
-wine, defaults, containers, kubernetes, ssh, adb, utilities, actions y
-privileges.
+wine, defaults, updates, containers, kubernetes, ssh, adb, utilities, actions
+y privileges.
 "#;
 
 fn cli_guide(topic: &str) -> String {
     if topic == "all" {
         return CLI_INDEX.to_owned();
+    }
+    if topic == "updates" {
+        return UPDATES.to_owned();
     }
     let (title, queries, management, arguments, result) = match topic {
         "git" | "gh" => (
@@ -965,6 +999,8 @@ fn gui_settings_guide() -> String {
             options.push(crate::i18n::category_text(category).to_owned());
         }
         options.push(crate::i18n::gui_text("settings_apply").to_owned());
+        options.push(crate::i18n::gui_text("update_check").to_owned());
+        options.push(crate::i18n::gui_text("update_download").to_owned());
         options.push(crate::i18n::text("menu.back").to_owned());
     }
 
@@ -1003,6 +1039,8 @@ fn gui_settings_guide() -> String {
         );
         options.push(crate::i18n::gui_text("elevation_default").to_owned());
         options.push(crate::i18n::gui_text("settings_guide").to_owned());
+        options.push(crate::i18n::gui_text("update_check").to_owned());
+        options.push(crate::i18n::gui_text("update_download").to_owned());
     }
 
     let listed = options
@@ -1012,8 +1050,33 @@ fn gui_settings_guide() -> String {
         .collect::<Vec<_>>()
         .join("\n");
     format!(
-        "GUÍA GRÁFICA: AJUSTES\n\nMenú completo «{}»:\n{}\n\nCampos y argumentos de la GUI:\n  {}\n\nProceso simple:\n  Cambia una preferencia cada vez, aplica o guarda los ajustes y comprueba que el valor elegido siga disponible.\n\nProceso complejo:\n  Configura tema e idioma, decide qué categorías mostrar y revisa la política de elevación antes de guardar. La elevación solo se aplica a acciones compatibles; no cambia consultas ni operaciones que deben conservar la identidad del usuario. Para instalar software, búsqueda y selección siguen en tu sesión; tras confirmar, solo se eleva el gestor nativo si hace falta.\n\nLas opciones enumeradas corresponden al formulario de esta plataforma; «{}» regresa a la pantalla anterior.",
-        crate::i18n::gui_text("settings_title"), listed, fields, crate::i18n::text("menu.back")
+            "GUÍA GRÁFICA: AJUSTES\n\nMenú completo «{}»:\n{}\n\nCampos y argumentos de la GUI:\n  {}\n\nProceso simple:\n  Cambia una preferencia cada vez, aplica o guarda los ajustes y comprueba que el valor elegido siga disponible. «{}» consulta la release estable; «{}» descarga en Descargas solo si la firma/hash son válidos.\n\nProceso complejo:\n  Configura tema e idioma, decide qué categorías mostrar y revisa la política de elevación antes de guardar. Al instalar software, la búsqueda, selección del paquete y confirmación permanecen en tu sesión; solo se eleva el gestor nativo cuando el ámbito lo requiere. Para actualizar, comprueba primero la versión y plataforma, descarga el paquete verificado, cierra LTools, conserva una copia anterior y sigue el procedimiento portable de Linux o Windows. No se eleva, ejecuta ni reemplaza automáticamente el binario.\n\nLas opciones enumeradas corresponden al formulario de esta plataforma; «{}» regresa a la pantalla anterior.",
+        crate::i18n::gui_text("settings_title"), listed, fields,
+        crate::i18n::gui_text("update_check"), crate::i18n::gui_text("update_download"),
+        crate::i18n::text("menu.back")
+    )
+}
+
+fn gui_updates_guide() -> String {
+    let listed = [
+        crate::i18n::gui_text("update_check"),
+        crate::i18n::gui_text("update_download"),
+        crate::i18n::text("menu.back"),
+    ]
+    .iter()
+    .enumerate()
+    .map(|(index, label)| format!("  {}. «{}»", index + 1, label))
+    .collect::<Vec<_>>()
+    .join("\n");
+    #[cfg(windows)]
+    let platform_flow = "Windows: el perfil GUI descarga el EXE GUI; el perfil CLI descarga el EXE CLI. Revisa la ruta portable y cierra LTools antes de reemplazarlo.";
+    #[cfg(not(windows))]
+    let platform_flow = "Linux: desde AppImage se descarga otro AppImage; desde instalación tarball/binario se descarga el tarball portable. Conserva el lanzador y los permisos adecuados al sustituirlo.";
+    format!(
+        "GUÍA GRÁFICA: ACTUALIZACIONES\n\nMenú completo «{}»:\n{}\n\nCampos y argumentos de la GUI:\n  No hay campos. Comprobar usa la release estable predeterminada; descargar selecciona plataforma y perfil del ejecutable actual.\n\nProceso simple:\n  Pulsa «{}» y revisa versión instalada, versión publicada, compatibilidad e integridad. Esta consulta necesita Internet, pero no cambia archivos.\n\nProceso complejo:\n  Pulsa «{}» solo si hay una versión posterior. Se valida la firma Ed25519, el checksum del manifiesto, el hash y tamaño del paquete y se guarda en Descargas sin sobrescribir. Después cierra LTools, conserva una copia y reemplaza el artefacto manualmente. {} Nunca se eleva, ejecuta ni sustituye por sí sola la instalación.\n\n«{}» vuelve a Ajustes.",
+        crate::i18n::category_text("settings"), listed,
+        crate::i18n::gui_text("update_check"), crate::i18n::gui_text("update_download"),
+        platform_flow, crate::i18n::text("menu.back")
     )
 }
 
@@ -1032,6 +1095,7 @@ fn windows_gui_topic_page(topic: &str) -> Option<(usize, &'static str, &'static 
         "automation" | "automation-register" => Some((5, "automation", "AUTOMATIZACIÓN")),
         "accounts" => Some((8, "accounts", "USUARIOS, GRUPOS Y SESIONES")),
         "winslim" => Some((7, "winslim", "WINSLIM")),
+        "updates" => Some((6, "settings", "ACTUALIZACIONES")),
         _ => None,
     }
 }
@@ -1088,6 +1152,11 @@ fn windows_gui_page_guide(topic: &str) -> Option<String> {
             "Registrar/editar solicita nombre, ejecutable, directorio de trabajo y argumentos separados; no se evalúa una cadena de shell.",
             "Abre «Scripts registrados» y revisa el nombre, el programa y el estado antes de ejecutar.",
             "Registra un ejecutable Windows con cada argumento separado, inspecciona el registro, prueba el flujo y retira únicamente la entrada seleccionada.",
+        ),
+        6 => (
+            "No hay campos. «Comprobar actualizaciones» consulta GitHub; «Descargar actualización verificada» descarga únicamente una versión más reciente al perfil del usuario.",
+            "Comprueba versión actual, última versión y el paquete que coincide con este ejecutable.",
+            "Descarga solo tras revisar que el paquete corresponde a Windows y a GUI/CLI. La firma Ed25519 y los hashes deben validarse; cierra el programa antes de reemplazar el ejecutable y conserva una copia. No se eleva ni se instala automáticamente.",
         ),
         8 => (
             "Los campos dependen de la acción: usuario, grupo, descripción, contraseña o fechas; se validan antes de ejecutar. «Conceder permisos de administrador» toma una cuenta opcional (vacío = actual) y usa el grupo integrado Administradores por SID `S-1-5-32-544`.",
@@ -1330,6 +1399,14 @@ fn gui_guide(topic: &str) -> String {
         return windows_gui_index();
         #[cfg(not(windows))]
         return GUI_INDEX.to_owned();
+    }
+    if topic == "updates" {
+        #[cfg(windows)]
+        if let Some(guide) = windows_gui_page_guide(topic) {
+            return guide;
+        }
+        #[cfg(not(windows))]
+        return gui_updates_guide();
     }
     #[cfg(not(windows))]
     if matches!(topic, "git" | "gh") {
@@ -1598,6 +1675,7 @@ fn cli_platform_summary(topic: &str) -> &'static str {
         "services" => "PERFIL WINDOWS: se gestionan servicios y eventos Windows; no existen scopes systemd.",
         "storage" => "PERFIL WINDOWS: los objetivos son discos, particiones, volúmenes y letras de unidad Windows.",
         "wine" => "PERFIL WINDOWS: WINE/PROTON NO APLICA al ejecutable Windows nativo.",
+        "updates" => "PERFIL WINDOWS: se descarga el EXE Windows del perfil GUI/CLI y no se eleva ni reemplaza automáticamente.",
         _ => "PERFIL WINDOWS: LTools adapta objetivos, permisos y capacidades a Windows nativo.",
     }
 }
@@ -1610,6 +1688,7 @@ fn cli_platform_summary(topic: &str) -> &'static str {
         "services" => "PERFIL LINUX: los scopes system, user y both distinguen servicios del sistema y del usuario.",
         "storage" => "PERFIL LINUX: los objetivos son dispositivos, volúmenes, montajes y rutas POSIX.",
         "wine" => "PERFIL LINUX: se pueden localizar y gestionar prefijos Wine/Proton compatibles.",
+        "updates" => "PERFIL LINUX: AppImage o tarball según el ejecutable actual; descarga al perfil del usuario sin sudo.",
         _ => "PERFIL LINUX: LTools adapta objetivos, permisos y capacidades al anfitrión Linux.",
     }
 }
@@ -1916,6 +1995,7 @@ fn common_guide(topic: &str) -> Result<&'static str, String> {
         "automation-register" => Ok(AUTOMATION),
         "clean" => Ok(CLEAN),
         "storage" | "storage-partitions" | "storage-filesystems" | "storage-volumes" => Ok(STORAGE),
+        "updates" => Ok(UPDATES),
         "system" => Ok(SYSTEM),
         "services" => Ok(SERVICES),
         "accounts" => Ok(ACCOUNTS),
@@ -1985,6 +2065,7 @@ pub fn run(_ctx: &Context, args: &[String]) -> Result<(), String> {
         "wine" | "proton" | "prefix" => "wine",
         "defaults" => "defaults",
         "settings" => "settings",
+        "updates" | "update" => "updates",
         "containers" | "docker" | "podman" => "containers",
         "containers-lifecycle" | "container-lifecycle" => "containers-lifecycle",
         "containers-images" | "container-images" => "containers-images",
@@ -2015,9 +2096,26 @@ mod tests {
 
     #[test]
     fn index_mentions_all_major_families() {
-        for topic in ["git / gh", "network", "boot", "services", "wine", "actions"] {
+        for topic in [
+            "git / gh", "network", "boot", "services", "wine", "updates", "actions",
+        ] {
             assert!(INDEX.contains(topic), "falta {topic}");
         }
+        assert!(
+            CLI_INDEX.contains("updates"),
+            "falta updates en el índice de CLI"
+        );
+    }
+
+    #[test]
+    fn updater_guides_cover_integrity_and_manual_platform_specific_installation() {
+        let guide = common_guide("updates").unwrap();
+        assert!(guide.contains("Ed25519") && guide.contains("SHA256SUMS.txt"));
+        assert!(guide.contains("no sobrescribe") && guide.contains("no instala automáticamente"));
+        let graphical = gui_guide("updates");
+        assert!(graphical.contains("Comprobar actualizaciones"));
+        assert!(graphical.contains("Descargar actualización verificada"));
+        assert!(graphical.contains("Proceso simple") && graphical.contains("Proceso complejo"));
     }
 
     #[test]
@@ -2095,6 +2193,7 @@ mod tests {
             "kubernetes",
             "defaults",
             "settings",
+            "updates",
             "packages",
             "automation",
             "automation-register",

@@ -23,7 +23,7 @@ pub fn discover_prefixes(roots: &[PathBuf]) -> Vec<PrefixInfo> {
     #[cfg(windows)]
     {
         let _ = roots;
-        return Vec::new();
+        Vec::new()
     }
     #[cfg(not(windows))]
     {

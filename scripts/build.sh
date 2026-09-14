@@ -4,6 +4,9 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$ROOT_DIR/scripts/lib/publish.sh"
+source "$ROOT_DIR/scripts/lib/signing.sh"
+source "$ROOT_DIR/scripts/lib/ssh-signing.sh"
+source "$ROOT_DIR/scripts/lib/third-party-licenses.sh"
 source "$ROOT_DIR/scripts/lib/temp-clean.sh"
 LINUX_BUILDER="$ROOT_DIR/scripts/build.sh"
 CLEANER="$ROOT_DIR/scripts/build.sh"
@@ -520,6 +523,8 @@ WINDOWS_WINE_LOG=""
 SIGNING_REQUIRED=1
 SIGNING_PRIVATE_KEY_FILE=""
 SIGNING_PUBLIC_KEY_FILE=""
+SIGNING_PUBLIC_KEY_ENV_ACTIVE=0
+SSH_SIGNING_AVAILABLE=0
 STEP_STARTED=$SECONDS
 STEP_ACTIVE=0
 # init_logging redirige stdout a tee; conserva antes el estado real de la
@@ -677,7 +682,7 @@ Opciones:
   --require-fuse       Falla si el equipo no puede montar AppImages con FUSE.
   --output DIR         Directorio de salida (por defecto: ./dist).
   --release-dir DIR    Carpeta canónica de publicación (por defecto: ./release).
-  --require-signing    Exige claves Ed25519 y una firma válida para release/ (por defecto).
+  --require-signing    Exige firmas Ed25519 y OpenSSH válidas para release/ (predeterminado).
   --allow-unsigned     Excepción explícita: permite una release local sin firma.
   --jobs N             Paralelismo de Cargo (por defecto: 2).
   --log FICHERO        Guarda la transcripción completa en esta ruta.
@@ -690,9 +695,9 @@ Opciones:
 
 La build AppImage genera un perfil terminal, un perfil CLI y
 ltools-terminal.json para integradores de terminal, además de
-ltools-release.json, SHA256SUMS.txt y su firma Ed25519 separada. La firma
-requiere por defecto las claves de ~/.config/lterminal/; usa --allow-unsigned
-solo para una build local que no vaya a publicarse.
+ltools-release.json, SHA256SUMS.txt, la firma Ed25519 para el actualizador y
+la firma OpenSSH para la procedencia de la release. Usa --allow-unsigned solo
+para una build local que no vaya a publicarse.
 
 Sin argumentos, scripts/build.sh abre el menú de tareas. Para ejecutar el
 pipeline Linux directamente, indica una o más opciones; con ellas no se hacen
@@ -705,7 +710,7 @@ require_command() {
 }
 
 load_signing_material() {
-    local config_home
+    local config_home update_key_value
     if [[ -n "${LTOOLS_SIGNING_PRIVATE_KEY_FILE:-}" ]]; then
         SIGNING_PRIVATE_KEY_FILE="$LTOOLS_SIGNING_PRIVATE_KEY_FILE"
     elif [[ -n "${LTERMINAL_SIGNING_PRIVATE_KEY_FILE:-}" ]]; then
@@ -722,6 +727,18 @@ load_signing_material() {
         config_home="${LTOOLS_CONFIG_HOME:-${XDG_CONFIG_HOME:-${HOME:-$ROOT_DIR/.config}}}"
         SIGNING_PUBLIC_KEY_FILE="$config_home/lterminal/release-signing-public.hex"
     fi
+    # La clave pública no es secreta: se fija dentro de los binarios firmados
+    # para que las instalaciones publicadas puedan verificar futuras releases
+    # sin configuración manual. build.rs la normaliza y Cargo invalida el
+    # artefacto cuando cambia; nunca se imprime su contenido en el log.
+    if update_key_value="$(ltools_effective_update_public_key)"; then
+        SIGNING_PUBLIC_KEY_ENV_ACTIVE=1
+        export LTOOLS_EMBEDDED_UPDATE_PUBLIC_KEY="$update_key_value"
+    elif [[ -r "$SIGNING_PUBLIC_KEY_FILE" ]]; then
+        export LTOOLS_EMBEDDED_UPDATE_PUBLIC_KEY="$(tr -d '[:space:]' <"$SIGNING_PUBLIC_KEY_FILE")"
+    else
+        unset LTOOLS_EMBEDDED_UPDATE_PUBLIC_KEY
+    fi
     if [[ "${LTOOLS_REQUIRE_SIGNING:-${LTERMINAL_REQUIRE_SIGNING:-${CI:-0}}}" =~ ^(1|true|yes)$ ]]; then
         SIGNING_REQUIRED=1
     fi
@@ -731,6 +748,9 @@ load_signing_material() {
     if [[ -n "${LTOOLS_REQUIRE_SIGNING:-}" && "${LTOOLS_REQUIRE_SIGNING}" =~ ^(1|true|yes)$ ]]; then
         SIGNING_REQUIRED=1
     fi
+    if ltools_ssh_signing_config; then
+        SSH_SIGNING_AVAILABLE=1
+    fi
 }
 
 release_signature_args() {
@@ -738,15 +758,17 @@ release_signature_args() {
     if [[ -r "$SIGNING_PRIVATE_KEY_FILE" ]]; then
         RELEASE_SIGNATURE_ARGS+=(--private-key-file "$SIGNING_PRIVATE_KEY_FILE")
     fi
-    if [[ -r "$SIGNING_PUBLIC_KEY_FILE" ]]; then
+    # Una clave pública indicada por variable de entorno tiene precedencia
+    # también en signature::run; no pasar un --public-key-file que la anule.
+    if [[ "$SIGNING_PUBLIC_KEY_ENV_ACTIVE" -eq 0 && -r "$SIGNING_PUBLIC_KEY_FILE" ]]; then
         RELEASE_SIGNATURE_ARGS+=(--public-key-file "$SIGNING_PUBLIC_KEY_FILE")
     fi
 }
 
 prepare_release_signature() {
-    local private_available=0 public_available=0
+    local private_available=0 public_available=0 ssh_signature="$RELEASE_DIR/SHA256SUMS.txt.sshsig"
     [[ -r "$SIGNING_PRIVATE_KEY_FILE" || -n "${LTOOLS_SIGNING_PRIVATE_KEY:-${LTERMINAL_SIGNING_PRIVATE_KEY:-}}" ]] && private_available=1
-    [[ -r "$SIGNING_PUBLIC_KEY_FILE" || -n "${LTOOLS_UPDATE_PUBLIC_KEY:-${LTERMINAL_UPDATE_PUBLIC_KEY:-}}" ]] && public_available=1
+    [[ -r "$SIGNING_PUBLIC_KEY_FILE" || "$SIGNING_PUBLIC_KEY_ENV_ACTIVE" -eq 1 ]] && public_available=1
     run_logged "$BIN" release-checksums --output "$RELEASE_DIR/SHA256SUMS.txt" --artifacts-dir "$RELEASE_DIR"
     if (( private_available && public_available )); then
         release_signature_args
@@ -761,12 +783,28 @@ prepare_release_signature() {
         fi
         warn "release local sin firma: no se encontraron ambas claves Ed25519; se conserva SHA256SUMS.txt y se retira cualquier .sig antiguo"
     fi
+    if (( SSH_SIGNING_AVAILABLE )); then
+        run_logged ltools_ssh_sign_manifest "$RELEASE_DIR/SHA256SUMS.txt" "$ssh_signature"
+        run_logged ltools_ssh_verify_manifest "$RELEASE_DIR/SHA256SUMS.txt" "$ssh_signature"
+        ok 'SHA256SUMS.txt firmado y verificado con la clave SSH configurada'
+    else
+        rm -f -- "$ssh_signature"
+        if (( SIGNING_REQUIRED )); then
+            die 'release estricta: falta la clave SSH de firma (LTOOLS_SSH_SIGNING_KEY_FILE o ~/.ssh/id_ed25519) o ssh-keygen'
+        fi
+        warn 'release local sin firma SSH; use una clave OpenSSH para habilitar SHA256SUMS.txt.sshsig'
+    fi
     if [[ "$RELEASE_DIR" != "$OUTPUT_DIR" ]]; then
         cp -a -- "$RELEASE_DIR/SHA256SUMS.txt" "$OUTPUT_DIR/SHA256SUMS.txt"
         if [[ -s "$RELEASE_DIR/SHA256SUMS.txt.sig" ]]; then
             cp -a -- "$RELEASE_DIR/SHA256SUMS.txt.sig" "$OUTPUT_DIR/SHA256SUMS.txt.sig"
         else
             rm -f -- "$OUTPUT_DIR/SHA256SUMS.txt.sig"
+        fi
+        if [[ -s "$ssh_signature" ]]; then
+            cp -a -- "$ssh_signature" "$OUTPUT_DIR/SHA256SUMS.txt.sshsig"
+        else
+            rm -f -- "$OUTPUT_DIR/SHA256SUMS.txt.sshsig"
         fi
     fi
 }
@@ -917,7 +955,7 @@ if [[ "$APPIMAGE" -eq 1 ]]; then
     if command -v mksquashfs >/dev/null 2>&1; then
         ok 'mksquashfs disponible para el empaquetado'
     else
-        warn 'mksquashfs no está en PATH; se confiará en el runtime interno de appimagetool.'
+    warn 'mksquashfs no está en PATH; se confiará en el runtime interno de appimagetool.'
     fi
     if [[ -c /dev/fuse ]] &&
         { command -v fusermount3 >/dev/null 2>&1 || command -v fusermount >/dev/null 2>&1; }; then
@@ -928,6 +966,9 @@ if [[ "$APPIMAGE" -eq 1 ]]; then
         warn 'FUSE no está disponible; el AppImage se generará, pero se probará mediante extracción.'
         warn 'Para habilitar ejecución directa en Arch Linux y derivados: instala fuse2 y carga «sudo modprobe fuse».'
     fi
+fi
+if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
+    require_command jq
 fi
 if [[ "$APPIMAGE" -eq 1 && "$SMOKE" -eq 1 ]]; then
     require_command timeout
@@ -980,6 +1021,18 @@ if [[ "$CHECKS" -eq 1 ]]; then
     ok 'codificaciones UTF-8/UTF-8 BOM/ANSI correctas'
     run_logged bash "$ROOT_DIR/tests/scripts-syntax.sh"
     ok 'sintaxis Bash/PowerShell correcta (PowerShell cuando pwsh está disponible)'
+    if command -v ssh-keygen >/dev/null 2>&1; then
+        step 'Probando firma OpenSSH de checksums'
+        run_logged bash "$ROOT_DIR/tests/ssh-signing.sh"
+        ok 'firma SSH validada y manipulación de manifiesto rechazada'
+    else
+        warn 'ssh-keygen no está instalado; no se puede ejecutar la prueba de firma SSH.'
+    fi
+    if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
+        step 'Validando inclusión de licencias y avisos de terceros'
+        run_logged bash "$ROOT_DIR/tests/third-party-licenses.sh"
+        ok 'avisos de terceros completos y destinos de paquete protegidos'
+    fi
     run_logged bash "$ROOT_DIR/tests/temp-cleaner.sh"
     ok 'limpieza temporal limitada a artefactos propios, con rutas y uso activo verificados'
 
@@ -1120,6 +1173,13 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
     mkdir -p -- "$LOCAL_PUBLISH_DIR"
     PACKAGE_DIR="$STAGING/$PACKAGE_NAME"
     mkdir -p "$PACKAGE_DIR/rust/target/release"
+    RUST_HOST_TARGET="$(rustc -vV | sed -n 's/^host: //p')"
+    [[ -n "$RUST_HOST_TARGET" ]] || die 'no se pudo identificar la plataforma Cargo para generar avisos de licencias'
+    ltools_create_third_party_license_bundle \
+        "$PACKAGE_DIR/THIRD-PARTY-LICENSES" "$RUST_HOST_TARGET" \
+        || die 'no se pudieron incluir las licencias y avisos de las dependencias Linux'
+    [[ -s "$ROOT_DIR/LICENSE" ]] || die 'falta la licencia MIT del proyecto'
+    cp -a -- "$ROOT_DIR/LICENSE" "$PACKAGE_DIR/LICENSE"
 
     copy_file() {
         local source="$1"
@@ -1241,6 +1301,9 @@ EOF
             appdir="$STAGING/AppDir-$variant"
             mkdir -p "$appdir"
             cp -a -- "$PACKAGE_DIR/." "$appdir/"
+            [[ -s "$appdir/THIRD-PARTY-LICENSES/INDEX.txt" ]] || die 'AppImage sin índice de licencias de terceros'
+            grep -Fq 'ISC' "$appdir/THIRD-PARTY-LICENSES/INDEX.txt" || die 'AppImage sin avisos ISC de dependencias'
+            grep -Fq 'CDLA-Permissive-2.0' "$appdir/THIRD-PARTY-LICENSES/INDEX.txt" || die 'AppImage sin aviso CDLA de raíces TLS'
             if [[ "$variant" == cli ]]; then
                 cp -a -- "$ROOT_DIR/appimage/AppRun" "$appdir/AppRun-main"
                 cp -a -- "$ROOT_DIR/appimage/AppRun-cli" "$appdir/AppRun"
@@ -1327,8 +1390,10 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
             -o -name 'ltools-release.json' -o -name 'ltools-project.json' \
             -o -name 'ltools-capabilities.schema.json' -o -name 'ltools-terminal.schema.json' \
             -o -name 'ltools-project.schema.json' -o -name 'ltools-release.schema.json' \
+            -o -name 'THIRD-PARTY-LICENSES-windows.zip' \
             -o -name 'run-ltools.sh' -o -name 'SHA256SUMS.txt' \
-            -o -name 'SHA256SUMS.txt.sig' \) -delete
+            -o -name 'SHA256SUMS.txt.sig' -o -name 'SHA256SUMS.txt.sshsig' \
+            -o -name 'LICENSE' \) -delete
     fi
 
     copy_to_release() {
@@ -1354,7 +1419,8 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
             find "$ROOT_DIR/dist/windows" -maxdepth 1 -type f \
                 \( -name "ltools-$VERSION-windows-*" -o -name 'ltools-capabilities.json' \
                 -o -name 'ltools-terminal.json' -o -name 'ltools-capabilities-windows.json' \
-                -o -name 'ltools-terminal-windows.json' -o -name 'ltools-*.schema.json' \) -print0
+                -o -name 'ltools-terminal-windows.json' -o -name 'ltools-*.schema.json' \
+                -o -name 'THIRD-PARTY-LICENSES-windows.zip' \) -print0
         )
     fi
     if [[ "$WINDOWS_WINE" -eq 1 && -d "$WINDOWS_WINE_ARTIFACT_DIR" ]]; then
@@ -1362,12 +1428,14 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
         find "$WINDOWS_WINE_ARTIFACT_DIR" -maxdepth 1 -type f \
             \( -name "ltools-$VERSION-windows-*.exe" \
                 -o -name "ltools-$VERSION-windows-*.zip" \
+                -o -name 'THIRD-PARTY-LICENSES-windows.zip' \
                 -o -name 'ltools-capabilities-windows.json' \
                 -o -name 'ltools-terminal-windows.json' \) -print0
         )
         ok 'perfiles Windows GUI y CLI bajo Wine publicados en release/'
     fi
     for file in \
+        "$ROOT_DIR/LICENSE" \
         "$ROOT_DIR/distribution/ltools-project.json" \
         "$ROOT_DIR/distribution/ltools-project.schema.json" \
         "$ROOT_DIR/distribution/ltools-release.schema.json"; do
@@ -1419,8 +1487,13 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
             release_e2e_args+=(--require-windows-executables)
         fi
     fi
-    if [[ -r "$SIGNING_PUBLIC_KEY_FILE" ]]; then
+    if [[ "$SIGNING_PUBLIC_KEY_ENV_ACTIVE" -eq 0 && -r "$SIGNING_PUBLIC_KEY_FILE" ]]; then
         release_e2e_args+=(--signature-public-key-file "$SIGNING_PUBLIC_KEY_FILE")
+    fi
+    if (( SSH_SIGNING_AVAILABLE )); then
+        release_e2e_args+=(--require-ssh-signature
+            --ssh-public-key-file "$LTOOLS_SSH_SIGNING_PUBLIC_KEY_FILE"
+            --ssh-identity "$LTOOLS_SSH_SIGNING_IDENTITY")
     fi
     run_logged "$ROOT_DIR/tests/release-e2e.sh" "${release_e2e_args[@]}"
     ok 'artefactos release verificados'
@@ -1503,7 +1576,8 @@ if [[ "$NO_RUN" -eq 1 ]]; then
     [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]] && printf 'Contrato terminal: %s\n' "$TERMINAL_DESCRIPTOR_ARTIFACT"
     [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]] && printf 'Release publicable: %s\n' "$RELEASE_DIR"
     [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]] && printf 'Checksums release: %s\n' "$RELEASE_DIR/SHA256SUMS.txt"
-    [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]] && [[ -s "$RELEASE_DIR/SHA256SUMS.txt.sig" ]] && printf 'Firma release: %s\n' "$RELEASE_DIR/SHA256SUMS.txt.sig"
+    [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]] && [[ -s "$RELEASE_DIR/SHA256SUMS.txt.sig" ]] && printf 'Firma Ed25519: %s\n' "$RELEASE_DIR/SHA256SUMS.txt.sig"
+    [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]] && [[ -s "$RELEASE_DIR/SHA256SUMS.txt.sshsig" ]] && printf 'Firma OpenSSH: %s\n' "$RELEASE_DIR/SHA256SUMS.txt.sshsig"
     [[ "$APPIMAGE" -eq 1 ]] && printf 'Lanzador recomendado: %s\n' "$RUNNER_ARTIFACT"
     [[ "$WINDOWS_WINE" -eq 1 && -f "$WINDOWS_WINE_ARTIFACT" ]] && printf 'Windows validado con Wine/Proton: %s\n' "$WINDOWS_WINE_ARTIFACT"
     [[ "$WINDOWS_WINE" -eq 1 && "$NO_LOG" -eq 0 && -s "$WINDOWS_WINE_LOG" ]] && printf 'Log Windows Wine/Proton: %s\n' "$WINDOWS_WINE_LOG"

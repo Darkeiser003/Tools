@@ -1285,7 +1285,7 @@ pub fn nsudo_path() -> Option<PathBuf> {
         .or_else(|| {
             ["NSudoLC.exe", "NSudoLG.exe", "NSudo.exe"]
                 .into_iter()
-                .find_map(|name| command_path(name))
+                .find_map(command_path)
         })
 }
 
@@ -1340,27 +1340,6 @@ fn is_nsudo_launcher(path: &Path) -> bool {
         })
 }
 
-#[cfg(test)]
-mod nsudo_detection_tests {
-    use super::is_nsudo_launcher;
-    use std::path::Path;
-
-    #[test]
-    fn detector_accepts_supported_launchers_but_not_sibling_tools() {
-        for name in ["NSudoLC.exe", "NSudoLG.exe", "NSudo.exe", "nsudolg.EXE"] {
-            assert!(is_nsudo_launcher(Path::new(name)), "missed {name}");
-        }
-        for name in [
-            "NSudoDM.exe",
-            "NSudoHelper.exe",
-            "NSudoGUI.exe",
-            "NSudo.txt",
-        ] {
-            assert!(!is_nsudo_launcher(Path::new(name)), "misdetected {name}");
-        }
-    }
-}
-
 fn command_path(name: &str) -> Option<PathBuf> {
     std::env::var_os("PATH").and_then(|path| {
         std::env::split_paths(&path)
@@ -1396,4 +1375,25 @@ pub fn is_elevated() -> bool {
         ],
     )
     .is_some_and(|value| value.trim().eq_ignore_ascii_case("true"))
+}
+
+#[cfg(test)]
+mod nsudo_detection_tests {
+    use super::is_nsudo_launcher;
+    use std::path::Path;
+
+    #[test]
+    fn detector_accepts_supported_launchers_but_not_sibling_tools() {
+        for name in ["NSudoLC.exe", "NSudoLG.exe", "NSudo.exe", "nsudolg.EXE"] {
+            assert!(is_nsudo_launcher(Path::new(name)), "missed {name}");
+        }
+        for name in [
+            "NSudoDM.exe",
+            "NSudoHelper.exe",
+            "NSudoGUI.exe",
+            "NSudo.txt",
+        ] {
+            assert!(!is_nsudo_launcher(Path::new(name)), "misdetected {name}");
+        }
+    }
 }

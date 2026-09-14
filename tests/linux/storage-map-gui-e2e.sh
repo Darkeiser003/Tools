@@ -29,6 +29,9 @@ done
     echo "Se requieren --tmp y --captures" >&2
     exit 2
 }
+command -v realpath >/dev/null 2>&1 || { echo 'Se necesita realpath para normalizar las rutas E2E.' >&2; exit 2; }
+TMP_DIR="$(realpath -m -- "$TMP_DIR")"
+CAPTURE_DIR="$(realpath -m -- "$CAPTURE_DIR")"
 [[ "$SCREEN" =~ ^[0-9]+x[0-9]+$ ]] || { echo "Pantalla inválida: $SCREEN" >&2; exit 2; }
 mkdir -p -- "$TMP_DIR" "$CAPTURE_DIR"
 if ! command -v xvfb-run >/dev/null || ! command -v xdotool >/dev/null \
@@ -61,9 +64,11 @@ fi
 
 RUN_DIR="$(mktemp -d "$TMP_DIR/storage-map-gui-e2e.XXXXXX")"
 CONFIRM_ACTION="action"
-SOURCE="$RUN_DIR/source.txt"
+HOME_DIR="$RUN_DIR/home"
+SOURCE="$HOME_DIR/.cache/ltools-map/source.txt"
 COPY="$RUN_DIR/copy.txt"
 MOVED="$RUN_DIR/moved.txt"
+mkdir -p -- "${SOURCE%/*}"
 printf 'LTools GUI map action fixture\n' >"$SOURCE"
 GUI_PID=""
 MAP_WINDOW=""
@@ -126,10 +131,28 @@ image_geometry() {
     fi
 }
 
+wait_for_tree_layout() {
+    local marker="$1" require_compact="$2"
+    for _ in {1..40}; do
+        if [[ -s "$marker" ]] && awk -F '\t' -v compact="$require_compact" '
+            $1 == "STORAGE_TREE_LAYOUT" && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ &&
+            $3 <= $2 && $4 < $3 && $4 >= 132 && (!compact || $2 < 700) { valid = 1 }
+            END { exit !valid }
+        ' "$marker"; then
+            return 0
+        fi
+        sleep 0.05
+    done
+    echo "La columna y el ajuste de texto no se adaptaron al viewport GTK: $marker" >&2
+    [[ -f "$marker" ]] && cat "$marker" >&2
+    return 1
+}
+
 launch_map() {
-    local path="$1" tag="$2" home="$RUN_DIR/$2-home"
+    local path="$1" tag="$2" home="$HOME_DIR"
     local state="$RUN_DIR/$2-state" data="$RUN_DIR/$2-data" config="$RUN_DIR/$2-config"
     local ready_marker="$RUN_DIR/$tag.ready"
+    local layout_marker="$RUN_DIR/$tag.layout"
     mkdir -p -- "$home" "$state" "$data" "$config" "$home/.local/share/Trash"
     export GDK_BACKEND=x11 GTK_USE_PORTAL=0
     unset WAYLAND_DISPLAY WAYLAND_SOCKET
@@ -137,6 +160,7 @@ launch_map() {
     export LTOOLS_GUI_TREE_SMOKE=1 LTOOLS_GUI_TREE_SMOKE_HOLD_MS=45000
     export LTOOLS_GUI_TREE_PATH="$path" LTOOLS_GUI_TREE_MARKER="$RUN_DIR/$tag.marker"
     export LTOOLS_GUI_TREE_READY_MARKER="$ready_marker"
+    export LTOOLS_GUI_AUDIT_MARKER="$layout_marker"
     export LTOOLS_LANG=es HOME="$home" XDG_STATE_HOME="$state" XDG_DATA_HOME="$data" XDG_CONFIG_HOME="$config"
     "$BIN" >"$RUN_DIR/$tag.log" 2>&1 &
     GUI_PID=$!
@@ -160,8 +184,16 @@ launch_map() {
         echo "El mapa no terminó de cargar ($tag)" >&2
         return 1
     fi
+    wait_for_tree_layout "$layout_marker" 0
+    if [[ "$path" == */.cache/* ]] &&
+        ! grep -Fq $'STORAGE_TREE_EXPLANATION\tCaché de usuario; suele poder limpiarse' "$layout_marker"; then
+        echo "El árbol GTK no registró la explicación estándar de la ruta fixture: $layout_marker" >&2
+        cat "$layout_marker" >&2
+        return 1
+    fi
     sleep 0.2
     if (( LAYOUT_ONLY )); then
+        wait_for_tree_layout "$RUN_DIR/$tag.layout" 1
         local compact_geometry compact_x compact_y compact_width compact_height screen_width screen_height
         compact_geometry="$(xdotool getwindowgeometry --shell "$MAP_WINDOW")"
         read -r screen_width screen_height < <(xdotool getdisplaygeometry)
@@ -197,6 +229,7 @@ launch_map() {
     sleep 0.35
     xdotool windowsize --sync "$MAP_WINDOW" 640 480
     sleep 0.2
+    wait_for_tree_layout "$RUN_DIR/$tag.layout" 1
     local small_geometry small_width small_height large_geometry large_height
     small_geometry="$(xdotool getwindowgeometry --shell "$MAP_WINDOW")"
     small_width="$(awk -F= '$1 == "WIDTH" { print $2 }' <<<"$small_geometry")"
@@ -347,7 +380,7 @@ if command -v gio >/dev/null || command -v trash-put >/dev/null; then
     confirm_yes
     for _ in {1..100}; do [[ ! -e "$MOVED" ]] && break; sleep 0.1; done
     [[ ! -e "$MOVED" ]]
-    TRASHED="$(find "$RUN_DIR/map-trash-data" "$RUN_DIR/map-trash-home/.local/share/Trash" \
+    TRASHED="$(find "$RUN_DIR/map-trash-data" "$HOME_DIR/.local/share/Trash" \
         -type f -name "$(basename "$MOVED")" -print -quit 2>/dev/null || true)"
     [[ -n "$TRASHED" && -f "$TRASHED" ]]
     grep -Fq "LTools GUI map action fixture" "$TRASHED"

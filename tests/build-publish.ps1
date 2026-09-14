@@ -1,6 +1,47 @@
 ﻿$ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 . (Join-Path $root 'scripts\lib\publish.ps1')
+. (Join-Path $root 'scripts\lib\ssh-signing.ps1')
+
+$sshKeygen = Get-Command ssh-keygen.exe, ssh-keygen -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($sshKeygen) {
+    $savedSshEnvironment = @{}
+    foreach ($name in @(
+        'LTOOLS_SSH_SIGNING_KEY_FILE', 'LTOOLS_SSH_SIGNING_PUBLIC_KEY_FILE', 'LTOOLS_SSH_SIGNING_IDENTITY',
+        'LTERMINAL_SSH_SIGNING_KEY_FILE', 'LTERMINAL_SSH_SIGNING_PUBLIC_KEY_FILE', 'LTERMINAL_SSH_SIGNING_IDENTITY'
+    )) { $savedSshEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+    $sshTestDirectory = Join-Path ([IO.Path]::GetTempPath()) "ltools-powershell-ssh-test-$PID-$([guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Path $sshTestDirectory | Out-Null
+    try {
+        $sshPrivateKey = Join-Path $sshTestDirectory 'isolated-key'
+        & $sshKeygen.Source -q -t ed25519 -N '' -C 'ltools-test@example.invalid' -f $sshPrivateKey
+        if ($LASTEXITCODE -ne 0) { throw 'No se pudo crear una clave SSH temporal para la prueba PowerShell.' }
+        $env:LTOOLS_SSH_SIGNING_KEY_FILE = $sshPrivateKey
+        $env:LTOOLS_SSH_SIGNING_PUBLIC_KEY_FILE = "$sshPrivateKey.pub"
+        $env:LTOOLS_SSH_SIGNING_IDENTITY = 'ltools-test@example.invalid'
+        $sshConfiguration = Get-LToolsSshSigningConfiguration $root
+        if (-not $sshConfiguration.CanSign -or -not $sshConfiguration.CanVerify) {
+            throw 'La configuración de firma SSH aislada no detectó ambas capacidades.'
+        }
+        $sshManifest = Join-Path $sshTestDirectory 'SHA256SUMS.txt'
+        $sshSignature = Join-Path $sshTestDirectory 'SHA256SUMS.txt.sshsig'
+        [IO.File]::WriteAllText($sshManifest, "0123456789abcdef package.zip" + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+        Invoke-LToolsSshManifestSigning $sshManifest $sshSignature $sshConfiguration | Out-Null
+        Test-LToolsSshManifestSignature $sshManifest $sshSignature $sshConfiguration
+        [IO.File]::AppendAllText($sshManifest, "tampered" + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+        $tamperingRejected = $false
+        try { Test-LToolsSshManifestSignature $sshManifest $sshSignature $sshConfiguration }
+        catch { $tamperingRejected = $true }
+        if (-not $tamperingRejected) { throw 'La verificación SSH PowerShell aceptó un manifiesto alterado.' }
+    } finally {
+        foreach ($name in $savedSshEnvironment.Keys) {
+            [Environment]::SetEnvironmentVariable($name, $savedSshEnvironment[$name], 'Process')
+        }
+        if (Test-Path -LiteralPath $sshTestDirectory -PathType Container) {
+            Remove-Item -LiteralPath $sshTestDirectory -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
 
 $workspace = Join-Path ([IO.Path]::GetTempPath()) "ltools-publish-test-$PID-$([guid]::NewGuid().ToString('N'))"
 $output = Join-Path $workspace 'output'
@@ -64,6 +105,16 @@ try {
     foreach ($name in $fixtureNames) {
         [IO.File]::WriteAllBytes((Join-Path $releaseFixture $name), [byte[]]@(1, 2, 3, 4))
     }
+    $licenseFixture = Join-Path $releaseFixture 'THIRD-PARTY-LICENSES'
+    New-Item -ItemType Directory -Path $licenseFixture | Out-Null
+    Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination $releaseFixture
+    $licenseIndexText = @(
+        "ring$([char]9)0.17.14$([char]9)Apache-2.0 AND ISC",
+        "webpki-roots$([char]9)1.0.9$([char]9)CDLA-Permissive-2.0"
+    ) -join [Environment]::NewLine
+    Write-Utf8NoBom (Join-Path $licenseFixture 'INDEX.txt') $licenseIndexText
+    $licenseArchive = Join-Path $releaseFixture 'THIRD-PARTY-LICENSES-windows.zip'
+    Compress-Archive -Path @((Join-Path $releaseFixture 'LICENSE'), $licenseFixture) -DestinationPath $licenseArchive
     $fixtureArtifacts = @()
     foreach ($index in 0..($fixtureNames.Count - 1)) {
         $name = $fixtureNames[$index]
@@ -117,7 +168,7 @@ try {
         throw 'El publicador no rechazó el tipo de destino incorrecto de forma segura.'
     }
 
-    Write-Output 'Promoción de archivos/carpetas validada; destinos previos conservados ante error.'
+    Write-Output 'Promoción de archivos/carpetas y firma SSH PowerShell validadas; destinos previos conservados ante error.'
 } finally {
     Remove-Item -LiteralPath $workspace -Recurse -Force -ErrorAction SilentlyContinue
 }

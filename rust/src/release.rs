@@ -99,6 +99,7 @@ pub fn checksums(args: &[String]) -> Result<(), String> {
             let name = file_name(&file)?;
             if name == "SHA256SUMS.txt"
                 || name == "SHA256SUMS.txt.sig"
+                || name == "SHA256SUMS.txt.sshsig"
                 || name.ends_with(".tmp")
                 || name.ends_with(".bak")
             {
@@ -456,7 +457,7 @@ fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify, valid_tag, validate_repository, write_atomic};
+    use super::{checksums, classify, valid_tag, validate_repository, write_atomic};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -563,6 +564,38 @@ mod tests {
                 .count(),
             1
         );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn checksum_omits_both_detached_signatures_to_avoid_cycles() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ltools-release-checksums-test-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).unwrap();
+        let ordinary = directory.join("artifact.zip");
+        let ed25519 = directory.join("SHA256SUMS.txt.sig");
+        let openssh = directory.join("SHA256SUMS.txt.sshsig");
+        let output = directory.join("SHA256SUMS.txt");
+        fs::write(&ordinary, b"release artifact").unwrap();
+        fs::write(&ed25519, b"ed25519 detached signature").unwrap();
+        fs::write(&openssh, b"openssh detached signature").unwrap();
+        let arguments = [
+            "--output".to_owned(),
+            output.to_string_lossy().into_owned(),
+            "--artifacts-dir".to_owned(),
+            directory.to_string_lossy().into_owned(),
+        ];
+        checksums(&arguments).unwrap();
+        let content = fs::read_to_string(&output).unwrap();
+        assert!(content.contains("artifact.zip"));
+        assert!(!content.contains("SHA256SUMS.txt.sig"));
+        assert!(!content.contains("SHA256SUMS.txt.sshsig"));
         fs::remove_dir_all(directory).unwrap();
     }
 }

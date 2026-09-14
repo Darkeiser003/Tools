@@ -1,4 +1,4 @@
-function Get-LToolsMapValue($Map, [string]$Key) {
+﻿function Get-LToolsMapValue($Map, [string]$Key) {
     if ($null -eq $Map) { return $null }
     if ($Map -is [System.Collections.IDictionary]) {
         if ($Map.Contains($Key)) { return $Map[$Key] }
@@ -45,8 +45,10 @@ function Get-LToolsBuildImpact($Old, $New) {
         $packageInput = $rustProduct -or $windowsProduct -or $path -eq 'windows/tests/release-e2e.ps1' -or
             $path -match '^scripts/build\.ps1$' -or
             $path -match '^scripts/lib/publish\.ps1$' -or
+            $path -match '^scripts/lib/third-party-licenses\.ps1$' -or
+            $path -match '^scripts/lib/ssh-signing\.ps1$' -or
             $path -match '^appimage/ltools-(capabilities|terminal)\.schema\.json$' -or
-            $path -match '^distribution/' -or $path -eq 'README.md'
+            $path -match '^distribution/' -or $path -in @('README.md', 'LICENSE')
 
         if ($rustBuild) { $impact.RustCompile.Add($path) }
         if ($packageInput) { $impact.Package.Add($path) }
@@ -91,7 +93,7 @@ function Get-LToolsBuildArtifactHashes(
     $prefix = "ltools-$Version-windows-$Architecture"
     $paths = [ordered]@{}
     foreach ($name in @(
-        "$prefix.exe", "$prefix-cli.exe", "$prefix.zip",
+        "$prefix.exe", "$prefix-cli.exe", "$prefix.zip", 'THIRD-PARTY-LICENSES-windows.zip',
         'ltools-capabilities.json', 'ltools-capabilities-windows.json',
         'ltools-terminal.json', 'ltools-terminal-windows.json',
         'ltools-capabilities.schema.json', 'ltools-terminal.schema.json'
@@ -100,27 +102,34 @@ function Get-LToolsBuildArtifactHashes(
     }
     $portableNames = @(
         'ltools.exe', 'ltools-cli.exe', 'ltools.ps1', 'ltools.cmd',
-        'ltools-cli.ps1', 'ltools-cli.cmd', 'README.md', 'ltools-capabilities.json',
+        'ltools-cli.ps1', 'ltools-cli.cmd', 'README.md', 'LICENSE', 'ltools-capabilities.json',
         'ltools-capabilities-windows.json', 'ltools-terminal.json',
         'ltools-terminal-windows.json', 'ltools-capabilities.schema.json',
-        'ltools-terminal.schema.json', 'BUILD-INFO.txt'
+        'ltools-terminal.schema.json', 'BUILD-INFO.txt', 'THIRD-PARTY-LICENSES/INDEX.txt'
     )
     $portable = Join-Path $OutputDirectory $prefix
     foreach ($name in $portableNames) { $paths["portable/$name"] = Join-Path $portable $name }
+    $portableLicenses = Join-Path $portable 'THIRD-PARTY-LICENSES'
+    if (Test-Path -LiteralPath $portableLicenses -PathType Container) {
+        foreach ($licenseFile in Get-ChildItem -LiteralPath $portableLicenses -Recurse -File -Force | Sort-Object FullName) {
+            $relative = $licenseFile.FullName.Substring($portableLicenses.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+            $paths["portable/THIRD-PARTY-LICENSES/$relative"] = $licenseFile.FullName
+        }
+    }
 
     foreach ($name in @(
-        "$prefix.exe", "$prefix-cli.exe", "$prefix.zip",
+        "$prefix.exe", "$prefix-cli.exe", "$prefix.zip", 'THIRD-PARTY-LICENSES-windows.zip',
         'ltools-capabilities.json', 'ltools-capabilities-windows.json',
         'ltools-terminal.json', 'ltools-terminal-windows.json',
         'ltools-capabilities.schema.json', 'ltools-terminal.schema.json',
         'ltools-project.json', 'ltools-project.schema.json', 'ltools-release.schema.json',
-        'ltools-release.json', 'SHA256SUMS.txt', 'SHA256SUMS.txt.sig'
+        'ltools-release.json', 'LICENSE', 'SHA256SUMS.txt', 'SHA256SUMS.txt.sig', 'SHA256SUMS.txt.sshsig'
     )) {
         $paths["release/$name"] = Join-Path $PublishDirectory $name
     }
     foreach ($name in @(
         'ltools-release.json', 'ltools-project.json', 'ltools-project.schema.json',
-        'ltools-release.schema.json', 'SHA256SUMS.txt', 'SHA256SUMS.txt.sig'
+        'ltools-release.schema.json', 'LICENSE', 'SHA256SUMS.txt', 'SHA256SUMS.txt.sig', 'SHA256SUMS.txt.sshsig'
     )) {
         $paths["dist/$name"] = Join-Path $DistDirectory $name
     }
@@ -135,10 +144,10 @@ function Get-LToolsPublicKeyFingerprint(
     [string]$PublicKeyEnvironment
 ) {
     $keyText = $null
-    if ($PublicKeyFile -and (Test-Path -LiteralPath $PublicKeyFile -PathType Leaf)) {
-        $keyText = [IO.File]::ReadAllText($PublicKeyFile)
-    } elseif ($PublicKeyEnvironment) {
+    if (-not [string]::IsNullOrWhiteSpace($PublicKeyEnvironment)) {
         $keyText = $PublicKeyEnvironment
+    } elseif ($PublicKeyFile -and (Test-Path -LiteralPath $PublicKeyFile -PathType Leaf)) {
+        $keyText = [IO.File]::ReadAllText($PublicKeyFile)
     }
     if ($null -eq $keyText) { return $null }
     $canonicalKey = ($keyText -replace '\s', '').ToLowerInvariant()
@@ -148,12 +157,18 @@ function Get-LToolsPublicKeyFingerprint(
     finally { $sha.Dispose() }
 }
 
+function Test-LToolsSigningKeyChanged($OldSigning, [string]$CurrentFingerprint) {
+    return (Get-LToolsMapValue $OldSigning 'publicKeyFingerprint') -ne $CurrentFingerprint
+}
+
 function Test-LToolsBuildArtifactsMatch(
     $PreviousHashes,
     $CurrentHashes,
     $PreviousSigning,
     [bool]$SigningRequired,
-    [string]$CurrentKeyFingerprint
+    [string]$CurrentKeyFingerprint,
+    [string]$CurrentSshKeyFingerprint,
+    [string]$CurrentSshIdentity
 ) {
     if ($null -eq $PreviousHashes -or $null -eq $PreviousSigning) { return $false }
     if ((Get-LToolsMapValue $PreviousSigning 'required') -ne $SigningRequired) { return $false }
@@ -161,6 +176,11 @@ function Test-LToolsBuildArtifactsMatch(
     $currentSigned = $currentSignatureHash -and $currentSignatureHash -ne 'missing'
     if ((Get-LToolsMapValue $PreviousSigning 'signed') -ne [bool]$currentSigned) { return $false }
     if ([string](Get-LToolsMapValue $PreviousSigning 'publicKeyFingerprint') -ne [string]$CurrentKeyFingerprint) { return $false }
+    $currentSshSignatureHash = Get-LToolsMapValue $CurrentHashes 'release/SHA256SUMS.txt.sshsig'
+    $currentSshSigned = $currentSshSignatureHash -and $currentSshSignatureHash -ne 'missing'
+    if ((Get-LToolsMapValue $PreviousSigning 'sshSigned') -ne [bool]$currentSshSigned) { return $false }
+    if ([string](Get-LToolsMapValue $PreviousSigning 'sshPublicKeyFingerprint') -ne [string]$CurrentSshKeyFingerprint) { return $false }
+    if ([string](Get-LToolsMapValue $PreviousSigning 'sshIdentity') -ne [string]$CurrentSshIdentity) { return $false }
     foreach ($key in (Get-LToolsMapKeys $CurrentHashes)) {
         if ((Get-LToolsMapValue $PreviousHashes $key) -ne (Get-LToolsMapValue $CurrentHashes $key)) { return $false }
     }

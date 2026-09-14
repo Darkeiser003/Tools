@@ -83,6 +83,7 @@ if command -v jq >/dev/null 2>&1; then
     mkdir -- "$release_fixture"
     fixture_version='9.8.7'
     fixture_artifact="ltools-$fixture_version-linux-x86_64.tar.gz"
+    cp -- "$ROOT_DIR/LICENSE" "$release_fixture/LICENSE"
     printf 'binary fixture\n' >"$release_fixture/$fixture_artifact"
     printf 'user data\n' >"$release_fixture/.user-note"
     printf 'ignored temp\n' >"$release_fixture/.build-fragment.tmp"
@@ -101,7 +102,7 @@ if command -v jq >/dev/null 2>&1; then
         >"$release_fixture/ltools-release.json"
     while IFS= read -r -d '' file; do
         printf '%s  %s\n' "$(sha256sum -- "$file" | awk '{print $1}')" "${file##*/}"
-    done < <(find "$release_fixture" -maxdepth 1 -type f ! -name 'SHA256SUMS.txt' ! -name 'SHA256SUMS.txt.sig' ! -name '*.tmp' ! -name '*.bak' -print0 | sort -z) \
+    done < <(find "$release_fixture" -maxdepth 1 -type f ! -name 'SHA256SUMS.txt' ! -name 'SHA256SUMS.txt.sig' ! -name 'SHA256SUMS.txt.sshsig' ! -name '*.tmp' ! -name '*.bak' -print0 | sort -z) \
         >"$release_fixture/SHA256SUMS.txt"
     bash "$ROOT_DIR/tests/release-e2e.sh" --release-dir "$release_fixture" \
         --version "$fixture_version" --no-appimage --no-package >/dev/null

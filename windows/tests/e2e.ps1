@@ -117,10 +117,41 @@ try {
     if ($capabilityJson.application -ne 'WinSlim-Tools' -or $capabilityJson.platform -ne 'windows') {
         throw 'La identidad Windows del contrato no es WinSlim-Tools.'
     }
+    if ($capabilityJson.features -notcontains 'verified-updates' -or
+        $capabilityJson.features -notcontains 'verified-update-download' -or
+        $capabilityJson.distribution.windows.updates.automatic_install -ne $false) {
+        throw 'El contrato Windows omite la descarga verificada o promete instalación automática.'
+    }
     if ($capabilityJson.features -contains 'wine-prefixes' -or
         $capabilities -match 'Heroic|Lutris|UMU') {
         throw 'El contrato JSON Windows anuncia o mezcla funciones Linux/Wine.'
     }
+    $updateHelp = Run @('update', '--help')
+    foreach ($marker in @('check', 'download', '--repository OWNER/REPO')) {
+        if ($updateHelp -notmatch [regex]::Escape($marker)) {
+            throw "La ayuda Windows del actualizador no documenta: $marker"
+        }
+    }
+    $pausedUpdateFailure = Invoke-NativeProcess -FileName $Binary -Arguments @('update', 'invalid', '--pause') -InputText ([Environment]::NewLine)
+    $pausedUpdateOutput = [string]$pausedUpdateFailure.Stdout + [string]$pausedUpdateFailure.Stderr
+    if ($pausedUpdateFailure.ExitCode -eq 0 -or
+        $pausedUpdateOutput -notmatch 'Error: acción update desconocida' -or
+        $pausedUpdateOutput -notmatch 'Pulsa Enter para cerrar esta consulta') {
+        throw 'La consola pausada de actualización no conserva el error visible y el código de fallo.'
+    }
+    $updateGuide = Run @('guide', 'updates')
+    foreach ($marker in @('firma Ed25519', 'SHA256SUMS.txt', 'No ejecuta ni reemplaza')) {
+        if ($updateGuide -notmatch [regex]::Escape($marker)) {
+            throw "La guía CLI Windows del actualizador no documenta: $marker"
+        }
+    }
+    $updateGuiGuide = Run @('guide', 'gui', 'updates')
+    foreach ($marker in @('Comprobar actualizaciones', 'Descargar actualización verificada', 'Windows', 'No se eleva')) {
+        if ($updateGuiGuide -notmatch [regex]::Escape($marker)) {
+            throw "La guía GUI Windows del actualizador no documenta: $marker"
+        }
+    }
+    Write-Host '  [OK] actualizador Windows: CLI, GUI, plataforma e integridad documentadas sin acceso a red'
     Run-WithInput @('system', '--dry-run', 'service', 'restart', 'EventLog') ("y" + [Environment]::NewLine)
     $storageOutput = Run @('storage', 'tools')
     if ($storageOutput -notmatch 'diskpart') { throw 'El módulo Windows de almacenamiento falló.' }
@@ -171,7 +202,7 @@ try {
             throw "La guía DiskPart Windows no contiene el paso protegido esperado: $guideMarker"
         }
     }
-    $windowsGuideTopics = @('audit','packages','software','git','aliases','automation','automation-register','clean','storage','storage-partitions','storage-filesystems','storage-volumes','system','services','accounts','native','network','boot','registry','diagnostics','defaults','installable','settings','containers','containers-lifecycle','containers-images','containers-volumes','containers-compose','kubernetes','ssh','connectivity','adb','utilities','privileges','wine','prefix','winslim')
+    $windowsGuideTopics = @('audit','packages','software','git','aliases','automation','automation-register','clean','storage','storage-partitions','storage-filesystems','storage-volumes','system','services','accounts','native','network','boot','registry','diagnostics','defaults','installable','settings','updates','containers','containers-lifecycle','containers-images','containers-volumes','containers-compose','kubernetes','ssh','connectivity','adb','utilities','privileges','wine','prefix','winslim')
     foreach ($guideTopic in $windowsGuideTopics) {
         $guide = Run @('guide', 'gui', $guideTopic)
         if ([string]::IsNullOrWhiteSpace($guide) -or $guide -notmatch 'GUÍA (CLI|GRÁFICA)') {

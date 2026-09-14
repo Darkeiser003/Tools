@@ -112,7 +112,12 @@ fn load_public_key(path: Option<&Path>) -> Result<VerifyingKey, String> {
         )
     } else if let Some(value) = std::env::var("LTOOLS_UPDATE_PUBLIC_KEY")
         .ok()
-        .or_else(|| std::env::var("LTERMINAL_UPDATE_PUBLIC_KEY").ok())
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::var("LTERMINAL_UPDATE_PUBLIC_KEY")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
     {
         (value, "entorno".to_string())
     } else {

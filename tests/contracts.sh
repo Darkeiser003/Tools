@@ -24,6 +24,19 @@ grep -Fq 'E2E de menús GUI y flujos funcionales' "$ROOT_DIR/scripts/build.sh" |
 grep -Fq -- '--require-gui --binary "$RELEASE_BIN"' "$ROOT_DIR/scripts/build.sh" || fail 'pruebas manuales Linux permiten omitir la GUI'
 grep -Fq -- '--require-dependencies --binary "$RELEASE_BIN"' "$ROOT_DIR/scripts/build.sh" || fail 'pruebas manuales Linux permiten omitir dependencias'
 grep -Fq 'tests/scripts-syntax.sh' "$ROOT_DIR/scripts/build.sh" || fail 'builder/menú Linux no ofrece parseo de scripts sin compilar'
+grep -Fq 'third-party-licenses.sh' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no integra el paquete de licencias de dependencias'
+grep -Fq 'ssh-signing.sh' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no integra firmas SSH de release'
+[[ -f "$ROOT_DIR/LICENSE" ]] || fail 'falta la licencia MIT del proyecto'
+grep -Fq 'https://github.com/Darkeiser003' "$ROOT_DIR/LICENSE" || fail 'la licencia del proyecto no enlaza al perfil de GitHub del titular'
+grep -Fq 'SHA256SUMS.txt.sshsig' "$ROOT_DIR/tests/release-e2e.sh" || fail 'E2E de release no verifica la firma SSH'
+[[ -f "$ROOT_DIR/tests/ssh-signing.sh" ]] || fail 'falta la prueba funcional de firma SSH de release'
+[[ -f "$ROOT_DIR/tests/third-party-licenses.sh" ]] || fail 'falta la prueba funcional del paquete de licencias'
+grep -Fq 'THIRD-PARTY-LICENSES/INDEX.txt' "$ROOT_DIR/tests/linux/tarball-e2e.sh" || fail 'E2E del tarball no valida los avisos de licencias incluidos'
+grep -Fq 'LICENSE' "$ROOT_DIR/tests/linux/tarball-e2e.sh" || fail 'E2E del tarball no valida la licencia del proyecto'
+grep -Fq 'New-LToolsThirdPartyLicenseBundle' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no genera los avisos de dependencias'
+grep -Fq 'THIRD-PARTY-LICENSES-windows.zip' "$ROOT_DIR/scripts/lib/build-state.ps1" || fail 'estado incremental Windows no vigila el archivo de licencias'
+grep -Fq 'crate = "webpki-roots", allow = ["CDLA-Permissive-2.0"]' "$ROOT_DIR/deny.toml" || fail 'cargo-deny no limita CDLA a los datos de raíces TLS'
+grep -Fxq '    "ISC",' "$ROOT_DIR/deny.toml" || fail 'cargo-deny no contempla ISC requerido por rustls-webpki/ring'
 [[ -f "$ROOT_DIR/tests/scripts-syntax.sh" ]] || fail 'falta el comprobador de sintaxis de scripts'
 grep -Fq 'Compilar solo el backend GUI' "$ROOT_DIR/scripts/build.sh" || fail 'menú Linux sin build de backend aislada'
 grep -Fq 'Build rápida de desarrollo: sin paquetes, tests, smoke, E2E ni Wine' "$ROOT_DIR/scripts/build.sh" || fail 'menú Linux no advierte que la build rápida omite las pruebas'
@@ -31,11 +44,16 @@ grep -Fq -- '--fast --no-tests --no-package' "$ROOT_DIR/scripts/build.sh" || fai
 grep -Fq 'Limpiar artefactos Windows' "$ROOT_DIR/scripts/build.ps1" || fail 'menú Windows sin limpieza de artefactos'
 grep -Fq 'perfil rápido, conserva las pruebas' "$ROOT_DIR/scripts/build.ps1" || fail 'menú Windows confunde perfil rápido con omitir pruebas'
 grep -Fq 'El smoke también necesita ltools-cli.exe' "$ROOT_DIR/scripts/build.ps1" || fail 'menú Windows no verifica el perfil CLI previo al smoke'
+grep -Fxq '/dist/' "$ROOT_DIR/.gitignore" || fail 'Git no excluye la carpeta de salida predeterminada dist'
+grep -Fxq '/release/' "$ROOT_DIR/.gitignore" || fail 'Git no excluye la carpeta de releases locales predeterminada'
+if rg -n '^\*\.(AppImage|appimage|tar\.gz|tar\.xz|tar\.zst|zip|exe|dll|so|log)$' "$ROOT_DIR/.gitignore"; then
+    fail '.gitignore oculta globalmente extensiones que podrían pertenecer a fuentes o fixtures'
+fi
 grep -Fq 'previousCliMode' "$ROOT_DIR/scripts/build.ps1" || fail 'preview CLI Windows no conserva la variable de entorno previa'
 grep -Fq '[switch]$NoSmoke' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no permite omitir solo el smoke'
 grep -Fq '[switch]$NoE2E' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no permite omitir solo la E2E'
-grep -Fq 'if (-not ($NoRun -or $NoSmoke)' "$ROOT_DIR/scripts/build.ps1" || fail 'el skip smoke Windows mezcla flags o no conserva el alias NoRun'
-grep -Fq 'if (-not ($NoRun -or $NoE2E)' "$ROOT_DIR/scripts/build.ps1" || fail 'el skip E2E Windows mezcla flags o no conserva el alias NoRun'
+grep -Fq '$needSmoke = -not ($NoTests -or $NoRun -or $NoSmoke)' "$ROOT_DIR/scripts/build.ps1" || fail 'el skip smoke Windows mezcla flags o no conserva los alias NoRun/NoTests'
+grep -Fq '$needE2E = -not ($NoTests -or $NoRun -or $NoE2E)' "$ROOT_DIR/scripts/build.ps1" || fail 'el skip E2E Windows mezcla flags o no conserva los alias NoRun/NoTests'
 grep -Fq 'Alias compatible: omite smoke y E2E, pero conserva cargo test.' "$ROOT_DIR/scripts/build.ps1" || fail 'ayuda Windows documenta mal NoRun/NoTests'
 grep -Fq 'storage-map-gui-e2e.sh' "$ROOT_DIR/scripts/build.sh" || fail 'pipeline sin E2E de acciones reales del mapa GUI'
 [[ -x "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" ]] || fail 'la E2E del mapa GUI no se puede ejecutar desde el pipeline'
@@ -83,9 +101,12 @@ grep -Fq 'no está integrado en la' "$ROOT_DIR/rust/src/guides.rs" || fail 'guí
 grep -Fq 'Resumen de espacio y montajes' "$ROOT_DIR/windows/tests/e2e.ps1" || fail 'E2E Windows no compara la guía con botones GUI reales'
 grep -Fq 'windows-native-tools-wine.png' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'E2E Windows/Wine no captura la categoría abierta mediante clic'
 grep -Fq '"scripts"' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows sin vigilar cambios de scripts'
-grep -Fq '^rust/tests/' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows sin clasificar cambios de pruebas Rust'
-grep -Fq '(^tests/|^windows/|^rust/tests/|^scripts/|\.md$)' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows sin reclasificar borrados como pruebas'
-grep -Fq 'distribution/|scripts/build\.ps1$|README\.md$)' "$ROOT_DIR/scripts/build.ps1" || fail 'un cambio del propio builder Windows no fuerza la regeneración del paquete'
+grep -Fq "^rust/(src/|tests/|Cargo" "$ROOT_DIR/scripts/lib/build-state.ps1" || fail 'builder Windows sin clasificar cambios de pruebas Rust'
+grep -Fq 'foreach ($key in (Get-LToolsMapKeys $Old))' "$ROOT_DIR/scripts/lib/build-state.ps1" || fail 'builder Windows no incorpora archivos borrados a la matriz de impacto'
+grep -Fq '$rustTestDeletion = ' "$ROOT_DIR/tests/build-state.ps1" || fail 'la matriz no prueba que borrar pruebas Rust vuelva a ejecutarlas'
+grep -Fq "path -match '^distribution/'" "$ROOT_DIR/scripts/lib/build-state.ps1" || fail 'cambios del descriptor de distribución no fuerzan el empaquetado'
+grep -Fq "path -match '^scripts/build\.ps1$'" "$ROOT_DIR/scripts/lib/build-state.ps1" || fail 'un cambio del propio builder Windows no fuerza el empaquetado'
+grep -Fq '$readmeChange = ' "$ROOT_DIR/tests/build-state.ps1" || fail 'el cambio del README empaquetado no está probado'
 grep -Fq 'rust/target|windows/(target|bin|obj)|dist' "$ROOT_DIR/scripts/build.ps1" || fail 'fingerprint Windows incluye targets y staging generados'
 [[ -f "$ROOT_DIR/appimage/ltools.desktop" ]] || fail 'falta el descriptor LTools'
 [[ -f "$ROOT_DIR/appimage/ltools.svg" ]] || fail 'falta el icono LTools'
@@ -114,6 +135,11 @@ for localized_suite in smoke.sh menu-e2e.sh e2e.sh software-git-e2e.sh native-he
 done
 grep -Fq 'capture_window "$MAP_WINDOW"' "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" || fail 'E2E del mapa no captura la ventana independientemente del fondo'
 grep -Fq 'windowsize --sync "$MAP_WINDOW" 640 480' "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" || fail 'E2E del mapa no comprueba una ventana compacta 640x480'
+grep -Fq 'STORAGE_TREE_LAYOUT' "$ROOT_DIR/rust/src/gui.rs" || fail 'el mapa no reajusta el ancho de columna al viewport real'
+grep -Fq 'wait_for_tree_layout "$RUN_DIR/$tag.layout" 1' "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" || fail 'E2E del mapa no detecta recorte horizontal de texto al redimensionar'
+grep -Fq 'TMP_DIR="$(realpath -m -- "$TMP_DIR")"' "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" || fail 'E2E del mapa no normaliza rutas absolutas para revisar rutas estándar'
+grep -Fq 'STORAGE_TREE_EXPLANATION' "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" || fail 'E2E del mapa no exige explicación completa de rutas estándar'
+grep -Fq 'storage_tree_text_width_tracks_the_actual_viewport' "$ROOT_DIR/rust/src/gui.rs" || fail 'el ancho adaptable del mapa no tiene prueba unitaria'
 grep -Fq 'small_height > 480' "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" || fail 'E2E del mapa no detecta recorte vertical en pantallas compactas'
 grep -Fq -- '--screen 640x480 --layout-only' "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" || fail 'E2E del mapa no abre en una pantalla real de 640x480'
 grep -Fq 'LTOOLS_GUI_TREE_READY_MARKER' "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" || fail 'E2E del mapa no espera al árbol poblado antes de validar el layout'
@@ -511,6 +537,9 @@ fi
 grep -Fq 'release-manifest' "$ROOT_DIR/scripts/build.ps1" || fail 'build Windows sin manifiesto verificable de release'
 grep -Fq 'release-checksums' "$ROOT_DIR/scripts/build.ps1" || fail 'build Windows sin SHA256SUMS reproducible'
 grep -Fq 'release-signature' "$ROOT_DIR/scripts/build.ps1" || fail 'build Windows sin firma Ed25519'
+grep -Fq 'Invoke-LToolsSshManifestSigning' "$ROOT_DIR/scripts/build.ps1" || fail 'build Windows sin firma OpenSSH de release'
+grep -Fq 'SHA256SUMS.txt.sshsig' "$ROOT_DIR/rust/src/release.rs" || fail 'checksums Rust no excluye la firma SSH para evitar circularidad'
+grep -Fq 'tests/ssh-signing.sh' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux sin prueba funcional de la firma SSH'
 grep -Fq 'ReleaseOutput' "$ROOT_DIR/scripts/build.ps1" || fail 'build Windows sin carpeta de publicación configurable'
 grep -Fq 'Publish-StagedDirectory $releaseStageDir $PublishDir' "$ROOT_DIR/scripts/build.ps1" || fail 'build Windows publica directamente antes de validar'
 grep -Fq 'tests\release-e2e.ps1' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows sin E2E de release antes de promover'
@@ -522,6 +551,7 @@ windows_release_promote_line="$(grep -nF 'Publish-StagedDirectory $releaseStageD
 [[ -n "$windows_release_e2e_line" && -n "$windows_release_promote_line" && "$windows_release_e2e_line" -lt "$windows_release_promote_line" ]] || fail 'builder Windows promueve release antes del E2E'
 grep -Fq 'sha256' "$ROOT_DIR/distribution/ltools-release.schema.json" || fail 'esquema de release sin SHA-256'
 grep -Fq 'ed25519' "$ROOT_DIR/distribution/ltools-project.json" || fail 'descriptor de proyecto sin firma Ed25519'
+grep -Fq 'openssh-sshsig' "$ROOT_DIR/distribution/ltools-project.json" || fail 'descriptor de proyecto sin firma SSH'
 grep -Fq 'SHA256SUMS.txt.sig' "$ROOT_DIR/distribution/ltools-project.schema.json" || fail 'esquema de proyecto sin firma separada'
 if command -v jq >/dev/null 2>&1; then
     jq -e '.schema == "ltools-project-v1" and .repository == "Darkeiser003/Tools" and .platforms.linux and .platforms.windows' \
@@ -530,7 +560,9 @@ if command -v jq >/dev/null 2>&1; then
     jq -e '.verification.signature_supported == true and
         .verification.signature.algorithm == "ed25519" and
         .verification.signature.manifest == "SHA256SUMS.txt" and
-        .verification.signature.detached_signature == "SHA256SUMS.txt.sig"' \
+        .verification.signature.detached_signature == "SHA256SUMS.txt.sig" and
+        .verification.additional_signatures[0].algorithm == "openssh-sshsig" and
+        .verification.additional_signatures[0].detached_signature == "SHA256SUMS.txt.sshsig"' \
         "$ROOT_DIR/distribution/ltools-project.json" >/dev/null \
         || fail 'descriptor declarativo sin contrato de firma Ed25519'
     jq -e '.integration.hosts == ["LTerminal", "WinSlim Terminal"] and
@@ -647,6 +679,8 @@ grep -Fq 'CREATED_TEMP_PREFIX" -eq 1' "$ROOT_DIR/tests/linux/windows-wine.sh" ||
 grep -Fq 'ARTIFACT_STAGING="$(mktemp -d "$ARTIFACT_DIR/.windows-package.XXXXXX")"' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'paquetes Wine sobrescriben salidas antes de validar el ZIP'
 grep -Fq 'LOG_PATH="$log_directory/windows-wine-$$.log"' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'log Wine por defecto queda dentro del prefijo temporal que se elimina'
 grep -Fq 'TMPDIR=$OUTPUT_DIR' "$ROOT_DIR/scripts/build.sh" || fail 'build integrada coloca el prefijo temporal Wine en tmpfs por defecto'
+grep -Fq 'TEMP_ROOT="$(realpath -m -- "${TMPDIR:-/tmp}")"' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'prefijos Wine con TMPDIR relativo pueden no resolverse como rutas absolutas'
+grep -Fq 'mktemp -d "$TEMP_ROOT/ltools-windows-wine.XXXXXX"' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'el prefijo temporal Wine no usa un directorio absoluto'
 grep -Fq -- '--no-tests' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'helper Wine sin modo build-only'
 grep -Fq 'run_with_sudo(program' "$ROOT_DIR/rust/src/packages.rs" || fail 'limpieza no respeta el gestor seleccionado'
 grep -Fq 'manager_requires_process_elevation' "$ROOT_DIR/rust/src/packages.rs" || fail 'limpieza no separa gestores del sistema y de usuario'
@@ -667,6 +701,23 @@ grep -Fq 'flatpak uninstall --unused --user' "$ROOT_DIR/tests/linux/software-git
 grep -Fq 'flatpak uninstall --unused --system' "$ROOT_DIR/tests/linux/software-git-e2e.sh" || fail 'E2E no comprueba la limpieza Flatpak system'
 grep -Fq 'WINDOWS_WINE" -eq 0' "$ROOT_DIR/scripts/build.sh" || fail 'el builder Linux repite cargo check antes de su build Windows/Wine'
 grep -Fq 'LC_ALL", "C' "$ROOT_DIR/rust/src/packages.rs" || fail 'consultas de paquetes no fijan locale estable'
+grep -Fq 'mod updater;' "$ROOT_DIR/rust/src/main.rs" || fail 'el backend no integra el módulo de actualización'
+grep -Fq 'verified-update-download' "$ROOT_DIR/rust/src/compat.rs" || fail 'el contrato JSON no anuncia la descarga verificada'
+grep -Fq 'automatic_install": false' "$ROOT_DIR/rust/src/compat.rs" || fail 'el contrato promete o no niega la sustitución automática'
+grep -Fq 'Comprobar y descargar actualizaciones' "$ROOT_DIR/README.md" || fail 'el README no explica la función del actualizador'
+grep -Fq 'local_artifact_download_checks_size_and_writes_only_to_reserved_path' "$ROOT_DIR/rust/src/updater.rs" || fail 'el actualizador no prueba una descarga local sin sobrescritura'
+grep -Fq 'errores de actualizador GUI visibles antes de cerrar la consola' "$ROOT_DIR/tests/linux/smoke.sh" || fail 'el smoke no detecta que los errores GUI del actualizador desaparezcan al cerrar'
+grep -Fq 'pausedUpdateFailure' "$ROOT_DIR/windows/tests/e2e.ps1" || fail 'la E2E Windows no verifica el error de la consola de actualizaciones pausada'
+grep -Fq 'if [[ -n "$SIGNATURE_PUBLIC_KEY_FILE" ]]; then' "$ROOT_DIR/tests/release-e2e.sh" || fail 'la E2E de firma puede pasar una ruta vacía cuando solo se configura la clave en entorno'
+grep -Fq 'SIGNING_PUBLIC_KEY_ENV_ACTIVE=1' "$ROOT_DIR/scripts/build.sh" || fail 'el builder Linux no fija precedencia consistente para la clave de entorno'
+grep -Fq 'ltools_effective_update_public_key' "$ROOT_DIR/scripts/build.sh" || fail 'el builder Linux no usa el selector de clave pública con fallback en blanco'
+[[ -x "$ROOT_DIR/tests/update-signing.sh" ]] || fail 'falta la prueba de precedencia y fallback de claves públicas Linux'
+grep -Fq 'if [[ "$SIGNING_PUBLIC_KEY_ENV_ACTIVE" -eq 0 && -r "$SIGNING_PUBLIC_KEY_FILE" ]]; then' "$ROOT_DIR/scripts/build.sh" || fail 'el builder Linux puede firmar con una clave distinta de la incrustada'
+grep -Fq '$script:PublicKeyEnvironmentActive = $null -ne $publicKeyEnvironment' "$ROOT_DIR/scripts/build.ps1" || fail 'el builder Windows no fija precedencia consistente para la clave de entorno'
+grep -Fq 'if (-not $PublicKeyEnvironmentActive -and' "$ROOT_DIR/scripts/build.ps1" || fail 'el builder Windows puede firmar con una clave distinta de la incrustada'
+grep -Fq 'windows_settings_exposes_both_update_actions' "$ROOT_DIR/rust/src/gui.rs" || fail 'las acciones del actualizador Win32 no tienen test de menú'
+grep -Fq "Run @('update', '--help')" "$ROOT_DIR/windows/tests/e2e.ps1" || fail 'la E2E Windows no ejecuta la ayuda del actualizador'
+grep -Fq 'update --help' "$ROOT_DIR/tests/linux/smoke.sh" || fail 'el smoke Linux no ejecuta la ayuda del actualizador'
 if rg -n '(^|[[:space:]])wine([[:space:]]|$).*ltools|wine\.exe.*ltools|wine[[:space:]]+"' \
     "$ROOT_DIR/scripts/build.sh" "$ROOT_DIR/tests" "$ROOT_DIR/windows" "$ROOT_DIR/appimage" >/tmp/ltools-wine-tests.txt 2>/dev/null; then
     sed -n '1,40p' /tmp/ltools-wine-tests.txt >&2
