@@ -29,9 +29,7 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
 }
 
 fn first_action(args: &[String]) -> Option<&str> {
-    args.iter()
-        .map(String::as_str)
-        .find(|arg| !arg.starts_with('-'))
+    crate::cli_args::positionals(args).first().copied()
 }
 fn target_after<'a>(args: &'a [String], action: &str) -> Result<&'a str, String> {
     let index = args

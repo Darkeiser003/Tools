@@ -1,8 +1,47 @@
 use std::env;
+#[cfg(test)]
+static LANGUAGE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+pub(crate) struct LanguageTestGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    previous_language: Option<String>,
+}
+
+#[cfg(test)]
+impl Drop for LanguageTestGuard {
+    fn drop(&mut self) {
+        match &self.previous_language {
+            Some(language) => env::set_var("LTOOLS_LANG", language),
+            None => env::remove_var("LTOOLS_LANG"),
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn language_test_guard() -> LanguageTestGuard {
+    let lock = LANGUAGE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    LanguageTestGuard {
+        _lock: lock,
+        previous_language: env::var("LTOOLS_LANG").ok(),
+    }
+}
 
 /// IDs de los 15 catálogos compartidos con LTerminal.
 pub const SUPPORTED: &[&str] = &[
     "ar", "de", "en", "es", "fr", "hi", "it", "ja", "ko", "pl", "pt", "ro", "ru", "uk", "zh",
+];
+
+/// Categorías configurables en Ajustes; se comparte con la GUI y su guía.
+pub const SETTINGS_CATEGORY_KEYS: [&str; 6] = [
+    "audit_inventory",
+    "dependencies",
+    "native_tools",
+    "defaults",
+    "installable_tools",
+    "automation",
 ];
 
 /// Nombre visible de producto. El binario y sus identificadores técnicos
@@ -487,6 +526,7 @@ pub fn storage_action_text(key: &str) -> &'static str {
         ("en", "manager") => "Open native partition manager",
         ("en", "clean") => "Review cleanup",
         ("en", "guide") => "Partitioning guide and safety rules",
+        ("en", "map") => "Interactive disk and path map",
         ("de", "status") => "Übersicht über Speicher und Mounts",
         ("de", "partitions") => "Datenträger und Partitionen",
         ("de", "mounts") => "Aktive Mounts",
@@ -599,8 +639,314 @@ pub fn storage_action_text(key: &str) -> &'static str {
         (_, "manager") => "Abrir gestor nativo de particiones",
         (_, "clean") => "Revisar limpieza",
         (_, "guide") => "Guía de particionado y protecciones",
+        (_, "map") => "Mapa interactivo de discos y rutas",
         _ => "",
     }
+}
+
+/// Textos del diálogo interactivo del mapa. El diálogo se crea desde el
+/// backend GTK, así que sus botones también deben respetar el idioma activo.
+pub fn storage_map_text(key: &str) -> &'static str {
+    const MAP_TEXT: &[(&str, [&str; 15])] = &[
+        (
+            "hint",
+            [
+                "تُحسَب الخريطة في الخلفية؛ استخدم الأسهم لفتح المجلدات. تظل المسارات المحمية وأخطاء الأذونات ظاهرة.",
+                "Die Karte wird im Hintergrund berechnet; Ordner lassen sich mit den Pfeilen öffnen. Geschützte Pfade und Berechtigungsfehler bleiben sichtbar.",
+                "The map runs in the background; use the arrows to open folders. Protected paths and permission errors remain visible.",
+                "El mapa se calcula en segundo plano; usa las flechas para abrir carpetas. Se conservan las rutas protegidas y los errores de permisos.",
+                "La carte est calculée en arrière-plan ; utilisez les flèches pour ouvrir les dossiers. Les chemins protégés et les erreurs de permissions restent visibles.",
+                "मानचित्र पृष्ठभूमि में चलता है; फ़ोल्डर खोलने के लिए तीरों का उपयोग करें। सुरक्षित पथ और अनुमति त्रुटियाँ दिखाई देती रहेंगी।",
+                "La mappa viene calcolata in background; usa le frecce per aprire le cartelle. I percorsi protetti e gli errori di autorizzazione restano visibili.",
+                "マップはバックグラウンドで計算されます。矢印でフォルダーを開けます。保護されたパスと権限エラーは表示されます。",
+                "지도는 백그라운드에서 계산됩니다. 화살표로 폴더를 여세요. 보호된 경로와 권한 오류는 계속 표시됩니다.",
+                "Mapa jest obliczana w tle; użyj strzałek, aby otwierać foldery. Chronione ścieżki i błędy uprawnień pozostają widoczne.",
+                "O mapa é calculado em segundo plano; usa as setas para abrir pastas. Os caminhos protegidos e os erros de permissões permanecem visíveis.",
+                "Harta este calculată în fundal; folosește săgețile pentru a deschide dosare. Căile protejate și erorile de permisiuni rămân vizibile.",
+                "Карта рассчитывается в фоне; используйте стрелки, чтобы открывать папки. Защищённые пути и ошибки прав остаются видимыми.",
+                "Карта обчислюється у фоновому режимі; використовуйте стрілки, щоб відкривати папки. Захищені шляхи та помилки прав залишаються видимими.",
+                "地图在后台计算；使用箭头打开文件夹。受保护的路径和权限错误会继续显示。",
+            ],
+        ),
+        (
+            "column",
+            [
+                "المسار / الحجم / الحالة", "Pfad / Größe / Status", "Path / size / status", "Ruta / tamaño / estado", "Chemin / taille / état", "पथ / आकार / स्थिति", "Percorso / dimensione / stato", "パス / サイズ / 状態", "경로 / 크기 / 상태", "Ścieżka / rozmiar / stan", "Caminho / tamanho / estado", "Cale / dimensiune / stare", "Путь / размер / состояние", "Шлях / розмір / стан", "路径 / 大小 / 状态",
+            ],
+        ),
+        (
+            "expand", ["توسيع","Erweitern","Expand","Expandir","Développer","विस्तार","Espandi","展開","펼치기","Rozwiń","Expandir","Extinde","Развернуть","Розгорнути","展开"]
+        ),
+        (
+            "collapse", ["طي","Reduzieren","Collapse","Colapsar","Réduire","समेटें","Comprimi","折りたたむ","접기","Zwiń","Recolher","Restrânge","Свернуть","Згорнути","收起"]
+        ),
+        (
+            "elevate", ["إعادة المحاولة كمسؤول","Als Administrator erneut versuchen","Retry as administrator","Reintentar como administrador","Réessayer en administrateur","व्यवस्थापक के रूप में पुनः प्रयास करें","Riprova come amministratore","管理者として再試行","관리자로 다시 시도","Ponów jako administrator","Tentar novamente como administrador","Reîncearcă drept administrator","Повторить с правами администратора","Повторити як адміністратор","以管理员身份重试"]
+        ),
+        (
+            "copy", ["نسخ","Kopieren","Copy","Copiar","Copier","कॉपी","Copia","コピー","복사","Kopiuj","Copiar","Copiază","Копировать","Копіювати","复制"]
+        ),
+        (
+            "move", ["نقل","Verschieben","Move","Mover","Déplacer","स्थानांतरित करें","Sposta","移動","이동","Przenieś","Mover","Mută","Переместить","Перемістити","移动"]
+        ),
+        (
+            "delete", ["إرسال إلى سلة المهملات","In den Papierkorb","Send to trash","Enviar a papelera","Mettre à la corbeille","ट्रैश में भेजें","Sposta nel cestino","ゴミ箱へ移動","휴지통으로 보내기","Przenieś do kosza","Enviar para o lixo","Trimite în coș","Отправить в корзину","Надіслати до кошика","移至回收站"]
+        ),
+        (
+            "close", ["إغلاق","Schließen","Close","Cerrar","Fermer","बंद करें","Chiudi","閉じる","닫기","Zamknij","Fechar","Închide","Закрыть","Закрити","关闭"]
+        ),
+        (
+            "scan_initial",
+            [
+                "جارٍ فحص الأقراص والمسارات…", "Datenträger und Pfade werden geprüft…", "Scanning disks and paths…", "Analizando discos y rutas…", "Analyse des disques et des chemins…", "डिस्क और पथ स्कैन हो रहे हैं…", "Analisi di dischi e percorsi…", "ディスクとパスをスキャン中…", "디스크 및 경로 검사 중…", "Skanowanie dysków i ścieżek…", "A analisar discos e caminhos…", "Se scanează discurile și căile…", "Сканирование дисков и путей…", "Сканування дисків і шляхів…", "正在扫描磁盘和路径…",
+            ],
+        ),
+        (
+            "scan_progress",
+            [
+                "جارٍ فحص الأقراص والمسارات… تمت زيارة {visited} مسارًا. سيُحسب الإجمالي والمستخدم والمتاح لكل جذر.",
+                "Datenträger und Pfade werden geprüft… {visited} Pfade besucht. Für jede Wurzel werden Gesamt-, belegter und verfügbarer Speicher berechnet.",
+                "Scanning disks and paths… {visited} paths visited. Total, used, free and available space are calculated for each root.",
+                "Analizando discos y rutas… {visited} rutas visitadas. Se calcularán el total, el espacio ocupado, el libre y el disponible de cada raíz.",
+                "Analyse des disques et des chemins… {visited} chemins parcourus. Le total, l’espace utilisé, libre et disponible sont calculés pour chaque racine.",
+                "डिस्क और पथ स्कैन हो रहे हैं… {visited} पथ देखे गए। हर रूट का कुल, उपयोग किया गया, खाली और उपलब्ध स्थान गिना जा रहा है।",
+                "Analisi di dischi e percorsi… visitati {visited} percorsi. Per ogni radice si calcolano spazio totale, usato, libero e disponibile.",
+                "ディスクとパスをスキャン中… {visited} 個のパスを確認しました。各ルートの合計、使用済み、空き、利用可能な容量を計算します。",
+                "디스크 및 경로 검사 중… 경로 {visited}개를 확인했습니다. 각 루트의 전체, 사용, 여유 및 사용 가능 공간을 계산합니다.",
+                "Skanowanie dysków i ścieżek… odwiedzono {visited} ścieżek. Obliczanie pojemności całkowitej, użytej, wolnej i dostępnej dla każdego katalogu głównego.",
+                "A analisar discos e caminhos… {visited} caminhos visitados. A calcular o espaço total, usado, livre e disponível de cada raiz.",
+                "Se scanează discurile și căile… au fost parcurse {visited} căi. Se calculează spațiul total, utilizat, liber și disponibil pentru fiecare rădăcină.",
+                "Сканирование дисков и путей… просмотрено путей: {visited}. Для каждого корня вычисляются общий, занятый, свободный и доступный объёмы.",
+                "Сканування дисків і шляхів… відвідано шляхів: {visited}. Для кожного кореня обчислюються загальний, зайнятий, вільний і доступний обсяги.",
+                "正在扫描磁盘和路径…已访问 {visited} 个路径。正在计算每个根目录的总计、已用、空闲和可用空间。",
+            ],
+        ),
+        (
+            "scan_timeout",
+            [
+                "تجاوزت الخريطة الحد البالغ {seconds} ثانية بعد زيارة {visited} مسارًا. يمكنك الإغلاق وإعادة المحاولة بحدود مختلفة.",
+                "Die Karte überschritt nach {visited} besuchten Pfaden das Zeitlimit von {seconds} Sekunden. Schließe sie und versuche es mit anderen Grenzen erneut.",
+                "The map exceeded the {seconds}-second limit after visiting {visited} paths. Close it and retry with different limits.",
+                "El mapa superó el límite de {seconds} segundos tras visitar {visited} rutas. Puedes cerrarlo e intentarlo con otros límites.",
+                "La carte a dépassé la limite de {seconds} secondes après {visited} chemins. Fermez-la et réessayez avec d’autres limites.",
+                "{visited} पथ देखने के बाद मानचित्र ने {seconds} सेकंड की सीमा पार कर दी। बंद करके अलग सीमाओं के साथ फिर प्रयास करें।",
+                "La mappa ha superato il limite di {seconds} secondi dopo {visited} percorsi. Chiudila e riprova con limiti diversi.",
+                "マップは {visited} 個のパスを確認した後、{seconds} 秒の制限を超えました。閉じて別の上限で再試行してください。",
+                "경로 {visited}개를 확인한 후 지도가 {seconds}초 제한을 초과했습니다. 닫은 다음 다른 제한으로 다시 시도하세요.",
+                "Mapa przekroczyła limit {seconds} s po odwiedzeniu {visited} ścieżek. Zamknij ją i ponów próbę z innymi limitami.",
+                "O mapa excedeu o limite de {seconds} segundos após visitar {visited} caminhos. Feche-a e tente novamente com outros limites.",
+                "Harta a depășit limita de {seconds} secunde după parcurgerea a {visited} căi. Închide-o și reîncearcă folosind alte limite.",
+                "Карта превысила лимит в {seconds} с после просмотра путей: {visited}. Закройте её и повторите попытку с другими ограничениями.",
+                "Карта перевищила ліміт у {seconds} с після перегляду шляхів: {visited}. Закрийте її та повторіть спробу з іншими обмеженнями.",
+                "地图访问 {visited} 个路径后超过了 {seconds} 秒限制。可以关闭并使用其他限制重试。",
+            ],
+        ),
+        (
+            "scan_ready",
+            [
+                "اكتملت الخريطة: تمت زيارة {visited} مسارًا دون عوائق أذونات. تعرض كل قيمة جذر الإجمالي والمستخدم والحر والمتاح. استخدم الأسهم للاستكشاف.",
+                "Karte bereit: {visited} Pfade besucht, keine Berechtigungsprobleme. Jede Wurzel zeigt Gesamt-, belegten, freien und verfügbaren Speicher. Mit den Pfeilen erkunden.",
+                "Map ready: {visited} paths visited with no permission blocks. Each root shows total, used, free and available space. Use the arrows to explore.",
+                "Mapa listo: {visited} rutas visitadas sin bloqueos de permisos. Cada raíz muestra el total, ocupado, libre y disponible. Usa las flechas para explorar.",
+                "Carte prête : {visited} chemins parcourus sans blocage d’accès. Chaque racine affiche les espaces total, utilisé, libre et disponible. Utilisez les flèches pour explorer.",
+                "मानचित्र तैयार: {visited} पथ देखे गए, अनुमति संबंधी कोई रुकावट नहीं। हर रूट कुल, उपयोग किया गया, खाली और उपलब्ध स्थान दिखाता है। तीरों से देखें।",
+                "Mappa pronta: visitati {visited} percorsi senza blocchi di autorizzazione. Ogni radice mostra spazio totale, usato, libero e disponibile. Usa le frecce per esplorare.",
+                "マップの準備完了: {visited} 個のパスを確認し、権限による停止はありません。各ルートに合計、使用済み、空き、利用可能容量を表示します。矢印で探索できます。",
+                "지도 준비 완료: 경로 {visited}개를 확인했으며 권한 차단이 없습니다. 각 루트에 전체, 사용, 여유, 사용 가능 공간이 표시됩니다. 화살표로 탐색하세요.",
+                "Mapa gotowa: odwiedzono {visited} ścieżek, bez blokad uprawnień. Każdy katalog główny pokazuje pojemność całkowitą, używaną, wolną i dostępną. Użyj strzałek, aby eksplorować.",
+                "Mapa pronta: {visited} caminhos visitados sem bloqueios de permissões. Cada raiz mostra o espaço total, usado, livre e disponível. Use as setas para explorar.",
+                "Harta este gata: au fost parcurse {visited} căi fără blocaje de permisiuni. Fiecare rădăcină afișează spațiul total, utilizat, liber și disponibil. Folosește săgețile pentru explorare.",
+                "Карта готова: просмотрено путей: {visited}, ошибок доступа нет. Для каждого корня показаны общий, занятый, свободный и доступный объёмы. Используйте стрелки для навигации.",
+                "Карту готово: переглянуто шляхів: {visited}, помилок доступу немає. Для кожного кореня показано загальний, зайнятий, вільний і доступний обсяги. Використовуйте стрілки для навігації.",
+                "地图已就绪：已访问 {visited} 个路径，没有权限阻塞。每个根目录显示总计、已用、空闲和可用空间。使用箭头浏览。",
+            ],
+        ),
+        (
+            "scan_permissions",
+            [
+                "اكتملت الخريطة: تمت زيارة {visited} مسارًا؛ {inaccessible} منها تتطلب أذونات إضافية. تعرض كل قيمة جذر الإجمالي والمستخدم والحر والمتاح. يمكنك إعادة المحاولة كمسؤول.",
+                "Karte bereit: {visited} Pfade besucht; für {inaccessible} sind zusätzliche Rechte nötig. Jede Wurzel zeigt Gesamt-, belegten, freien und verfügbaren Speicher. Erneuter Versuch als Administrator möglich.",
+                "Map ready: {visited} paths visited; {inaccessible} require additional permissions. Each root shows total, used, free and available space. You can retry as administrator.",
+                "Mapa listo: {visited} rutas visitadas; {inaccessible} requieren permisos adicionales. Cada raíz muestra el total, ocupado, libre y disponible. Puedes reintentar como administrador.",
+                "Carte prête : {visited} chemins parcourus ; {inaccessible} nécessitent des permissions supplémentaires. Chaque racine affiche les espaces total, utilisé, libre et disponible. Vous pouvez réessayer en administrateur.",
+                "मानचित्र तैयार: {visited} पथ देखे गए; {inaccessible} के लिए अतिरिक्त अनुमतियाँ चाहिए। हर रूट कुल, उपयोग किया गया, खाली और उपलब्ध स्थान दिखाता है। व्यवस्थापक के रूप में फिर प्रयास करें।",
+                "Mappa pronta: visitati {visited} percorsi; {inaccessible} richiedono autorizzazioni aggiuntive. Ogni radice mostra spazio totale, usato, libero e disponibile. Puoi riprovare come amministratore.",
+                "マップの準備完了: {visited} 個のパスを確認し、{inaccessible} 個には追加の権限が必要です。各ルートに合計、使用済み、空き、利用可能容量を表示します。管理者として再試行できます。",
+                "지도 준비 완료: 경로 {visited}개를 확인했으며 {inaccessible}개에는 추가 권한이 필요합니다. 각 루트에 전체, 사용, 여유, 사용 가능 공간이 표시됩니다. 관리자로 다시 시도할 수 있습니다.",
+                "Mapa gotowa: odwiedzono {visited} ścieżek; {inaccessible} wymaga dodatkowych uprawnień. Każdy katalog główny pokazuje pojemność całkowitą, używaną, wolną i dostępną. Możesz ponowić próbę jako administrator.",
+                "Mapa pronta: {visited} caminhos visitados; {inaccessible} requerem permissões adicionais. Cada raiz mostra o espaço total, usado, livre e disponível. Pode tentar novamente como administrador.",
+                "Harta este gata: au fost parcurse {visited} căi; {inaccessible} necesită permisiuni suplimentare. Fiecare rădăcină afișează spațiul total, utilizat, liber și disponibil. Poți reîncerca drept administrator.",
+                "Карта готова: просмотрено путей: {visited}; для {inaccessible} нужны дополнительные права. Для каждого корня показаны общий, занятый, свободный и доступный объёмы. Можно повторить с правами администратора.",
+                "Карту готово: переглянуто шляхів: {visited}; для {inaccessible} потрібні додаткові права. Для кожного кореня показано загальний, зайнятий, вільний і доступний обсяги. Можна повторити з правами адміністратора.",
+                "地图已就绪：已访问 {visited} 个路径；其中 {inaccessible} 个需要额外权限。每个根目录显示总计、已用、空闲和可用空间。可以尝试以管理员身份重试。",
+            ],
+        ),
+        (
+            "scan_request_admin",
+            [
+                "جارٍ طلب صلاحيات المسؤول… أدخل كلمة المرور إذا طُلبت.", "Administratorrechte werden angefordert… Gib bei Aufforderung dein Passwort ein.", "Requesting administrator privileges… Enter your password if prompted.", "Solicitando permisos de administrador… Introduce la contraseña si se solicita.", "Demande des privilèges administrateur… Saisissez le mot de passe si demandé.", "व्यवस्थापक अनुमतियाँ माँगी जा रही हैं… पूछे जाने पर पासवर्ड दर्ज करें।", "Richiesta dei privilegi di amministratore… Inserisci la password se richiesta.", "管理者権限を要求中…求められた場合はパスワードを入力してください。", "관리자 권한 요청 중… 암호를 묻는 경우 입력하세요.", "Trwa żądanie uprawnień administratora… W razie potrzeby wpisz hasło.", "A pedir privilégios de administrador… Introduza a palavra-passe se for solicitada.", "Se solicită privilegii de administrator… Introdu parola dacă ți se cere.", "Запрос прав администратора… При появлении запроса введите пароль.", "Запит прав адміністратора… Якщо з’явиться запит, введіть пароль.", "正在请求管理员权限…如有提示，请输入密码。",
+            ],
+        ),
+        (
+            "scan_error",
+            [
+                "تعذّر إكمال الخريطة: {error}", "Karte konnte nicht abgeschlossen werden: {error}", "Could not complete the map: {error}", "No se pudo completar el mapa: {error}", "Impossible de terminer la carte : {error}", "मानचित्र पूरा नहीं हो सका: {error}", "Impossibile completare la mappa: {error}", "マップを完了できませんでした: {error}", "지도를 완료할 수 없습니다: {error}", "Nie udało się ukończyć mapy: {error}", "Não foi possível concluir o mapa: {error}", "Harta nu a putut fi finalizată: {error}", "Не удалось завершить карту: {error}", "Не вдалося завершити карту: {error}", "无法完成地图：{error}",
+            ],
+        ),
+        (
+            "scan_empty",
+            [
+                "انتهى الفحص دون العثور على مسارات. تحقق من الأذونات وحاول مرة أخرى.", "Der Scan lieferte keine Pfade. Prüfe die Berechtigungen und versuche es erneut.", "The scan finished without returning any paths. Check permissions and retry.", "El escaneo terminó sin devolver rutas. Comprueba los permisos y vuelve a intentarlo.", "L’analyse n’a renvoyé aucun chemin. Vérifiez les permissions et réessayez.", "स्कैन में कोई पथ नहीं मिला। अनुमतियाँ जाँचें और फिर प्रयास करें।", "La scansione non ha restituito percorsi. Controlla le autorizzazioni e riprova.", "スキャンでパスが見つかりませんでした。権限を確認して再試行してください。", "검사에서 경로를 반환하지 않았습니다. 권한을 확인하고 다시 시도하세요.", "Skanowanie nie zwróciło żadnych ścieżek. Sprawdź uprawnienia i ponów próbę.", "A análise não devolveu caminhos. Verifique as permissões e tente novamente.", "Scanarea nu a returnat căi. Verifică permisiunile și încearcă din nou.", "Сканирование не вернуло пути. Проверьте права и повторите попытку.", "Сканування не повернуло шляхів. Перевірте права та повторіть спробу.", "扫描未返回任何路径。请检查权限并重试。",
+            ],
+        ),
+        (
+            "scan_panic",
+            ["انتهى الفاحص بشكل غير متوقع.", "Der Scanner wurde unerwartet beendet.", "The scanner stopped unexpectedly.", "El escáner terminó de forma inesperada.", "Le scanner s’est arrêté de manière inattendue.", "स्कैनर अप्रत्याशित रूप से रुक गया।", "Lo scanner si è arrestato in modo imprevisto.", "スキャナーが予期せず停止しました。", "스캐너가 예기치 않게 종료되었습니다.", "Skaner nieoczekiwanie się zatrzymał.", "O analisador terminou inesperadamente.", "Scanerul s-a oprit neașteptat.", "Сканер завершился неожиданно.", "Сканер завершився неочікувано.", "扫描器意外停止。"],
+        ),
+        (
+            "selected_required",
+            [
+                "حدد ملفًا أو مجلدًا من الخريطة أولًا.", "Wähle zuerst eine Datei oder einen Ordner in der Karte aus.", "Select a file or folder in the map first.", "Selecciona primero un archivo o una carpeta del mapa.", "Sélectionnez d’abord un fichier ou un dossier dans la carte.", "पहले मानचित्र में कोई फ़ाइल या फ़ोल्डर चुनें।", "Seleziona prima un file o una cartella nella mappa.", "最初にマップでファイルまたはフォルダーを選択してください。", "먼저 지도에서 파일이나 폴더를 선택하세요.", "Najpierw wybierz plik lub folder na mapie.", "Selecione primeiro um ficheiro ou pasta no mapa.", "Selectează mai întâi un fișier sau un dosar din hartă.", "Сначала выберите файл или папку на карте.", "Спочатку виберіть файл або папку на карті.", "请先在地图中选择文件或文件夹。",
+            ],
+        ),
+        (
+            "copy_title",
+            ["نسخ المسار المحدد", "Ausgewählten Pfad kopieren", "Copy selected path", "Copiar ruta seleccionada", "Copier le chemin sélectionné", "चुना हुआ पथ कॉपी करें", "Copia il percorso selezionato", "選択したパスをコピー", "선택한 경로 복사", "Kopiuj wybraną ścieżkę", "Copiar caminho selecionado", "Copiază calea selectată", "Копировать выбранный путь", "Копіювати вибраний шлях", "复制所选路径"],
+        ),
+        (
+            "move_title",
+            ["نقل المسار المحدد", "Ausgewählten Pfad verschieben", "Move selected path", "Mover ruta seleccionada", "Déplacer le chemin sélectionné", "चुना हुआ पथ स्थानांतरित करें", "Sposta il percorso selezionato", "選択したパスを移動", "선택한 경로 이동", "Przenieś wybraną ścieżkę", "Mover caminho selecionado", "Mută calea selectată", "Переместить выбранный путь", "Перемістити вибраний шлях", "移动所选路径"],
+        ),
+        (
+            "delete_title",
+            ["إرسال المسار المحدد إلى سلة المهملات", "Ausgewählten Pfad in den Papierkorb verschieben", "Send selected path to trash", "Enviar ruta seleccionada a la papelera", "Mettre le chemin sélectionné à la corbeille", "चुने हुए पथ को ट्रैश में भेजें", "Sposta il percorso selezionato nel cestino", "選択したパスをゴミ箱へ移動", "선택한 경로를 휴지통으로 보내기", "Przenieś wybraną ścieżkę do kosza", "Enviar caminho selecionado para o lixo", "Trimite calea selectată în coș", "Отправить выбранный путь в корзину", "Надіслати вибраний шлях до кошика", "将所选路径移至回收站"],
+        ),
+        (
+            "state_inaccessible",
+            ["متعذّر الوصول", "nicht zugänglich", "inaccessible", "inaccesible", "inaccessible", "पहुंच योग्य नहीं", "inaccessibile", "アクセス不可", "접근 불가", "niedostępny", "inacessível", "inaccesibil", "недоступно", "недоступно", "无法访问"],
+        ),
+        (
+            "state_protected",
+            ["محمي", "geschützt", "protected", "protegida", "protégé", "सुरक्षित", "protetto", "保護", "보호됨", "chroniony", "protegido", "protejat", "защищено", "захищено", "受保护"],
+        ),
+        (
+            "state_writable",
+            ["قابل للكتابة", "beschreibbar", "writable", "escribible", "inscriptible", "लिखने योग्य", "scrivibile", "書き込み可能", "쓰기 가능", "zapisywalny", "gravável", "inscriptibil", "доступно для записи", "доступний для запису", "可写"],
+        ),
+        (
+            "state_read_only",
+            ["للقراءة فقط", "schreibgeschützt", "read-only", "solo lectura", "lecture seule", "केवल-पठन", "sola lettura", "読み取り専用", "읽기 전용", "tylko do odczytu", "só de leitura", "doar în citire", "только чтение", "лише читання", "只读"],
+        ),
+        (
+            "kind_file",
+            ["ملف", "Datei", "file", "archivo", "fichier", "फ़ाइल", "file", "ファイル", "파일", "plik", "ficheiro", "fișier", "файл", "файл", "文件"],
+        ),
+        (
+            "kind_directory",
+            ["مجلد", "Ordner", "directory", "carpeta", "dossier", "फ़ोल्डर", "cartella", "フォルダー", "폴더", "folder", "pasta", "dosar", "каталог", "каталог", "目录"],
+        ),
+        (
+            "kind_symlink",
+            ["رابط رمزي", "symbolischer Link", "symlink", "enlace simbólico", "lien symbolique", "सिमलिंक", "collegamento simbolico", "シンボリックリンク", "심볼릭 링크", "dowiązanie symboliczne", "ligação simbólica", "legătură simbolică", "символическая ссылка", "символічне посилання", "符号链接"],
+        ),
+        (
+            "kind_other",
+            ["عنصر آخر", "sonstiges", "other", "otro", "autre", "अन्य", "altro", "その他", "기타", "inny", "outro", "altul", "другое", "інше", "其他"],
+        ),
+        (
+            "kind_inaccessible",
+            ["غير قابل للوصول", "nicht zugänglich", "inaccessible", "inaccesible", "inaccessible", "पहुंच योग्य नहीं", "inaccessibile", "アクセス不可", "접근 불가", "niedostępny", "inacessível", "inaccesibil", "недоступно", "недоступно", "无法访问"],
+        ),
+        (
+            "kind_missing",
+            ["مفقود", "fehlt", "missing", "ausente", "manquant", "अनुपस्थित", "mancante", "見つかりません", "누락됨", "brak", "em falta", "lipsește", "отсутствует", "відсутній", "缺失"],
+        ),
+        (
+            "filesystem_usage",
+            ["الإجمالي {total} · المستخدم {used} · الحر {free} · المتاح {available}", "Gesamt {total} · belegt {used} · frei {free} · verfügbar {available}", "total {total} · used {used} · free {free} · available {available}", "total {total} · ocupado {used} · libre {free} · disponible {available}", "total {total} · utilisé {used} · libre {free} · disponible {available}", "कुल {total} · उपयोग किया {used} · खाली {free} · उपलब्ध {available}", "totale {total} · usato {used} · libero {free} · disponibile {available}", "合計 {total} · 使用済み {used} · 空き {free} · 利用可能 {available}", "전체 {total} · 사용 {used} · 여유 {free} · 사용 가능 {available}", "całość {total} · użyte {used} · wolne {free} · dostępne {available}", "total {total} · usado {used} · livre {free} · disponível {available}", "total {total} · utilizat {used} · liber {free} · disponibil {available}", "всего {total} · занято {used} · свободно {free} · доступно {available}", "усього {total} · зайнято {used} · вільно {free} · доступно {available}", "总计 {total} · 已用 {used} · 空闲 {free} · 可用 {available}"],
+        ),
+        (
+            "explain_system_root",
+            ["جذر النظام: يضم شجرة POSIX كاملة؛ لا تحذف الملفات أو تنقلها.", "Systemwurzel: umfasst den gesamten POSIX-Baum; nichts löschen oder verschieben.", "System root: contains the entire POSIX tree; do not delete or move it.", "Raíz del sistema: contiene todo el árbol POSIX; no borrar ni mover.", "Racine du système : contient toute l’arborescence POSIX ; ne pas supprimer ni déplacer.", "सिस्टम रूट: पूरा POSIX ट्री रखता है; इसे हटाएँ या स्थानांतरित न करें।", "Radice del sistema: contiene l’intero albero POSIX; non eliminare né spostare.", "システムルート：POSIX ツリー全体を含みます。削除・移動しないでください。", "시스템 루트: 전체 POSIX 트리를 포함합니다. 삭제하거나 이동하지 마세요.", "Główny katalog systemu: obejmuje całe drzewo POSIX; nie usuwaj ani nie przenoś.", "Raiz do sistema: contém toda a árvore POSIX; não elimine nem mova.", "Rădăcina sistemului: conține întregul arbore POSIX; nu o șterge și nu o muta.", "Корень системы: содержит всё дерево POSIX; не удаляйте и не перемещайте.", "Корінь системи: містить усе дерево POSIX; не видаляйте й не переміщуйте.", "系统根目录：包含整个 POSIX 树；请勿删除或移动。"],
+        ),
+        (
+            "explain_boot",
+            ["ملفات الإقلاع: النواة وinitramfs ومحمل الإقلاع؛ لا تعدّلها دون خطة استعادة.", "Startdateien: Kernel, initramfs und Bootloader; Änderungen nur mit Wiederherstellungsplan.", "Boot files: kernel, initramfs and bootloaders; do not change without a recovery plan.", "Arranque: kernel, initramfs y cargadores; no modificar sin un plan de recuperación.", "Démarrage : noyau, initramfs et chargeurs ; ne pas modifier sans plan de récupération.", "बूट फ़ाइलें: कर्नेल, initramfs और बूटलोडर; पुनर्प्राप्ति योजना के बिना न बदलें।", "Avvio: kernel, initramfs e bootloader; non modificare senza un piano di ripristino.", "起動ファイル：カーネル、initramfs、ブートローダー。復旧計画なしに変更しないでください。", "부팅 파일: 커널, initramfs, 부트로더입니다. 복구 계획 없이 변경하지 마세요.", "Pliki rozruchowe: jądro, initramfs i programy rozruchowe; nie zmieniaj bez planu odzyskiwania.", "Arranque: kernel, initramfs e carregadores; não altere sem um plano de recuperação.", "Fișiere de pornire: kernel, initramfs și încărcătoare; nu modifica fără un plan de recuperare.", "Загрузка: ядро, initramfs и загрузчики; не изменяйте без плана восстановления.", "Завантаження: ядро, initramfs і завантажувачі; не змінюйте без плану відновлення.", "启动文件：内核、initramfs 和引导加载程序；没有恢复计划请勿修改。"],
+        ),
+        (
+            "explain_system_config",
+            ["إعدادات النظام والخدمات؛ عدّل ملفات محددة فقط واحتفظ بنسخة احتياطية.", "System- und Dienstkonfiguration; nur gezielte Dateien ändern und vorher sichern.", "System and service configuration; edit specific files only and keep a backup.", "Configuración del sistema y servicios; editar solo archivos concretos y conservar copia.", "Configuration du système et des services ; modifier uniquement des fichiers précis et garder une sauvegarde.", "सिस्टम और सेवा कॉन्फ़िगरेशन; केवल चुनिंदा फ़ाइलें बदलें और बैकअप रखें।", "Configurazione di sistema e servizi; modifica solo file specifici e conserva un backup.", "システムとサービスの設定です。対象ファイルだけを編集し、バックアップを保存してください。", "시스템 및 서비스 설정입니다. 필요한 파일만 편집하고 백업을 보관하세요.", "Konfiguracja systemu i usług; zmieniaj tylko konkretne pliki i zachowaj kopię.", "Configuração do sistema e serviços; edite apenas ficheiros específicos e mantenha uma cópia.", "Configurația sistemului și a serviciilor; modifică doar fișiere precise și păstrează o copie.", "Настройки системы и служб; изменяйте только конкретные файлы и сохраняйте резервную копию.", "Налаштування системи та служб; змінюйте лише конкретні файли й зберігайте резервну копію.", "系统与服务配置；仅编辑明确的文件并保留备份。"],
+        ),
+        (
+            "explain_managed_programs",
+            ["برامج ومكتبات يديرها النظام؛ لا تنقلها يدويًا، واستخدم مدير الحزم أو مزيل التثبيت.", "Vom System verwaltete Programme und Bibliotheken; nicht manuell verschieben, Paketverwaltung oder Deinstallation nutzen.", "System-managed programs and libraries; do not move manually—use the package manager or uninstaller.", "Programas y librerías gestionados por el sistema; no mover manualmente, usa el gestor o desinstalador.", "Programmes et bibliothèques gérés par le système ; ne pas déplacer, utiliser le gestionnaire ou le désinstalleur.", "सिस्टम द्वारा प्रबंधित प्रोग्राम और लाइब्रेरी; मैन्युअल रूप से न हटाएँ, पैकेज प्रबंधक या अनइंस्टॉलर उपयोग करें।", "Programmi e librerie gestiti dal sistema; non spostare manualmente, usa il gestore pacchetti o la disinstallazione.", "システム管理のプログラムとライブラリです。手動で移動せず、パッケージ管理またはアンインストーラーを使用してください。", "시스템이 관리하는 프로그램과 라이브러리입니다. 직접 이동하지 말고 패키지 관리자나 제거 프로그램을 사용하세요.", "Programy i biblioteki zarządzane przez system; nie przenoś ręcznie, użyj menedżera pakietów lub deinstalatora.", "Programas e bibliotecas geridos pelo sistema; não mova manualmente, use o gestor de pacotes ou desinstalador.", "Programe și biblioteci gestionate de sistem; nu le muta manual, folosește managerul de pachete sau dezinstalatorul.", "Программы и библиотеки под управлением системы; не перемещайте вручную, используйте пакетный менеджер или удаление.", "Програми й бібліотеки під керуванням системи; не переміщуйте вручну, скористайтеся менеджером пакунків або видаленням.", "由系统管理的程序和库；请勿手动移动，使用包管理器或卸载程序。"],
+        ),
+        (
+            "explain_variable_data",
+            ["بيانات متغيرة وسجلات وذاكرة مؤقتة وقواعد خدمات؛ نظّفها بالأداة المناسبة فقط.", "Veränderliche Daten, Protokolle, Caches und Dienstdatenbanken; nur mit dem passenden Werkzeug bereinigen.", "Variable data, logs, caches and service databases; clean only with the appropriate tool.", "Datos variables, registros, cachés y bases de servicios; limpiar solo con la herramienta adecuada.", "Données variables, journaux, caches et bases de services ; nettoyer uniquement avec l’outil approprié.", "परिवर्तनीय डेटा, लॉग, कैश और सेवा डेटाबेस; केवल उपयुक्त टूल से साफ़ करें।", "Dati variabili, log, cache e database dei servizi; pulisci solo con lo strumento adatto.", "可変データ、ログ、キャッシュ、サービスのデータベースです。適切なツールでのみクリーンアップしてください。", "가변 데이터, 로그, 캐시 및 서비스 데이터베이스입니다. 적절한 도구로만 정리하세요.", "Dane zmienne, dzienniki, pamięci podręczne i bazy usług; czyść tylko odpowiednim narzędziem.", "Dados variáveis, registos, caches e bases de dados de serviços; limpe apenas com a ferramenta adequada.", "Date variabile, jurnale, cache și baze de date ale serviciilor; curăță doar cu instrumentul potrivit.", "Изменяемые данные, журналы, кэши и базы служб; очищайте только подходящим инструментом.", "Змінні дані, журнали, кеші та бази служб; очищуйте лише відповідним інструментом.", "可变数据、日志、缓存和服务数据库；仅使用相应工具清理。"],
+        ),
+        (
+            "explain_user_data",
+            ["بيانات المستخدمين؛ قد يحتوي كل مجلد على إعدادات ووثائق شخصية.", "Benutzerdaten; jeder Ordner kann persönliche Einstellungen und Dokumente enthalten.", "User data; each folder may contain personal settings and documents.", "Datos de usuarios; cada carpeta puede contener configuración y documentos personales.", "Données utilisateur ; chaque dossier peut contenir des réglages et documents personnels.", "उपयोगकर्ता डेटा; हर फ़ोल्डर में निजी सेटिंग और दस्तावेज़ हो सकते हैं।", "Dati utente; ogni cartella può contenere impostazioni e documenti personali.", "ユーザーデータです。各フォルダーには個人設定や文書が含まれる場合があります。", "사용자 데이터입니다. 각 폴더에 개인 설정과 문서가 있을 수 있습니다.", "Dane użytkowników; każdy folder może zawierać ustawienia i dokumenty osobiste.", "Dados dos utilizadores; cada pasta pode conter configurações e documentos pessoais.", "Datele utilizatorilor; fiecare dosar poate conține setări și documente personale.", "Данные пользователей; в каждой папке могут быть личные настройки и документы.", "Дані користувачів; у кожній папці можуть бути особисті налаштування й документи.", "用户数据；每个文件夹可能包含个人设置和文档。"],
+        ),
+        (
+            "explain_temporary",
+            ["ملفات مؤقتة؛ يمكن تنظيفها وفق سياسة النظام، لكن لا تفترض أن كل محتواها غير مهم.", "Temporäre Dateien; nach Systemrichtlinie bereinigen, aber nicht alles als entbehrlich ansehen.", "Temporary files; clean according to system policy, but do not assume everything is disposable.", "Temporales; se pueden purgar según la política del sistema, pero no todo es prescindible.", "Fichiers temporaires ; nettoyer selon la politique du système sans supposer que tout est inutile.", "अस्थायी फ़ाइलें; सिस्टम नीति के अनुसार साफ़ करें, पर सबको बेकार न मानें।", "File temporanei; pulisci secondo la politica di sistema, senza presumere che tutto sia sacrificabile.", "一時ファイルです。システム方針に従って削除し、すべて不要とは限らない点に注意してください。", "임시 파일입니다. 시스템 정책에 따라 정리하되 모두 불필요하다고 가정하지 마세요.", "Pliki tymczasowe; czyść zgodnie z zasadami systemu, nie zakładając, że wszystko jest zbędne.", "Ficheiros temporários; limpe conforme a política do sistema, sem presumir que tudo é descartável.", "Fișiere temporare; curăță conform politicii sistemului, fără să presupui că toate sunt inutile.", "Временные файлы; очищайте согласно политике системы и не считайте всё содержимое ненужным.", "Тимчасові файли; очищуйте за правилами системи й не вважайте весь вміст непотрібним.", "临时文件；请按系统策略清理，不要假设其中所有内容都可丢弃。"],
+        ),
+        (
+            "explain_virtual_proc",
+            ["عرض افتراضي للنواة؛ لا يحتوي ملفات عادية للنسخ أو الحذف.", "Virtuelle Kernelansicht; enthält keine normalen Dateien zum Kopieren oder Löschen.", "Virtual view of the kernel; it does not contain ordinary files to copy or delete.", "Vista virtual del kernel; no contiene archivos normales que se puedan copiar o borrar.", "Vue virtuelle du noyau ; ne contient pas de fichiers ordinaires à copier ou supprimer.", "कर्नेल का वर्चुअल दृश्य; इसमें कॉपी या हटाने योग्य सामान्य फ़ाइलें नहीं हैं।", "Vista virtuale del kernel; non contiene file normali da copiare o eliminare.", "カーネルの仮想ビューです。コピーや削除の対象となる通常ファイルはありません。", "커널의 가상 보기입니다. 복사하거나 삭제할 일반 파일이 없습니다.", "Wirtualny widok jądra; nie zawiera zwykłych plików do kopiowania ani usuwania.", "Vista virtual do kernel; não contém ficheiros normais para copiar ou eliminar.", "Vizualizare virtuală a kernelului; nu conține fișiere obișnuite de copiat sau șters.", "Виртуальное представление ядра; обычных файлов для копирования или удаления здесь нет.", "Віртуальне подання ядра; звичайних файлів для копіювання чи видалення тут немає.", "内核的虚拟视图；不包含可复制或删除的普通文件。"],
+        ),
+        (
+            "explain_virtual_sys",
+            ["عرض افتراضي للأجهزة والنواة؛ لا تعدّله من هذا المدير.", "Virtuelle Ansicht von Hardware und Kernel; nicht mit diesem Manager ändern.", "Virtual view of hardware and kernel; do not modify it with this manager.", "Vista virtual del hardware y kernel; no modificar desde este gestor.", "Vue virtuelle du matériel et du noyau ; ne pas modifier depuis ce gestionnaire.", "हार्डवेयर और कर्नेल का वर्चुअल दृश्य; इस प्रबंधक से न बदलें।", "Vista virtuale di hardware e kernel; non modificarla da questo gestore.", "ハードウェアとカーネルの仮想ビューです。この管理ツールから変更しないでください。", "하드웨어와 커널의 가상 보기입니다. 이 관리 도구에서 수정하지 마세요.", "Wirtualny widok sprzętu i jądra; nie zmieniaj go w tym menedżerze.", "Vista virtual do hardware e do kernel; não altere neste gestor.", "Vizualizare virtuală a hardware-ului și kernelului; nu o modifica din acest manager.", "Виртуальное представление оборудования и ядра; не изменяйте его этим менеджером.", "Віртуальне подання обладнання та ядра; не змінюйте його в цьому менеджері.", "硬件与内核的虚拟视图；请勿通过此管理器修改。"],
+        ),
+        (
+            "explain_device_nodes",
+            ["عُقد أجهزة خاصة؛ لا تتعامل معها كملفات عادية ولا تحذفها.", "Spezielle Gerätedateien; nicht wie normale Dateien behandeln oder löschen.", "Special device nodes; do not treat them as ordinary files or delete them.", "Dispositivos especiales; no tratarlos como archivos comunes ni borrar nodos.", "Nœuds de périphériques spéciaux ; ne pas les traiter comme des fichiers ordinaires ni les supprimer.", "विशेष डिवाइस नोड; सामान्य फ़ाइल न समझें और न हटाएँ।", "Nodi di dispositivi speciali; non trattarli come file comuni né eliminarli.", "特殊なデバイスノードです。通常ファイルとして扱ったり削除したりしないでください。", "특수 장치 노드입니다. 일반 파일처럼 취급하거나 삭제하지 마세요.", "Specjalne węzły urządzeń; nie traktuj ich jak zwykłych plików ani nie usuwaj.", "Nós de dispositivos especiais; não os trate como ficheiros comuns nem os elimine.", "Noduri speciale de dispozitiv; nu le trata ca fișiere obișnuite și nu le șterge.", "Специальные узлы устройств; не считайте их обычными файлами и не удаляйте.", "Спеціальні вузли пристроїв; не вважайте їх звичайними файлами й не видаляйте.", "特殊设备节点；请勿将其当作普通文件或删除。"],
+        ),
+        (
+            "explain_runtime",
+            ["حالة مؤقتة للخدمات والجلسات؛ لا تنقلها أو تحذفها يدويًا.", "Flüchtiger Status von Diensten und Sitzungen; nicht manuell verschieben oder löschen.", "Ephemeral service and session state; do not move or delete manually.", "Estado efímero de servicios y sesiones; no mover ni borrar manualmente.", "État éphémère des services et sessions ; ne pas déplacer ni supprimer manuellement.", "सेवाओं और सत्रों की अस्थायी स्थिति; मैन्युअल रूप से न हटाएँ या स्थानांतरित करें।", "Stato temporaneo di servizi e sessioni; non spostare o eliminare manualmente.", "サービスやセッションの一時状態です。手動で移動・削除しないでください。", "서비스와 세션의 임시 상태입니다. 직접 이동하거나 삭제하지 마세요.", "Nietrwały stan usług i sesji; nie przenoś ani nie usuwaj ręcznie.", "Estado temporário de serviços e sessões; não mova nem elimine manualmente.", "Stare temporară a serviciilor și sesiunilor; nu o muta și nu o șterge manual.", "Временное состояние служб и сеансов; не перемещайте и не удаляйте вручную.", "Тимчасовий стан служб і сеансів; не переміщуйте й не видаляйте вручну.", "服务和会话的临时状态；请勿手动移动或删除。"],
+        ),
+        (
+            "explain_user_config",
+            ["إعدادات المستخدم؛ تحقق من أن المسار ضمن ملفه الشخصي قبل تعديله.", "Benutzereinstellungen; vor Änderungen sicherstellen, dass der Pfad zum Benutzerprofil gehört.", "User configuration; confirm the path belongs to the user profile before changing it.", "Configuración de usuario; confirma que la ruta pertenece al perfil antes de modificarla.", "Configuration utilisateur ; vérifier que le chemin appartient au profil avant toute modification.", "उपयोगकर्ता कॉन्फ़िगरेशन; बदलाव से पहले पुष्टि करें कि पथ प्रोफ़ाइल का है।", "Configurazione utente; verifica che il percorso appartenga al profilo prima di modificarlo.", "ユーザー設定です。変更前にユーザープロファイル内のパスであることを確認してください。", "사용자 설정입니다. 변경 전에 사용자 프로필 경로인지 확인하세요.", "Konfiguracja użytkownika; przed zmianą upewnij się, że ścieżka należy do profilu.", "Configuração do utilizador; confirme que o caminho pertence ao perfil antes de alterar.", "Configurația utilizatorului; verifică dacă această cale aparține profilului înainte de modificare.", "Настройки пользователя; перед изменением убедитесь, что путь относится к профилю.", "Налаштування користувача; перед зміною переконайтеся, що шлях належить профілю.", "用户配置；修改前请确认该路径属于用户配置文件。"],
+        ),
+        (
+            "explain_user_cache",
+            ["ذاكرة مؤقتة للمستخدم؛ غالبًا يمكن تنظيفها، لكن إعادة بنائها قد تبطئ التشغيل التالي.", "Benutzer-Cache; meist bereinigbar, kann den nächsten Start danach aber verlangsamen.", "User cache; usually safe to clear, but rebuilding it may slow the next startup.", "Caché de usuario; suele poder limpiarse, pero regenerarla puede ralentizar el siguiente inicio.", "Cache utilisateur ; généralement nettoyable, mais sa reconstruction peut ralentir le prochain démarrage.", "उपयोगकर्ता कैश; आमतौर पर साफ़ किया जा सकता है, पर दोबारा बनने में अगला स्टार्ट धीमा हो सकता है।", "Cache utente; di solito eliminabile, ma la ricostruzione può rallentare il prossimo avvio.", "ユーザーキャッシュです。通常は削除できますが、再生成により次回起動が遅くなる場合があります。", "사용자 캐시입니다. 대개 삭제할 수 있지만 다시 만드는 동안 다음 시작이 느려질 수 있습니다.", "Pamięć podręczna użytkownika; zwykle można ją wyczyścić, ale odbudowa może spowolnić kolejny start.", "Cache do utilizador; geralmente pode ser limpa, mas a reconstrução pode atrasar o próximo arranque.", "Cache-ul utilizatorului; de obicei poate fi golit, dar reconstruirea poate încetini următoarea pornire.", "Кэш пользователя обычно можно очистить, но его восстановление может замедлить следующий запуск.", "Кеш користувача зазвичай можна очистити, але його відновлення може сповільнити наступний запуск.", "用户缓存通常可以清理，但重建缓存可能会让下次启动变慢。"],
+        ),
+        (
+            "explain_windows_os",
+            ["نظام Windows: يحتوي ملفات نظام التشغيل؛ لا تنقلها أو تحذفها.", "Windows-System: enthält Betriebssystemdateien; nicht verschieben oder löschen.", "Windows system: contains operating-system files; do not move or delete.", "Sistema Windows: contiene archivos del sistema operativo; no mover ni borrar.", "Système Windows : contient les fichiers du système d’exploitation ; ne pas déplacer ni supprimer.", "Windows सिस्टम: ऑपरेटिंग सिस्टम फ़ाइलें हैं; इन्हें न हटाएँ या स्थानांतरित करें।", "Sistema Windows: contiene file del sistema operativo; non spostare né eliminare.", "Windows システム：OS ファイルが含まれています。移動・削除しないでください。", "Windows 시스템: 운영 체제 파일이 있습니다. 이동하거나 삭제하지 마세요.", "System Windows: zawiera pliki systemu operacyjnego; nie przenoś ani nie usuwaj.", "Sistema Windows: contém ficheiros do sistema operativo; não mova nem elimine.", "Sistemul Windows: conține fișiere ale sistemului de operare; nu le muta și nu le șterge.", "Система Windows: содержит файлы ОС; не перемещайте и не удаляйте их.", "Система Windows: містить файли ОС; не переміщуйте й не видаляйте їх.", "Windows 系统目录：包含操作系统文件；请勿移动或删除。"],
+        ),
+        (
+            "explain_shared_app_data",
+            ["بيانات مشتركة للتطبيقات؛ عدّلها فقط إذا عرفت التطبيق الذي يملكها.", "Gemeinsame Anwendungsdaten; nur ändern, wenn die zuständige Anwendung bekannt ist.", "Shared application data; modify only when you know which application owns it.", "Datos compartidos de aplicaciones; modificar solo si conoces la aplicación propietaria.", "Données partagées des applications ; modifier uniquement si l’application propriétaire est connue.", "साझा ऐप डेटा; तभी बदलें जब पता हो कि इसका स्वामी कौन-सा ऐप है।", "Dati condivisi delle applicazioni; modifica solo se conosci l’applicazione proprietaria.", "アプリ共有データです。所有するアプリが分かる場合にのみ変更してください。", "공유 애플리케이션 데이터입니다. 소유 앱을 알고 있을 때만 수정하세요.", "Wspólne dane aplikacji; zmieniaj tylko wtedy, gdy znasz aplikację będącą ich właścicielem.", "Dados partilhados das aplicações; altere apenas se souber qual aplicação é proprietária.", "Date partajate ale aplicațiilor; modifică doar dacă știi ce aplicație le deține.", "Общие данные приложений; изменяйте только если знаете, какому приложению они принадлежат.", "Спільні дані програм; змінюйте, лише якщо знаєте програму-власника.", "应用程序共享数据；只有确认所属应用后才修改。"],
+        ),
+        (
+            "explain_user_profiles",
+            ["ملفات المستخدمين الشخصية؛ تحتوي بيانات وإعدادات خاصة بكل حساب.", "Benutzerprofile; enthalten persönliche Daten und Einstellungen jedes Kontos.", "User profiles; contain personal data and settings for each account.", "Perfiles de usuario; contienen datos y configuración personales de cada cuenta.", "Profils utilisateur ; contiennent les données et réglages personnels de chaque compte.", "उपयोगकर्ता प्रोफ़ाइल; हर खाते का निजी डेटा और सेटिंग रखती है।", "Profili utente; contengono dati e impostazioni personali di ogni account.", "ユーザープロファイル：各アカウントの個人データと設定が含まれます。", "사용자 프로필: 각 계정의 개인 데이터와 설정이 들어 있습니다.", "Profile użytkowników; zawierają osobiste dane i ustawienia każdego konta.", "Perfis de utilizador; contêm dados e definições pessoais de cada conta.", "Profilurile utilizatorilor conțin date și setări personale pentru fiecare cont.", "Профили пользователей содержат личные данные и настройки каждой учётной записи.", "Профілі користувачів містять особисті дані й налаштування кожного облікового запису.", "用户配置文件：包含每个账户的个人数据和设置。"],
+        ),
+        (
+            "explain_user_appdata",
+            ["إعدادات وذاكرات مؤقتة لكل مستخدم؛ بعضها قابل للتنظيف وبعضها ضروري للتطبيقات.", "Benutzerspezifische Einstellungen und Caches; manche sind bereinigbar, andere für Apps nötig.", "Per-user settings and caches; some can be cleared, others are required by applications.", "Configuración y cachés por usuario; algunas se pueden limpiar y otras son necesarias.", "Réglages et caches par utilisateur ; certains sont nettoyables, d’autres indispensables aux applications.", "प्रति-उपयोगकर्ता सेटिंग और कैश; कुछ साफ़ किए जा सकते हैं, कुछ ऐप के लिए ज़रूरी हैं।", "Impostazioni e cache per utente; alcune si possono pulire, altre servono alle applicazioni.", "ユーザーごとの設定とキャッシュです。削除できるものも、アプリに必須のものもあります。", "사용자별 설정 및 캐시입니다. 일부는 정리할 수 있지만 일부는 앱에 필요합니다.", "Ustawienia i pamięci podręczne użytkownika; część można czyścić, inne są potrzebne aplikacjom.", "Definições e caches por utilizador; algumas podem ser limpas, outras são necessárias às aplicações.", "Setări și cache-uri per utilizator; unele pot fi curățate, altele sunt necesare aplicațiilor.", "Пользовательские настройки и кэш: часть можно очистить, часть необходима приложениям.", "Налаштування й кеш користувача: деякі можна очистити, інші потрібні програмам.", "每用户设置和缓存；部分可清理，部分是应用程序必需的。"],
+        ),
+        (
+            "explain_windows_metadata",
+            ["بيانات وصفية محمية في Windows؛ لا تعدّلها عبر مدير ملفات عادي.", "Geschützte Windows-Metadaten; nicht mit einem normalen Dateimanager ändern.", "Protected Windows metadata; do not modify through a regular file manager.", "Metadatos protegidos de Windows; no modificar desde un gestor de archivos normal.", "Métadonnées Windows protégées ; ne pas modifier avec un gestionnaire de fichiers ordinaire.", "Windows का संरक्षित मेटाडेटा; सामान्य फ़ाइल प्रबंधक से न बदलें।", "Metadati Windows protetti; non modificarli con un normale file manager.", "Windows の保護されたメタデータです。通常のファイルマネージャーから変更しないでください。", "Windows 보호 메타데이터입니다. 일반 파일 관리자에서 수정하지 마세요.", "Chronione metadane systemu Windows; nie zmieniaj ich w zwykłym menedżerze plików.", "Metadados protegidos do Windows; não altere num gestor de ficheiros comum.", "Metadate Windows protejate; nu le modifica într-un manager obișnuit de fișiere.", "Защищённые метаданные Windows; не изменяйте их обычным файловым менеджером.", "Захищені метадані Windows; не змінюйте їх звичайним файловим менеджером.", "Windows 受保护的元数据；请勿通过普通文件管理器修改。"],
+        ),
+    ];
+    let index = SUPPORTED
+        .iter()
+        .position(|language| *language == current())
+        .unwrap_or(3);
+    MAP_TEXT
+        .iter()
+        .find(|(entry, _)| *entry == key)
+        .map(|(_, translations)| translations[index])
+        .unwrap_or("")
 }
 
 pub fn native_tools_label() -> &'static str {
@@ -862,6 +1208,59 @@ pub fn prefix_flags() -> &'static str {
 /// cruzada en los módulos gráficos.
 #[cfg(any(target_os = "linux", windows))]
 pub fn gui_text(key: &str) -> &'static str {
+    if matches!(
+        key,
+        "settings_apply" | "settings_guide" | "elevation_default"
+    ) {
+        return match (current(), key) {
+            ("en", "settings_apply") => "Apply settings",
+            ("en", "settings_guide") => "Settings and visibility guide",
+            ("en", "elevation_default") => "Elevate modifying actions by default (sudo/UAC; not queries or user-data actions)",
+            ("de", "settings_apply") => "Einstellungen übernehmen",
+            ("de", "settings_guide") => "Hilfe zu Einstellungen und Sichtbarkeit",
+            ("de", "elevation_default") => "Ändernde Aktionen standardmäßig erhöht ausführen (sudo/UAC; keine Abfragen oder Benutzerdateiaktionen)",
+            ("fr", "settings_apply") => "Appliquer les réglages",
+            ("fr", "settings_guide") => "Guide des réglages et de la visibilité",
+            ("fr", "elevation_default") => "Élever les actions modificatrices par défaut (sudo/UAC ; pas les consultations ni les actions sur les données utilisateur)",
+            ("pt", "settings_apply") => "Aplicar definições",
+            ("pt", "settings_guide") => "Guia de definições e visibilidade",
+            ("pt", "elevation_default") => "Elevar ações modificadoras por predefinição (sudo/UAC; não consultas nem ações sobre dados do utilizador)",
+            ("it", "settings_apply") => "Applica impostazioni",
+            ("it", "settings_guide") => "Guida a impostazioni e visibilità",
+            ("it", "elevation_default") => "Eleva per impostazione predefinita le azioni che modificano il sistema (sudo/UAC; non consultazioni o dati utente)",
+            ("pl", "settings_apply") => "Zastosuj ustawienia",
+            ("pl", "settings_guide") => "Przewodnik po ustawieniach i widoczności",
+            ("pl", "elevation_default") => "Domyślnie uruchamiaj działania modyfikujące z podwyższonymi uprawnieniami (sudo/UAC; nie zapytania ani działania na danych użytkownika)",
+            ("ar", "settings_apply") => "تطبيق الإعدادات",
+            ("ar", "settings_guide") => "دليل الإعدادات والظهور",
+            ("ar", "elevation_default") => "رفع صلاحيات الإجراءات المعدِّلة افتراضيًا (sudo/UAC؛ وليس الاستعلامات أو إجراءات بيانات المستخدم)",
+            ("hi", "settings_apply") => "सेटिंग लागू करें",
+            ("hi", "settings_guide") => "सेटिंग और दृश्यता मार्गदर्शिका",
+            ("hi", "elevation_default") => "संशोधन करने वाली कार्रवाइयों को डिफ़ॉल्ट रूप से उन्नत करें (sudo/UAC; क्वेरी या उपयोगकर्ता-डेटा कार्रवाइयाँ नहीं)",
+            ("ja", "settings_apply") => "設定を適用",
+            ("ja", "settings_guide") => "設定と表示のガイド",
+            ("ja", "elevation_default") => "変更操作を既定で昇格して実行（sudo/UAC。照会やユーザーデータ操作は除く）",
+            ("ko", "settings_apply") => "설정 적용",
+            ("ko", "settings_guide") => "설정 및 표시 안내",
+            ("ko", "elevation_default") => "수정 작업을 기본적으로 관리자 권한으로 실행 (sudo/UAC; 조회 및 사용자 데이터 작업 제외)",
+            ("ro", "settings_apply") => "Aplică setările",
+            ("ro", "settings_guide") => "Ghid pentru setări și vizibilitate",
+            ("ro", "elevation_default") => "Rulează implicit cu privilegii ridicate acțiunile modificatoare (sudo/UAC; nu și interogările sau acțiunile asupra datelor utilizatorului)",
+            ("ru", "settings_apply") => "Применить настройки",
+            ("ru", "settings_guide") => "Руководство по настройкам и видимости",
+            ("ru", "elevation_default") => "По умолчанию запускать изменяющие действия с повышенными правами (sudo/UAC; не запросы и не действия с данными пользователя)",
+            ("uk", "settings_apply") => "Застосувати налаштування",
+            ("uk", "settings_guide") => "Посібник із налаштувань і видимості",
+            ("uk", "elevation_default") => "Типово запускати дії зі зміною системи з підвищеними правами (sudo/UAC; не запити й не дії з даними користувача)",
+            ("zh", "settings_apply") => "应用设置",
+            ("zh", "settings_guide") => "设置与可见性指南",
+            ("zh", "elevation_default") => "默认提升修改操作的权限（sudo/UAC；查询和用户数据操作除外）",
+            (_, "settings_apply") => "Aplicar ajustes",
+            (_, "settings_guide") => "Guía de ajustes y visibilidad",
+            (_, "elevation_default") => "Elevar acciones modificadoras por defecto (sudo/UAC; no consultas ni acciones de datos de usuario)",
+            (_, _) => "",
+        };
+    }
     if matches!(
         key,
         "theme_button"
@@ -1129,6 +1528,7 @@ pub fn gui_text(key: &str) -> &'static str {
         ("en", "dashboard_hint") => "Choose a section to work with its tools and actions.",
         ("en", "running") => "Running…",
         ("en", "completed") => "Completed",
+        ("en", "failed") => "Failed",
         ("en", "audit") => "Audit disks and applications",
         ("en", "games") => "Inventory games and launchers",
         ("en", "packages") => "Package inventory",
@@ -1151,6 +1551,7 @@ pub fn gui_text(key: &str) -> &'static str {
         ("de", "ready") => "Bereit",
         ("de", "running") => "Wird ausgeführt…",
         ("de", "completed") => "Abgeschlossen",
+        ("de", "failed") => "Fehlgeschlagen",
         ("de", "audit") => "Datenträger und Anwendungen prüfen",
         ("de", "games") => "Spiele und Launcher inventarisieren",
         ("de", "packages") => "Paketinventar",
@@ -1172,6 +1573,7 @@ pub fn gui_text(key: &str) -> &'static str {
         ("fr", "ready") => "Prêt",
         ("fr", "running") => "Exécution…",
         ("fr", "completed") => "Terminé",
+        ("fr", "failed") => "Échec",
         ("fr", "audit") => "Auditer les disques et applications",
         ("fr", "games") => "Inventorier jeux et lanceurs",
         ("fr", "packages") => "Inventaire des paquets",
@@ -1193,6 +1595,7 @@ pub fn gui_text(key: &str) -> &'static str {
         ("pt", "ready") => "Pronto",
         ("pt", "running") => "A executar…",
         ("pt", "completed") => "Concluído",
+        ("pt", "failed") => "Falhou",
         ("pt", "audit") => "Auditar discos e aplicações",
         ("pt", "games") => "Inventariar jogos e lançadores",
         ("pt", "packages") => "Inventário de pacotes",
@@ -1214,6 +1617,7 @@ pub fn gui_text(key: &str) -> &'static str {
         ("it", "ready") => "Pronto",
         ("it", "running") => "In esecuzione…",
         ("it", "completed") => "Completato",
+        ("it", "failed") => "Non riuscito",
         ("it", "audit") => "Controlla dischi e applicazioni",
         ("it", "games") => "Inventario di giochi e launcher",
         ("it", "packages") => "Inventario pacchetti",
@@ -1235,6 +1639,7 @@ pub fn gui_text(key: &str) -> &'static str {
         ("ca", "ready") => "Preparat",
         ("ca", "running") => "En execució…",
         ("ca", "completed") => "Completat",
+        ("ca", "failed") => "Ha fallat",
         ("ca", "audit") => "Auditar discs i aplicacions",
         ("ca", "games") => "Inventariar jocs i llançadors",
         ("ca", "packages") => "Inventari de paquets",
@@ -1256,6 +1661,7 @@ pub fn gui_text(key: &str) -> &'static str {
         ("nl", "ready") => "Gereed",
         ("nl", "running") => "Bezig…",
         ("nl", "completed") => "Voltooid",
+        ("nl", "failed") => "Mislukt",
         ("nl", "audit") => "Schijven en toepassingen controleren",
         ("nl", "games") => "Games en launchers inventariseren",
         ("nl", "packages") => "Pakketinventaris",
@@ -1277,6 +1683,7 @@ pub fn gui_text(key: &str) -> &'static str {
         ("pl", "ready") => "Gotowe",
         ("pl", "running") => "W toku…",
         ("pl", "completed") => "Ukończono",
+        ("pl", "failed") => "Niepowodzenie",
         ("pl", "audit") => "Audyt dysków i aplikacji",
         ("pl", "games") => "Inwentaryzuj gry i launchery",
         ("pl", "packages") => "Spis pakietów",
@@ -1298,6 +1705,7 @@ pub fn gui_text(key: &str) -> &'static str {
         ("ar", "ready") => "جاهز",
         ("ar", "running") => "قيد التنفيذ…",
         ("ar", "completed") => "اكتمل",
+        ("ar", "failed") => "فشل",
         ("ar", "audit") => "تدقيق الأقراص والتطبيقات",
         ("ar", "games") => "جرد الألعاب ومشغلاتها",
         ("ar", "packages") => "جرد الحزم",
@@ -1319,6 +1727,7 @@ pub fn gui_text(key: &str) -> &'static str {
         ("hi", "ready") => "तैयार",
         ("hi", "running") => "चल रहा है…",
         ("hi", "completed") => "पूर्ण",
+        ("hi", "failed") => "विफल",
         ("hi", "audit") => "डिस्क और अनुप्रयोगों का ऑडिट",
         ("hi", "games") => "गेम और लॉन्चर सूचीबद्ध करें",
         ("hi", "packages") => "पैकेज सूची",
@@ -1340,6 +1749,7 @@ pub fn gui_text(key: &str) -> &'static str {
         ("ja", "ready") => "準備完了",
         ("ja", "running") => "実行中…",
         ("ja", "completed") => "完了",
+        ("ja", "failed") => "失敗",
         ("ja", "audit") => "ディスクとアプリケーションを監査",
         ("ja", "games") => "ゲームとランチャーを一覧表示",
         ("ja", "packages") => "パッケージ一覧",
@@ -1361,6 +1771,7 @@ pub fn gui_text(key: &str) -> &'static str {
         ("ko", "ready") => "준비됨",
         ("ko", "running") => "실행 중…",
         ("ko", "completed") => "완료됨",
+        ("ko", "failed") => "실패",
         ("ko", "audit") => "디스크 및 애플리케이션 감사",
         ("ko", "games") => "게임 및 런처 목록",
         ("ko", "packages") => "패키지 목록",
@@ -1382,6 +1793,7 @@ pub fn gui_text(key: &str) -> &'static str {
         ("ro", "ready") => "Pregătit",
         ("ro", "running") => "În execuție…",
         ("ro", "completed") => "Finalizat",
+        ("ro", "failed") => "Eșuat",
         ("ro", "audit") => "Auditează discurile și aplicațiile",
         ("ro", "games") => "Inventariază jocurile și lansatoarele",
         ("ro", "packages") => "Inventar de pachete",
@@ -1403,6 +1815,7 @@ pub fn gui_text(key: &str) -> &'static str {
         ("ru", "ready") => "Готово",
         ("ru", "running") => "Выполняется…",
         ("ru", "completed") => "Завершено",
+        ("ru", "failed") => "Не удалось",
         ("ru", "audit") => "Проверить диски и приложения",
         ("ru", "games") => "Инвентаризация игр и лаунчеров",
         ("ru", "packages") => "Инвентаризация пакетов",
@@ -1424,6 +1837,7 @@ pub fn gui_text(key: &str) -> &'static str {
         ("uk", "ready") => "Готово",
         ("uk", "running") => "Виконується…",
         ("uk", "completed") => "Завершено",
+        ("uk", "failed") => "Не вдалося",
         ("uk", "audit") => "Перевірити диски та програми",
         ("uk", "games") => "Інвентаризація ігор і запускників",
         ("uk", "packages") => "Інвентаризація пакунків",
@@ -1445,6 +1859,7 @@ pub fn gui_text(key: &str) -> &'static str {
         ("zh", "ready") => "就绪",
         ("zh", "running") => "运行中…",
         ("zh", "completed") => "已完成",
+        ("zh", "failed") => "失败",
         ("zh", "audit") => "审计磁盘和应用程序",
         ("zh", "games") => "盘点游戏和启动器",
         ("zh", "packages") => "软件包清单",
@@ -1468,6 +1883,7 @@ pub fn gui_text(key: &str) -> &'static str {
         (_, "dashboard_hint") => "Elige una sección para trabajar con sus herramientas y acciones.",
         (_, "running") => "Ejecutando…",
         (_, "completed") => "Terminado",
+        (_, "failed") => "Falló",
         (_, "audit") => "Auditar discos y aplicaciones",
         (_, "games") => "Inventariar juegos y lanzadores",
         (_, "packages") => "Inventario de paquetes",
@@ -1505,46 +1921,457 @@ pub fn gui_text(key: &str) -> &'static str {
 #[cfg(any(not(windows), test))]
 pub fn gui_action_text(key: &str) -> &'static str {
     match (current(), key) {
+        ("en", "yes") => "Yes",
+        ("en", "no") => "No",
         ("en", "cancel") => "Cancel",
         ("en", "cancelling") => "Cancelling…",
+        ("de", "yes") => "Ja",
+        ("de", "no") => "Nein",
         ("de", "cancel") => "Abbrechen",
         ("de", "cancelling") => "Wird abgebrochen…",
+        ("fr", "yes") => "Oui",
+        ("fr", "no") => "Non",
         ("fr", "cancel") => "Annuler",
         ("fr", "cancelling") => "Annulation…",
+        ("pt", "yes") => "Sim",
+        ("pt", "no") => "Não",
         ("pt", "cancel") => "Cancelar",
         ("pt", "cancelling") => "A cancelar…",
+        ("it", "yes") => "Sì",
+        ("it", "no") => "No",
         ("it", "cancel") => "Annulla",
         ("it", "cancelling") => "Annullamento…",
+        ("ca", "yes") => "Sí",
+        ("ca", "no") => "No",
         ("ca", "cancel") => "Cancel·lar",
         ("ca", "cancelling") => "Cancel·lant…",
+        ("nl", "yes") => "Ja",
+        ("nl", "no") => "Nee",
         ("nl", "cancel") => "Annuleren",
         ("nl", "cancelling") => "Annuleren…",
+        ("pl", "yes") => "Tak",
+        ("pl", "no") => "Nie",
         ("pl", "cancel") => "Anuluj",
         ("pl", "cancelling") => "Anulowanie…",
+        ("ar", "yes") => "نعم",
+        ("ar", "no") => "لا",
         ("ar", "cancel") => "إلغاء",
         ("ar", "cancelling") => "جارٍ الإلغاء…",
+        ("hi", "yes") => "हाँ",
+        ("hi", "no") => "नहीं",
         ("hi", "cancel") => "रद्द करें",
         ("hi", "cancelling") => "रद्द किया जा रहा है…",
+        ("ja", "yes") => "はい",
+        ("ja", "no") => "いいえ",
         ("ja", "cancel") => "キャンセル",
         ("ja", "cancelling") => "キャンセル中…",
+        ("ko", "yes") => "예",
+        ("ko", "no") => "아니요",
         ("ko", "cancel") => "취소",
         ("ko", "cancelling") => "취소 중…",
+        ("ro", "yes") => "Da",
+        ("ro", "no") => "Nu",
         ("ro", "cancel") => "Anulează",
         ("ro", "cancelling") => "Se anulează…",
+        ("ru", "yes") => "Да",
+        ("ru", "no") => "Нет",
         ("ru", "cancel") => "Отмена",
         ("ru", "cancelling") => "Отмена…",
+        ("uk", "yes") => "Так",
+        ("uk", "no") => "Ні",
         ("uk", "cancel") => "Скасувати",
         ("uk", "cancelling") => "Скасування…",
+        ("zh", "yes") => "是",
+        ("zh", "no") => "否",
         ("zh", "cancel") => "取消",
         ("zh", "cancelling") => "正在取消…",
+        (_, "yes") => "Sí",
+        (_, "no") => "No",
         (_, "cancel") => "Cancelar",
         (_, "cancelling") => "Cancelando…",
         _ => "",
     }
 }
 
+/// Avisos de confirmación de la GUI. No dependen del locale del sistema:
+/// siguen el idioma seleccionado dentro de LTools.
+pub fn gui_confirmation_text(key: &str) -> &'static str {
+    match (current(), key) {
+        ("en", "warning_data") => "This action may modify or destroy data.",
+        ("en", "warning_system") => "This action may change system settings or data.",
+        ("en", "review") => "Review the details and confirm to continue.",
+        ("en", "details") => "Details",
+        ("en", "boot_no_reboot") => "The computer will not restart automatically.",
+        ("en", "cleanup_warning") => "The cleaner will inspect caches, temporary files and optional personal paths. Downloads, Documents, applications and Trash will not be deleted without explicit consent; items can be reviewed individually.",
+        ("de", "warning_data") => "Diese Aktion kann Daten ändern oder zerstören.",
+        ("de", "warning_system") => "Diese Aktion kann Systemeinstellungen oder Daten ändern.",
+        ("de", "review") => "Prüfe die Details und bestätige, um fortzufahren.",
+        ("de", "details") => "Details",
+        ("de", "boot_no_reboot") => "Der Computer wird nicht automatisch neu gestartet.",
+        ("de", "cleanup_warning") => "Der Cleaner prüft Caches, temporäre Dateien und optionale persönliche Pfade. Downloads, Dokumente, Anwendungen und Papierkorb werden nicht ohne ausdrückliche Zustimmung gelöscht; Elemente können einzeln geprüft werden.",
+        ("fr", "warning_data") => "Cette action peut modifier ou détruire des données.",
+        ("fr", "warning_system") => "Cette action peut modifier les paramètres système ou les données.",
+        ("fr", "review") => "Vérifiez les détails et confirmez pour continuer.",
+        ("fr", "details") => "Détails",
+        ("fr", "boot_no_reboot") => "L’ordinateur ne redémarrera pas automatiquement.",
+        ("fr", "cleanup_warning") => "Le nettoyeur examine les caches, fichiers temporaires et chemins personnels facultatifs. Les téléchargements, documents, applications et la corbeille ne seront pas supprimés sans accord explicite ; les éléments peuvent être vérifiés un par un.",
+        ("pt", "warning_data") => "Esta ação pode alterar ou destruir dados.",
+        ("pt", "warning_system") => "Esta ação pode alterar definições do sistema ou dados.",
+        ("pt", "review") => "Revise os detalhes e confirme para continuar.",
+        ("pt", "details") => "Detalhes",
+        ("pt", "boot_no_reboot") => "O computador não será reiniciado automaticamente.",
+        ("pt", "cleanup_warning") => "O limpador analisará caches, ficheiros temporários e caminhos pessoais opcionais. Transferências, documentos, aplicações e lixo não serão eliminados sem consentimento explícito; os itens podem ser revistos individualmente.",
+        ("it", "warning_data") => "Questa azione può modificare o distruggere i dati.",
+        ("it", "warning_system") => "Questa azione può modificare le impostazioni di sistema o i dati.",
+        ("it", "review") => "Controlla i dettagli e conferma per continuare.",
+        ("it", "details") => "Dettagli",
+        ("it", "boot_no_reboot") => "Il computer non verrà riavviato automaticamente.",
+        ("it", "cleanup_warning") => "Il pulitore analizzerà cache, file temporanei e percorsi personali facoltativi. Download, documenti, applicazioni e cestino non verranno eliminati senza consenso esplicito; gli elementi si possono esaminare singolarmente.",
+        ("ca", "warning_data") => "Aquesta acció pot modificar o destruir dades.",
+        ("ca", "warning_system") => "Aquesta acció pot modificar la configuració del sistema o les dades.",
+        ("ca", "review") => "Revisa els detalls i confirma per continuar.",
+        ("ca", "details") => "Detalls",
+        ("ca", "boot_no_reboot") => "L’ordinador no es reiniciarà automàticament.",
+        ("ca", "cleanup_warning") => "El netejador revisarà la memòria cau, els fitxers temporals i les rutes personals opcionals. Les baixades, els documents, les aplicacions i la paperera no s’eliminaran sense consentiment explícit; es poden revisar els elements un per un.",
+        ("nl", "warning_data") => "Deze actie kan gegevens wijzigen of vernietigen.",
+        ("nl", "warning_system") => "Deze actie kan systeeminstellingen of gegevens wijzigen.",
+        ("nl", "review") => "Controleer de details en bevestig om door te gaan.",
+        ("nl", "details") => "Details",
+        ("nl", "boot_no_reboot") => "De computer wordt niet automatisch opnieuw opgestart.",
+        ("nl", "cleanup_warning") => "De opschoner controleert caches, tijdelijke bestanden en optionele persoonlijke paden. Downloads, documenten, toepassingen en prullenbak worden niet zonder uitdrukkelijke toestemming verwijderd; items kunnen afzonderlijk worden beoordeeld.",
+        ("pl", "warning_data") => "Ta czynność może zmienić lub zniszczyć dane.",
+        ("pl", "warning_system") => "Ta czynność może zmienić ustawienia systemowe lub dane.",
+        ("pl", "review") => "Sprawdź szczegóły i potwierdź, aby kontynuować.",
+        ("pl", "details") => "Szczegóły",
+        ("pl", "boot_no_reboot") => "Komputer nie zostanie automatycznie uruchomiony ponownie.",
+        ("pl", "cleanup_warning") => "Oczyszczanie sprawdzi pamięci podręczne, pliki tymczasowe i opcjonalne ścieżki osobiste. Pobrane pliki, dokumenty, aplikacje i kosz nie zostaną usunięte bez wyraźnej zgody; elementy można sprawdzać pojedynczo.",
+        ("ar", "warning_data") => "قد يؤدي هذا الإجراء إلى تعديل البيانات أو إتلافها.",
+        ("ar", "warning_system") => "قد يؤدي هذا الإجراء إلى تغيير إعدادات النظام أو البيانات.",
+        ("ar", "review") => "راجع التفاصيل وأكّد للمتابعة.",
+        ("ar", "details") => "التفاصيل",
+        ("ar", "boot_no_reboot") => "لن يُعاد تشغيل الكمبيوتر تلقائيًا.",
+        ("ar", "cleanup_warning") => "سيفحص المنظّف ذاكرات التخزين المؤقت والملفات المؤقتة والمسارات الشخصية الاختيارية. لن تُحذف التنزيلات والمستندات والتطبيقات وسلة المهملات دون موافقة صريحة؛ ويمكن مراجعة العناصر واحدًا تلو الآخر.",
+        ("hi", "warning_data") => "यह कार्रवाई डेटा बदल या नष्ट कर सकती है।",
+        ("hi", "warning_system") => "यह कार्रवाई सिस्टम सेटिंग या डेटा बदल सकती है।",
+        ("hi", "review") => "आगे बढ़ने से पहले विवरण जाँचें और पुष्टि करें।",
+        ("hi", "details") => "विवरण",
+        ("hi", "boot_no_reboot") => "कंप्यूटर अपने-आप रीस्टार्ट नहीं होगा।",
+        ("hi", "cleanup_warning") => "क्लीनर कैश, अस्थायी फ़ाइलें और वैकल्पिक निजी पथ जाँचेगा। स्पष्ट सहमति के बिना डाउनलोड, दस्तावेज़, ऐप्लिकेशन और ट्रैश नहीं हटेंगे; आइटम एक-एक करके देखे जा सकते हैं।",
+        ("ja", "warning_data") => "この操作によりデータが変更または破損する可能性があります。",
+        ("ja", "warning_system") => "この操作によりシステム設定やデータが変更される可能性があります。",
+        ("ja", "review") => "詳細を確認してから続行を確定してください。",
+        ("ja", "details") => "詳細",
+        ("ja", "boot_no_reboot") => "コンピューターは自動的に再起動しません。",
+        ("ja", "cleanup_warning") => "クリーナーはキャッシュ、一時ファイル、任意の個人用パスを調べます。明示的な同意なしにダウンロード、ドキュメント、アプリ、ゴミ箱を削除することはありません。項目を個別に確認できます。",
+        ("ko", "warning_data") => "이 작업은 데이터를 변경하거나 파괴할 수 있습니다.",
+        ("ko", "warning_system") => "이 작업은 시스템 설정이나 데이터를 변경할 수 있습니다.",
+        ("ko", "review") => "세부 정보를 확인한 뒤 계속하려면 확인하세요.",
+        ("ko", "details") => "세부 정보",
+        ("ko", "boot_no_reboot") => "컴퓨터가 자동으로 다시 시작되지는 않습니다.",
+        ("ko", "cleanup_warning") => "정리 도구는 캐시, 임시 파일 및 선택적 개인 경로를 검사합니다. 명시적인 동의 없이는 다운로드, 문서, 앱, 휴지통을 삭제하지 않으며 항목별로 검토할 수 있습니다.",
+        ("ro", "warning_data") => "Această acțiune poate modifica sau distruge date.",
+        ("ro", "warning_system") => "Această acțiune poate modifica setările sistemului sau datele.",
+        ("ro", "review") => "Verifică detaliile și confirmă pentru a continua.",
+        ("ro", "details") => "Detalii",
+        ("ro", "boot_no_reboot") => "Computerul nu va reporni automat.",
+        ("ro", "cleanup_warning") => "Curățătorul va verifica memoria cache, fișierele temporare și căile personale opționale. Descărcările, documentele, aplicațiile și coșul de gunoi nu vor fi șterse fără acord explicit; elementele pot fi verificate individual.",
+        ("ru", "warning_data") => "Это действие может изменить или уничтожить данные.",
+        ("ru", "warning_system") => "Это действие может изменить системные настройки или данные.",
+        ("ru", "review") => "Проверьте сведения и подтвердите продолжение.",
+        ("ru", "details") => "Подробности",
+        ("ru", "boot_no_reboot") => "Компьютер не будет перезагружен автоматически.",
+        ("ru", "cleanup_warning") => "Очистка проверит кэши, временные файлы и необязательные личные пути. Загрузки, документы, приложения и корзина не будут удалены без явного согласия; элементы можно проверять по одному.",
+        ("uk", "warning_data") => "Ця дія може змінити або знищити дані.",
+        ("uk", "warning_system") => "Ця дія може змінити системні налаштування або дані.",
+        ("uk", "review") => "Перевірте подробиці та підтвердьте продовження.",
+        ("uk", "details") => "Подробиці",
+        ("uk", "boot_no_reboot") => "Комп’ютер не перезавантажиться автоматично.",
+        ("uk", "cleanup_warning") => "Засіб очищення перевірить кеші, тимчасові файли та необов’язкові особисті шляхи. Завантаження, документи, програми й кошик не буде видалено без явної згоди; елементи можна перевіряти окремо.",
+        ("zh", "warning_data") => "此操作可能修改或销毁数据。",
+        ("zh", "warning_system") => "此操作可能更改系统设置或数据。",
+        ("zh", "review") => "请检查详细信息并确认后继续。",
+        ("zh", "details") => "详细信息",
+        ("zh", "boot_no_reboot") => "计算机不会自动重启。",
+        ("zh", "cleanup_warning") => "清理器将检查缓存、临时文件和可选的个人路径。未经明确同意，不会删除下载、文档、应用或回收站内容；可逐项检查。",
+        (_, "warning_data") => "Esta acción puede modificar o destruir datos.",
+        (_, "warning_system") => "Esta acción puede cambiar la configuración del sistema o los datos.",
+        (_, "review") => "Revisa los detalles y confirma para continuar.",
+        (_, "details") => "Detalles",
+        (_, "boot_no_reboot") => "El equipo no se reiniciará automáticamente.",
+        (_, "cleanup_warning") => "El limpiador revisará cachés, temporales y rutas personales opcionales. Descargas, Documentos, aplicaciones y papelera no se borrarán sin consentimiento explícito; puedes revisar los elementos uno por uno.",
+        _ => "",
+    }
+}
+
 /// Textos del módulo de paquetes/Git. Las operaciones y sus argumentos son
 /// estables para automatización; solo se traduce la interfaz visible.
+#[cfg(any(unix, test))]
+pub fn git_action_text(key: &str) -> &'static str {
+    if key == "guide" {
+        return match current() {
+            "en" => "Git and GitHub guide (gh)",
+            "de" => "Git- und GitHub-Handbuch (gh)",
+            "fr" => "Guide Git et GitHub (gh)",
+            "pt" => "Guia de Git e GitHub (gh)",
+            "it" => "Guida Git e GitHub (gh)",
+            "pl" => "Przewodnik Git i GitHub (gh)",
+            "ar" => "دليل Git وGitHub (gh)",
+            "hi" => "Git और GitHub मार्गदर्शिका (gh)",
+            "ja" => "Git と GitHub のガイド (gh)",
+            "ko" => "Git 및 GitHub 안내 (gh)",
+            "ro" => "Ghid Git și GitHub (gh)",
+            "ru" => "Руководство по Git и GitHub (gh)",
+            "uk" => "Посібник із Git і GitHub (gh)",
+            "zh" => "Git 与 GitHub 指南 (gh)",
+            _ => "Guía completa de Git y GitHub (gh)",
+        };
+    }
+    let text: [&'static str; 13] = match current() {
+        "en" => [
+            "GitHub CLI version",
+            "GitHub CLI help",
+            "Native gh command…",
+            "Diagnose repository",
+            "Rebuild .git index…",
+            "Recover .git from remote…",
+            "Local diagnosis and recovery",
+            "Native GitHub CLI command (gh)",
+            "gh command (issue, pr, run, workflow, api, extension…)",
+            "gh arguments (quotes supported; no shell is run)",
+            "HTTPS/SSH remote repository URL",
+            "Remote branch (optional; use its default)",
+            "Run",
+        ],
+        "de" => [
+            "Version der GitHub CLI",
+            "Hilfe der GitHub CLI",
+            "Nativer gh-Befehl…",
+            "Repository diagnostizieren",
+            ".git-Index neu erstellen…",
+            ".git aus Remote wiederherstellen…",
+            "Lokale Diagnose und Wiederherstellung",
+            "Nativer GitHub-CLI-Befehl (gh)",
+            "gh-Befehl (issue, pr, run, workflow, api, extension…)",
+            "gh-Argumente (Anführungszeichen; keine Shell-Ausführung)",
+            "HTTPS/SSH-URL des Remote-Repositorys",
+            "Remote-Branch (optional; Standard verwenden)",
+            "Ausführen",
+        ],
+        "fr" => [
+            "Version de GitHub CLI",
+            "Aide de GitHub CLI",
+            "Commande gh native…",
+            "Diagnostiquer le dépôt",
+            "Reconstruire l’index .git…",
+            "Récupérer .git depuis un dépôt distant…",
+            "Diagnostic et récupération locaux",
+            "Commande native GitHub CLI (gh)",
+            "Commande gh (issue, pr, run, workflow, api, extension…)",
+            "Arguments gh (guillemets acceptés ; aucun shell exécuté)",
+            "URL HTTPS/SSH du dépôt distant",
+            "Branche distante (facultative ; défaut du dépôt)",
+            "Exécuter",
+        ],
+        "pt" => [
+            "Versão do GitHub CLI",
+            "Ajuda do GitHub CLI",
+            "Comando gh nativo…",
+            "Diagnosticar repositório",
+            "Reconstruir índice .git…",
+            "Recuperar .git do remoto…",
+            "Diagnóstico e recuperação local",
+            "Comando nativo do GitHub CLI (gh)",
+            "Comando gh (issue, pr, run, workflow, api, extension…)",
+            "Argumentos gh (aceita aspas; não executa shell)",
+            "URL HTTPS/SSH do repositório remoto",
+            "Ramo remoto (opcional; usa o predefinido)",
+            "Executar",
+        ],
+        "it" => [
+            "Versione di GitHub CLI",
+            "Guida di GitHub CLI",
+            "Comando gh nativo…",
+            "Diagnostica repository",
+            "Ricostruisci indice .git…",
+            "Recupera .git dal remoto…",
+            "Diagnosi e recupero locali",
+            "Comando nativo GitHub CLI (gh)",
+            "Comando gh (issue, pr, run, workflow, api, extension…)",
+            "Argomenti gh (virgolette supportate; nessuna shell)",
+            "URL HTTPS/SSH del repository remoto",
+            "Ramo remoto (facoltativo; usa quello predefinito)",
+            "Esegui",
+        ],
+        "pl" => [
+            "Wersja GitHub CLI",
+            "Pomoc GitHub CLI",
+            "Natywne polecenie gh…",
+            "Diagnozuj repozytorium",
+            "Odbuduj indeks .git…",
+            "Odzyskaj .git ze zdalnego repozytorium…",
+            "Lokalna diagnostyka i odzyskiwanie",
+            "Natywne polecenie GitHub CLI (gh)",
+            "Polecenie gh (issue, pr, run, workflow, api, extension…)",
+            "Argumenty gh (obsługa cudzysłowów; bez powłoki)",
+            "Adres HTTPS/SSH zdalnego repozytorium",
+            "Zdalna gałąź (opcjonalnie; domyślna)",
+            "Uruchom",
+        ],
+        "ar" => [
+            "إصدار GitHub CLI",
+            "مساعدة GitHub CLI",
+            "أمر gh أصلي…",
+            "تشخيص المستودع",
+            "إعادة إنشاء فهرس .git…",
+            "استعادة .git من مستودع بعيد…",
+            "التشخيص والاستعادة محليًا",
+            "أمر GitHub CLI أصلي (gh)",
+            "أمر gh (issue وpr وrun وworkflow وapi وextension…)",
+            "وسائط gh (تُقبل علامات الاقتباس؛ بلا تشغيل shell)",
+            "عنوان HTTPS/SSH للمستودع البعيد",
+            "فرع بعيد (اختياري؛ الافتراضي)",
+            "تنفيذ",
+        ],
+        "hi" => [
+            "GitHub CLI संस्करण",
+            "GitHub CLI सहायता",
+            "मूल gh कमांड…",
+            "रिपॉज़िटरी जाँचें",
+            ".git इंडेक्स फिर बनाएँ…",
+            "रिमोट से .git पुनर्प्राप्त करें…",
+            "स्थानीय जाँच और पुनर्प्राप्ति",
+            "मूल GitHub CLI कमांड (gh)",
+            "gh कमांड (issue, pr, run, workflow, api, extension…)",
+            "gh तर्क (उद्धरण समर्थित; shell नहीं चलता)",
+            "HTTPS/SSH रिमोट रिपॉज़िटरी URL",
+            "रिमोट शाखा (वैकल्पिक; डिफ़ॉल्ट)",
+            "चलाएँ",
+        ],
+        "ja" => [
+            "GitHub CLI のバージョン",
+            "GitHub CLI のヘルプ",
+            "gh ネイティブコマンド…",
+            "リポジトリを診断",
+            ".git インデックスを再構築…",
+            "リモートから .git を復元…",
+            "ローカル診断と復元",
+            "GitHub CLI ネイティブコマンド (gh)",
+            "gh コマンド (issue、pr、run、workflow、api、extension…)",
+            "gh 引数（引用符対応。シェルは実行しません）",
+            "HTTPS/SSH リモートリポジトリ URL",
+            "リモートブランチ（任意。既定を使用）",
+            "実行",
+        ],
+        "ko" => [
+            "GitHub CLI 버전",
+            "GitHub CLI 도움말",
+            "네이티브 gh 명령…",
+            "저장소 진단",
+            ".git 인덱스 재구성…",
+            "원격에서 .git 복구…",
+            "로컬 진단 및 복구",
+            "네이티브 GitHub CLI 명령 (gh)",
+            "gh 명령 (issue, pr, run, workflow, api, extension…)",
+            "gh 인수 (따옴표 지원; 셸은 실행하지 않음)",
+            "HTTPS/SSH 원격 저장소 URL",
+            "원격 브랜치 (선택; 기본값 사용)",
+            "실행",
+        ],
+        "ro" => [
+            "Versiunea GitHub CLI",
+            "Ajutor GitHub CLI",
+            "Comandă gh nativă…",
+            "Diagnostichează depozitul",
+            "Recreează indexul .git…",
+            "Recuperează .git din depozitul distant…",
+            "Diagnostic și recuperare locală",
+            "Comandă GitHub CLI nativă (gh)",
+            "Comandă gh (issue, pr, run, workflow, api, extension…)",
+            "Argumente gh (cu ghilimele; fără shell)",
+            "URL HTTPS/SSH al depozitului distant",
+            "Ramură distantă (opțional; cea implicită)",
+            "Execută",
+        ],
+        "ru" => [
+            "Версия GitHub CLI",
+            "Справка GitHub CLI",
+            "Нативная команда gh…",
+            "Диагностика репозитория",
+            "Пересоздать индекс .git…",
+            "Восстановить .git из удалённого репозитория…",
+            "Локальная диагностика и восстановление",
+            "Нативная команда GitHub CLI (gh)",
+            "Команда gh (issue, pr, run, workflow, api, extension…)",
+            "Аргументы gh (кавычки поддерживаются; shell не запускается)",
+            "HTTPS/SSH-адрес удалённого репозитория",
+            "Удалённая ветка (необязательно; по умолчанию)",
+            "Запустить",
+        ],
+        "uk" => [
+            "Версія GitHub CLI",
+            "Довідка GitHub CLI",
+            "Власна команда gh…",
+            "Діагностувати репозиторій",
+            "Перебудувати індекс .git…",
+            "Відновити .git із віддаленого репозиторію…",
+            "Локальна діагностика й відновлення",
+            "Власна команда GitHub CLI (gh)",
+            "Команда gh (issue, pr, run, workflow, api, extension…)",
+            "Аргументи gh (лапки підтримуються; shell не запускається)",
+            "HTTPS/SSH-адреса віддаленого репозиторію",
+            "Віддалена гілка (необов’язково; типова)",
+            "Запустити",
+        ],
+        "zh" => [
+            "GitHub CLI 版本",
+            "GitHub CLI 帮助",
+            "原生 gh 命令…",
+            "诊断仓库",
+            "重建 .git 索引…",
+            "从远程恢复 .git…",
+            "本地诊断与恢复",
+            "原生 GitHub CLI 命令 (gh)",
+            "gh 命令（issue、pr、run、workflow、api、extension…）",
+            "gh 参数（支持引号；不会运行 shell）",
+            "HTTPS/SSH 远程仓库 URL",
+            "远程分支（可选；使用默认分支）",
+            "运行",
+        ],
+        _ => [
+            "Versión de GitHub CLI",
+            "Ayuda nativa de GitHub CLI",
+            "Comando nativo de gh…",
+            "Diagnosticar repositorio",
+            "Reconstruir índice .git…",
+            "Recuperar .git desde remoto…",
+            "Diagnóstico y recuperación local",
+            "Comando nativo de GitHub CLI (gh)",
+            "Comando gh (issue, pr, run, workflow, api, extension…)",
+            "Argumentos de gh (admite comillas; no ejecuta shell)",
+            "URL HTTPS/SSH del repositorio remoto",
+            "Rama remota (opcional; usa la predeterminada)",
+            "Ejecutar",
+        ],
+    };
+    let index = match key {
+        "version" => 0,
+        "help" => 1,
+        "native" => 2,
+        "diagnose" => 3,
+        "repair_index" => 4,
+        "repair_remote" => 5,
+        "recovery_heading" => 6,
+        "native_title" => 7,
+        "native_command" => 8,
+        "native_arguments" => 9,
+        "remote_url" => 10,
+        "branch" => 11,
+        "execute" => 12,
+        _ => return "",
+    };
+    text[index]
+}
+
 pub fn tools_text(key: &str) -> &'static str {
     match (current(), key) {
         ("en", "menu") => "Packages, stores and Git",
@@ -2576,6 +3403,51 @@ pub fn settings_text(key: &str) -> &'static str {
 /// navegación y sus mensajes básicos.
 pub fn automation_text(key: &str) -> &'static str {
     match (current(), key) {
+        ("ar", "winslim_status") => "حالة WSCore وNSudo",
+        ("ar", "winslim_launch") => "فتح مساعد تشغيل NSudo…",
+        ("ar", "winslim_guide") => "دليل استخدام NSudo وأمانه",
+        ("de", "winslim_status") => "WSCore- und NSudo-Status",
+        ("de", "winslim_launch") => "NSudo-Startassistent öffnen…",
+        ("de", "winslim_guide") => "NSudo: Nutzung und Sicherheit",
+        ("en", "winslim_status") => "WSCore and NSudo status",
+        ("en", "winslim_launch") => "Open the NSudo launch assistant…",
+        ("en", "winslim_guide") => "NSudo usage and safety guide",
+        ("es", "winslim_status") => "Estado de WSCore y NSudo",
+        ("es", "winslim_launch") => "Abrir el asistente de lanzamiento NSudo…",
+        ("es", "winslim_guide") => "Guía de uso y seguridad NSudo",
+        ("fr", "winslim_status") => "État de WSCore et NSudo",
+        ("fr", "winslim_launch") => "Ouvrir l’assistant de lancement NSudo…",
+        ("fr", "winslim_guide") => "Guide d’utilisation et de sécurité NSudo",
+        ("hi", "winslim_status") => "WSCore और NSudo की स्थिति",
+        ("hi", "winslim_launch") => "NSudo लॉन्च सहायक खोलें…",
+        ("hi", "winslim_guide") => "NSudo उपयोग और सुरक्षा मार्गदर्शिका",
+        ("it", "winslim_status") => "Stato di WSCore e NSudo",
+        ("it", "winslim_launch") => "Apri l’assistente di avvio NSudo…",
+        ("it", "winslim_guide") => "Guida all’uso e alla sicurezza di NSudo",
+        ("ja", "winslim_status") => "WSCore と NSudo の状態",
+        ("ja", "winslim_launch") => "NSudo 起動アシスタントを開く…",
+        ("ja", "winslim_guide") => "NSudo の使用方法と安全ガイド",
+        ("ko", "winslim_status") => "WSCore 및 NSudo 상태",
+        ("ko", "winslim_launch") => "NSudo 실행 도우미 열기…",
+        ("ko", "winslim_guide") => "NSudo 사용 및 안전 가이드",
+        ("pl", "winslim_status") => "Stan WSCore i NSudo",
+        ("pl", "winslim_launch") => "Otwórz asystenta uruchamiania NSudo…",
+        ("pl", "winslim_guide") => "Instrukcja użycia i bezpieczeństwa NSudo",
+        ("pt", "winslim_status") => "Estado do WSCore e do NSudo",
+        ("pt", "winslim_launch") => "Abrir o assistente de inicialização do NSudo…",
+        ("pt", "winslim_guide") => "Guia de uso e segurança do NSudo",
+        ("ro", "winslim_status") => "Starea WSCore și NSudo",
+        ("ro", "winslim_launch") => "Deschide asistentul de lansare NSudo…",
+        ("ro", "winslim_guide") => "Ghid de utilizare și siguranță NSudo",
+        ("ru", "winslim_status") => "Состояние WSCore и NSudo",
+        ("ru", "winslim_launch") => "Открыть мастер запуска NSudo…",
+        ("ru", "winslim_guide") => "Руководство по NSudo и безопасности",
+        ("uk", "winslim_status") => "Стан WSCore і NSudo",
+        ("uk", "winslim_launch") => "Відкрити помічник запуску NSudo…",
+        ("uk", "winslim_guide") => "Посібник із використання NSudo та безпеки",
+        ("zh", "winslim_status") => "WSCore 和 NSudo 状态",
+        ("zh", "winslim_launch") => "打开 NSudo 启动助手…",
+        ("zh", "winslim_guide") => "NSudo 使用与安全指南",
         ("en", "title") => "=== Automation / imported scripts ===",
         ("en", "help") => "register and run user scripts without a shell",
         ("en", "menu") => "Imported scripts and automations",
@@ -2597,9 +3469,13 @@ pub fn automation_text(key: &str) -> &'static str {
         ("en", "updated") => "Automation updated.",
         ("en", "command") => "Command",
         ("en", "winslim_ready") => "WinSlim integration surface detected at:",
-        ("en", "winslim_placeholder") => "Reserved surface: WSCore actions are not executed yet.",
+        ("en", "winslim_placeholder") => "NSudo launches are available only through the explicit launch assistant; normal actions continue to use UAC.",
+        ("en", "winslim_wscore_missing") => "WSCore: not detected",
+        ("en", "winslim_nsudo_missing") => "NSudo: not detected; standard elevation continues to use UAC.",
+        ("en", "winslim_nsudo_found") => "NSudo detected at:",
+        ("en", "winslim_default") => "NSudo is used only by `winslim launch` or when LTOOLS_USE_NSUDO=1 explicitly selects it for a supported elevation; ordinary actions are not elevated automatically.",
         ("en", "winslim_unavailable") => {
-            "WinSlim integration is only available on Windows when C:\\WSCore exists."
+            "The WinSlim/NSudo surface appears only on Windows when C:\\WSCore or a supported NSudo launcher is detected."
         }
         ("de", "title") => "=== Automatisierung / importierte Skripte ===",
         ("de", "menu") => "Importierte Skripte und Automatisierungen",
@@ -2637,10 +3513,14 @@ pub fn automation_text(key: &str) -> &'static str {
         (_, "command") => "Comando",
         (_, "winslim_ready") => "Superficie de integración WinSlim detectada en:",
         (_, "winslim_placeholder") => {
-            "Superficie reservada: todavía no se ejecutan acciones de WSCore."
+            "El asistente NSudo solo se usa cuando se solicita expresamente; las acciones normales conservan UAC."
         }
+        (_, "winslim_wscore_missing") => "WSCore: no detectado",
+        (_, "winslim_nsudo_missing") => "NSudo: no detectado; la elevación normal continúa usando UAC.",
+        (_, "winslim_nsudo_found") => "NSudo detectado en:",
+        (_, "winslim_default") => "NSudo solo se usa con `winslim launch` o si LTOOLS_USE_NSUDO=1 lo selecciona expresamente para una elevación compatible; las acciones normales no se elevan automáticamente.",
         (_, "winslim_unavailable") => {
-            "La integración WinSlim solo está disponible en Windows cuando existe C:\\WSCore."
+            "La superficie WinSlim/NSudo solo aparece en Windows cuando se detecta C:\\WSCore o un lanzador NSudo compatible."
         }
         (_, _) => "",
     }
@@ -3015,16 +3895,14 @@ pub fn gui_family_text(key: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        boot_label, category_text, gui_action_text, gui_family_text, gui_text, native_tools_label,
-        normalize, set, settings_text, storage_action_text, SUPPORTED,
+        boot_label, category_text, gui_action_text, gui_confirmation_text, gui_family_text,
+        gui_text, language_test_guard, native_tools_label, normalize, set, settings_text,
+        storage_action_text, SUPPORTED,
     };
-    use std::sync::Mutex;
-
-    static LANGUAGE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn normalizes_language_variants() {
-        let _guard = LANGUAGE_TEST_LOCK.lock().unwrap();
+        let _guard = language_test_guard();
         assert_eq!(normalize("en_US.UTF-8"), "en");
         assert_eq!(normalize("pt-BR"), "pt");
         assert_eq!(normalize("unknown"), "es");
@@ -3032,7 +3910,7 @@ mod tests {
 
     #[test]
     fn exposes_the_supported_catalog_languages() {
-        let _guard = LANGUAGE_TEST_LOCK.lock().unwrap();
+        let _guard = language_test_guard();
         assert_eq!(
             SUPPORTED,
             &[
@@ -3043,8 +3921,118 @@ mod tests {
     }
 
     #[test]
+    fn exposes_storage_map_labels_in_every_language() {
+        let _guard = language_test_guard();
+        for language in SUPPORTED {
+            set(language);
+            for key in [
+                "hint",
+                "column",
+                "expand",
+                "collapse",
+                "elevate",
+                "copy",
+                "move",
+                "delete",
+                "close",
+                "scan_initial",
+                "scan_progress",
+                "scan_timeout",
+                "scan_ready",
+                "scan_permissions",
+                "scan_request_admin",
+                "scan_error",
+                "scan_empty",
+                "scan_panic",
+                "selected_required",
+                "copy_title",
+                "move_title",
+                "delete_title",
+                "state_inaccessible",
+                "state_protected",
+                "state_writable",
+                "state_read_only",
+                "kind_file",
+                "kind_directory",
+                "kind_symlink",
+                "kind_other",
+                "kind_inaccessible",
+                "kind_missing",
+                "filesystem_usage",
+                "explain_system_root",
+                "explain_boot",
+                "explain_system_config",
+                "explain_managed_programs",
+                "explain_variable_data",
+                "explain_user_data",
+                "explain_temporary",
+                "explain_virtual_proc",
+                "explain_virtual_sys",
+                "explain_device_nodes",
+                "explain_runtime",
+                "explain_user_config",
+                "explain_user_cache",
+                "explain_windows_os",
+                "explain_shared_app_data",
+                "explain_user_profiles",
+                "explain_user_appdata",
+                "explain_windows_metadata",
+            ] {
+                assert!(!super::storage_map_text(key).is_empty());
+            }
+            for (key, markers) in [
+                ("scan_progress", &["{visited}"][..]),
+                ("scan_timeout", &["{seconds}", "{visited}"][..]),
+                ("scan_ready", &["{visited}"][..]),
+                ("scan_permissions", &["{visited}", "{inaccessible}"][..]),
+                ("scan_error", &["{error}"][..]),
+                (
+                    "filesystem_usage",
+                    &["{total}", "{used}", "{free}", "{available}"][..],
+                ),
+            ] {
+                let message = super::storage_map_text(key);
+                for marker in markers {
+                    assert!(
+                        message.contains(marker),
+                        "missing format marker {marker} in {language}/{key}"
+                    );
+                }
+            }
+            if *language != "es" {
+                for key in [
+                    "scan_initial",
+                    "scan_ready",
+                    "scan_permissions",
+                    "scan_request_admin",
+                    "scan_empty",
+                ] {
+                    let message = super::storage_map_text(key);
+                    assert!(
+                        !message.contains("Mapa listo"),
+                        "Spanish map status in {language}/{key}"
+                    );
+                    assert!(
+                        !message.contains("Analizando discos"),
+                        "Spanish map status in {language}/{key}"
+                    );
+                    assert!(
+                        !message.contains("Solicitando permisos"),
+                        "Spanish map status in {language}/{key}"
+                    );
+                    assert!(
+                        !message.contains("El escaneo terminó"),
+                        "Spanish map status in {language}/{key}"
+                    );
+                }
+            }
+        }
+        set("es");
+    }
+
+    #[test]
     fn exposes_all_main_menu_categories_in_every_language() {
-        let _guard = LANGUAGE_TEST_LOCK.lock().unwrap();
+        let _guard = language_test_guard();
         for language in SUPPORTED {
             set(language);
             for category in [
@@ -3078,7 +4066,7 @@ mod tests {
 
     #[test]
     fn exposes_cli_settings_labels_in_every_language() {
-        let _guard = LANGUAGE_TEST_LOCK.lock().unwrap();
+        let _guard = language_test_guard();
         for language in SUPPORTED {
             set(language);
             for key in ["theme", "language", "color", "current"] {
@@ -3090,7 +4078,7 @@ mod tests {
 
     #[test]
     fn exposes_automation_navigation_text() {
-        let _guard = LANGUAGE_TEST_LOCK.lock().unwrap();
+        let _guard = language_test_guard();
         for language in SUPPORTED {
             set(language);
             for key in [
@@ -3111,7 +4099,7 @@ mod tests {
 
     #[test]
     fn core_ui_does_not_fall_back_to_spanish_for_supported_languages() {
-        let _guard = LANGUAGE_TEST_LOCK.lock().unwrap();
+        let _guard = language_test_guard();
         let spanish = [
             "Herramientas seguras del sistema y acciones rápidas",
             "Auditar discos y aplicaciones",
@@ -3121,6 +4109,10 @@ mod tests {
         ];
         for language in SUPPORTED {
             set(language);
+            assert!(
+                !gui_text("failed").is_empty(),
+                "{language} missing failed status"
+            );
             for key in ["subtitle", "audit", "storage"] {
                 let value = gui_text(key);
                 assert!(!value.is_empty());
@@ -3150,7 +4142,7 @@ mod tests {
 
     #[test]
     fn settings_ui_is_available_in_every_terminal_language() {
-        let _guard = LANGUAGE_TEST_LOCK.lock().unwrap();
+        let _guard = language_test_guard();
         for language in SUPPORTED {
             set(language);
             for key in [
@@ -3162,6 +4154,9 @@ mod tests {
                 "settings_language",
                 "settings_visibility",
                 "settings_restart",
+                "settings_apply",
+                "settings_guide",
+                "elevation_default",
                 "visible",
                 "hidden",
             ] {
@@ -3176,7 +4171,7 @@ mod tests {
 
     #[test]
     fn gui_family_labels_are_available_in_every_terminal_language() {
-        let _guard = LANGUAGE_TEST_LOCK.lock().unwrap();
+        let _guard = language_test_guard();
         let families = [
             "native_storage",
             "native_system",
@@ -3211,11 +4206,26 @@ mod tests {
 
     #[test]
     fn modal_actions_are_translated_in_every_terminal_language() {
-        let _guard = LANGUAGE_TEST_LOCK.lock().unwrap();
+        let _guard = language_test_guard();
         for language in SUPPORTED {
             set(language);
+            assert!(!gui_action_text("yes").is_empty());
+            assert!(!gui_action_text("no").is_empty());
             assert!(!gui_action_text("cancel").is_empty());
             assert!(!gui_action_text("cancelling").is_empty());
+            for key in [
+                "warning_data",
+                "warning_system",
+                "review",
+                "details",
+                "boot_no_reboot",
+                "cleanup_warning",
+            ] {
+                assert!(
+                    !gui_confirmation_text(key).is_empty(),
+                    "{language} missing confirmation text {key}"
+                );
+            }
         }
         set("es");
     }

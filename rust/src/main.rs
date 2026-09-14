@@ -5,6 +5,7 @@ mod audit;
 mod automation;
 mod boot;
 mod cleaner;
+mod cli_args;
 mod cli_ui;
 mod common;
 mod compat;
@@ -21,6 +22,7 @@ mod i18n;
 mod native;
 mod packages;
 mod platform;
+mod privilege;
 mod registry;
 mod release;
 mod report;
@@ -34,6 +36,7 @@ mod theme;
 mod tools;
 #[cfg(not(windows))]
 mod wine;
+mod winslim;
 
 use common::{home_dir, Context, Plan};
 use std::collections::BTreeMap;
@@ -170,6 +173,8 @@ fn usage() {
     println!("              {}", storage_map::help());
     println!("  registry    {}", i18n::registry_help());
     println!("  capabilities  {}", i18n::text("help.capabilities"));
+    println!("  privileges    Política de elevación por acción y plataforma");
+    println!("  winslim       Detectar NSudo y lanzar procesos Windows con identidad explícita");
     println!("  release-manifest  Genera el manifiesto verificable de una release de GitHub");
     println!("  release-checksums  Genera SHA256SUMS.txt para los artefactos publicables");
     println!("  release-signature  Firma o verifica SHA256SUMS.txt con Ed25519");
@@ -182,6 +187,10 @@ fn usage() {
         "{}",
         theme::current().paint(theme::Role::Muted, i18n::visual_options())
     );
+    println!(
+        "Privilegios: --elevate | --no-elevate; la preferencia persistente se cambia en Ajustes."
+    );
+    println!("Las acciones obligatorias piden sudo/UAC; consultas, Git/Wine y la papelera del usuario no se elevan.");
     println!("{}", i18n::text("help.clean.options"));
     println!("{}", i18n::prefix_options());
     let prefix_flags = i18n::prefix_flags();
@@ -213,6 +222,9 @@ enum MenuCategory {
 }
 
 fn execute_action(command: &str, ctx: &Context, args: &[String]) -> Result<(), String> {
+    if let Some(result) = maybe_relaunch_with_privilege(command, ctx, args) {
+        return result;
+    }
     match command {
         "audit" | "disk-audit" => audit::run(ctx, args, false),
         "games" | "game-audit" => games::run(ctx, args),
@@ -229,6 +241,8 @@ fn execute_action(command: &str, ctx: &Context, args: &[String]) -> Result<(), S
         "automation" | "automations" | "import" => automation::run(ctx, args),
         "aliases" | "alias" => aliases::run(args),
         "actions" | "action-catalog" => actions::run(ctx, args),
+        "privileges" | "privilege" | "elevation" => privilege::run(),
+        "winslim" => winslim::run(ctx, args),
         "menu-audit-inventory" => category_menu(ctx, MenuCategory::AuditInventory),
         "menu-dependencies" => category_menu(ctx, MenuCategory::Dependencies),
         "menu-native-tools" => category_menu(ctx, MenuCategory::NativeTools),
@@ -271,6 +285,74 @@ fn execute_action(command: &str, ctx: &Context, args: &[String]) -> Result<(), S
             usage();
             Err(format!("comando desconocido: {command}"))
         }
+    }
+}
+
+fn maybe_relaunch_with_privilege(
+    command: &str,
+    ctx: &Context,
+    args: &[String],
+) -> Option<Result<(), String>> {
+    if ctx.privileged_child || ctx.dry_run {
+        return None;
+    }
+    let class = privilege::classify(command, args);
+    if matches!(class, privilege::ActionPrivilege::ReadOnly) {
+        return None;
+    }
+    if matches!(class, privilege::ActionPrivilege::Never) {
+        if ctx.elevate_by_default {
+            println!("Elevación: {} ({})", command, privilege::description(class));
+            println!(
+                "No se relanzará el proceso completo como administrador; se conserva tu identidad. Las suboperaciones compatibles pueden solicitar permisos propios."
+            );
+        }
+        return None;
+    }
+    // `actions run` vuelve a entrar en execute_action para la familia real;
+    // deja que esa segunda capa emita el aviso exacto y evita duplicarlo.
+    if !ctx.elevate_by_default && matches!(command, "actions" | "action-catalog") {
+        return None;
+    }
+    if !ctx.elevate_by_default {
+        if matches!(class, privilege::ActionPrivilege::Required) {
+            println!(
+                "Permisos: {} ({}) Se solicitará sudo/pkexec o UAC cuando la acción lo ejecute.",
+                command,
+                privilege::description(class)
+            );
+        }
+        return None;
+    }
+    println!("Elevación: {} ({})", command, privilege::description(class));
+    let executable = match env::current_exe() {
+        Ok(path) => path,
+        Err(error) => {
+            return Some(Err(format!(
+                "no se pudo localizar LTools para elevar: {error}"
+            )))
+        }
+    };
+    let mut elevated_args = vec![command.to_owned()];
+    elevated_args.extend_from_slice(args);
+    // El hijo elevado debe reutilizar la misma frontera transaccional. Sin
+    // esta ruta explícita, un AppImage o una instalación con estado no
+    // escribible intenta crear un plan nuevo en su directorio de ejecución y
+    // la acción parece fallar antes de llegar al autorizador.
+    if let Some(plan_path) = &ctx.plan_path {
+        elevated_args.extend(["--plan".to_owned(), plan_path.display().to_string()]);
+    }
+    elevated_args.push("--privileged-child".into());
+    match common::run_with_sudo(
+        &executable.to_string_lossy(),
+        &elevated_args,
+        false,
+    ) {
+        Ok(true) => Some(Ok(())),
+        Ok(false) => Some(Err(format!(
+            "no se pudo ejecutar {command} con elevación; revisa la contraseña y la política de sudo/UAC"
+        ))),
+        Err(error) => Some(Err(format!("no se pudo solicitar elevación: {error}"))),
     }
 }
 
@@ -318,7 +400,6 @@ fn command_needs_plan(command: &str, args: &[String], dry_run: bool, explicit: b
             "unmount",
             "format",
             "resize",
-            "partition",
             "operate",
             "operation",
             "mklabel",
@@ -503,7 +584,7 @@ fn storage_operation_is_read_only(args: &[String]) -> bool {
     args.iter().any(|arg| {
         matches!(
             arg.as_str(),
-            "print" | "print-free" | "probe" | "status" | "partitions" | "mounts"
+            "print" | "print-free" | "probe" | "status" | "partitions" | "partition" | "mounts"
         )
     }) && !args.iter().any(|arg| {
         matches!(
@@ -543,7 +624,12 @@ fn finalize_failed_plan(ctx: &Context) {
     }
 }
 
-fn run_interactive_menu(base_args: &[String], dry_run: bool, plan_path: Option<PathBuf>) {
+fn run_interactive_menu(
+    base_args: &[String],
+    dry_run: bool,
+    plan_path: Option<PathBuf>,
+    elevate_by_default: bool,
+) {
     let requested_plan_path = plan_path;
     loop {
         clear_screen();
@@ -581,6 +667,8 @@ fn run_interactive_menu(base_args: &[String], dry_run: bool, plan_path: Option<P
         let ctx = Context {
             home: home_dir(),
             dry_run,
+            elevate_by_default,
+            privileged_child: false,
             plan_path: plan.as_ref().map(|value| value.path.clone()),
             plan,
         };
@@ -629,6 +717,81 @@ fn run_interactive_menu(base_args: &[String], dry_run: bool, plan_path: Option<P
     }
 }
 
+#[derive(Default)]
+struct GlobalOptions {
+    dry_run: bool,
+    elevate_override: Option<bool>,
+    privileged_child: bool,
+    plan_path: Option<PathBuf>,
+}
+
+/// Retira únicamente las opciones globales. Conserva unidos los argumentos
+/// de opciones locales para no interpretar un valor literal `--elevate` como
+/// una instrucción global de LTools.
+fn extract_global_options(args: &[String]) -> Result<(Vec<String>, GlobalOptions), String> {
+    let mut options = GlobalOptions::default();
+    let mut filtered = Vec::new();
+    let mut i = 0;
+    let mut options_ended = false;
+    while i < args.len() {
+        let current = args[i].as_str();
+        if options_ended {
+            filtered.push(args[i].clone());
+            i += 1;
+            continue;
+        }
+        if current == "--" {
+            options_ended = true;
+            filtered.push(args[i].clone());
+            i += 1;
+            continue;
+        }
+        match current {
+            "--dry-run" => options.dry_run = true,
+            "--elevate" => options.elevate_override = Some(true),
+            "--no-elevate" => options.elevate_override = Some(false),
+            "--privileged-child" => options.privileged_child = true,
+            "--no-color" => theme::set_color_mode("never"),
+            "--theme" | "--color" | "--lang" | "--language" | "--plan" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or_else(|| format!("{current} requiere un valor"))?;
+                match current {
+                    "--theme" => theme::set(value),
+                    "--color" => theme::set_color_mode(value),
+                    "--lang" | "--language" => i18n::set(value),
+                    "--plan" => options.plan_path = Some(PathBuf::from(value)),
+                    _ => unreachable!(),
+                }
+                i += 1;
+            }
+            option if option.starts_with("--theme=") => {
+                theme::set(option.trim_start_matches("--theme="));
+            }
+            option if option.starts_with("--color=") => {
+                theme::set_color_mode(option.trim_start_matches("--color="));
+            }
+            option if option.starts_with("--lang=") || option.starts_with("--language=") => {
+                i18n::set(option.split_once('=').map_or("", |(_, value)| value));
+            }
+            option if option.starts_with("--plan=") => {
+                options.plan_path = Some(PathBuf::from(
+                    option.split_once('=').map_or("", |(_, value)| value),
+                ));
+            }
+            _ => {
+                filtered.push(args[i].clone());
+                if crate::cli_args::option_takes_value(current) && i + 1 < args.len() {
+                    filtered.push(args[i + 1].clone());
+                    i += 1;
+                }
+            }
+        }
+        i += 1;
+    }
+    Ok((filtered, options))
+}
+
 fn main() {
     let raw_input: Vec<String> = env::args().skip(1).collect();
     // El registro se crea de forma perezosa para que el gestor esté
@@ -638,6 +801,7 @@ fn main() {
     let raw = aliases::expand(&raw_input)
         .or_else(|| shortcuts::expand(&raw_input))
         .unwrap_or(raw_input);
+    let saved_preferences = gui_preferences::load();
     apply_language(&raw);
     apply_visual_options(&raw);
     install_interrupt_handler();
@@ -677,11 +841,11 @@ fn main() {
                         std::process::exit(3);
                     }
                     eprintln!("No se pudo iniciar la interfaz gráfica ({error}); se usará el menú de consola.");
-                    run_interactive_menu(&[], false, None);
+                    run_interactive_menu(&[], false, None, saved_preferences.elevate_by_default);
                 }
             }
             #[cfg(not(any(target_os = "linux", windows)))]
-            run_interactive_menu(&[], false, None);
+            run_interactive_menu(&[], false, None, saved_preferences.elevate_by_default);
         }
         return;
     }
@@ -701,7 +865,7 @@ fn main() {
     let mut command_index = 0;
     while command_index < raw.len() {
         match raw[command_index].as_str() {
-            "--dry-run" => command_index += 1,
+            "--dry-run" | "--elevate" | "--no-elevate" | "--privileged-child" => command_index += 1,
             "--theme" | "--color" => {
                 if command_index + 1 >= raw.len() {
                     eprintln!("--theme/--color requiere un valor");
@@ -739,63 +903,17 @@ fn main() {
     } else {
         ("audit".into(), raw.clone())
     };
-    let mut dry_run = false;
-    let mut plan_path = None;
-    let mut filtered = Vec::new();
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--dry-run" => dry_run = true,
-            "--theme" => {
-                if let Some(value) = args.get(i + 1) {
-                    i += 1;
-                    theme::set(value);
-                } else {
-                    eprintln!("--theme requiere un tema");
-                    std::process::exit(2);
-                }
-            }
-            option if option.starts_with("--theme=") => {
-                theme::set(option.trim_start_matches("--theme="))
-            }
-            "--color" => {
-                if let Some(value) = args.get(i + 1) {
-                    i += 1;
-                    theme::set_color_mode(value);
-                } else {
-                    eprintln!("--color requiere auto, always o never");
-                    std::process::exit(2);
-                }
-            }
-            option if option.starts_with("--color=") => {
-                theme::set_color_mode(option.trim_start_matches("--color="))
-            }
-            "--no-color" => theme::set_color_mode("never"),
-            "--lang" | "--language" => {
-                if let Some(value) = args.get(i + 1) {
-                    i += 1;
-                    i18n::set(value);
-                } else {
-                    eprintln!("--lang requiere un idioma");
-                    std::process::exit(2);
-                }
-            }
-            option if option.starts_with("--lang=") => {
-                i18n::set(option.trim_start_matches("--lang="))
-            }
-            "--plan" => {
-                if let Some(path) = args.get(i + 1) {
-                    plan_path = Some(PathBuf::from(path));
-                    i += 1;
-                } else {
-                    eprintln!("--plan requiere un fichero");
-                    std::process::exit(2);
-                }
-            }
-            _ => filtered.push(args[i].clone()),
+    let (filtered, global_options) = match extract_global_options(&args) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(2);
         }
-        i += 1;
-    }
+    };
+    let dry_run = global_options.dry_run;
+    let elevate_override = global_options.elevate_override;
+    let privileged_child = global_options.privileged_child;
+    let plan_path = global_options.plan_path;
     if command == "rollback" || command == "undo" {
         let plan = plan_path.or_else(|| value(&filtered, "--plan").map(PathBuf::from));
         if let Some(path) = plan {
@@ -838,7 +956,12 @@ fn main() {
         return;
     }
     if command == "menu" || command == "m" {
-        run_interactive_menu(&filtered, dry_run, plan_path);
+        run_interactive_menu(
+            &filtered,
+            dry_run,
+            plan_path,
+            elevate_override.unwrap_or(saved_preferences.elevate_by_default),
+        );
         return;
     }
     if matches!(
@@ -862,6 +985,8 @@ fn main() {
         let ctx = Context {
             home: home_dir(),
             dry_run,
+            elevate_by_default: elevate_override.unwrap_or(saved_preferences.elevate_by_default),
+            privileged_child,
             plan_path: plan.as_ref().map(|value| value.path.clone()),
             plan,
         };
@@ -892,6 +1017,8 @@ fn main() {
     let ctx = Context {
         home: home_dir(),
         dry_run,
+        elevate_by_default: elevate_override.unwrap_or(saved_preferences.elevate_by_default),
+        privileged_child,
         plan_path: plan.as_ref().map(|value| value.path.clone()),
         plan,
     };
@@ -1019,6 +1146,9 @@ fn menu_choice_for_platform() -> MenuSelection {
 }
 
 fn category_menu(ctx: &Context, category: MenuCategory) -> Result<(), String> {
+    if matches!(category, MenuCategory::WinSlim) {
+        return winslim::run(ctx, &["menu".into()]);
+    }
     // Las categorías nuevas son módulos completos, no una pantalla puente
     // vacía: al abrirlas se entra directamente en su submenú operativo.
     match category {
@@ -1078,6 +1208,14 @@ fn category_menu(ctx: &Context, category: MenuCategory) -> Result<(), String> {
                 println!(
                     "  3) {}: auto / always / never",
                     i18n::settings_text("color")
+                );
+                println!(
+                    "  4) Elevar acciones modificadoras por defecto: {}",
+                    if gui_preferences::load().elevate_by_default {
+                        "sí"
+                    } else {
+                        "no"
+                    }
                 );
             }
             MenuCategory::WinSlim => {
@@ -1156,6 +1294,7 @@ fn category_menu(ctx: &Context, category: MenuCategory) -> Result<(), String> {
                 "1" => settings_theme_menu(),
                 "2" => settings_language_menu(),
                 "3" => settings_color_menu(),
+                "4" => settings_elevation_menu(),
                 _ => category_invalid(),
             },
             MenuCategory::WinSlim => match answer.as_str() {
@@ -1381,6 +1520,27 @@ fn settings_color_menu() -> bool {
         "auto" | "always" | "never"
     ) {
         theme::set_color_mode(&answer);
+    }
+    true
+}
+
+fn settings_elevation_menu() -> bool {
+    println!(
+        "\nElevar acciones modificadoras por defecto con sudo/UAC? (s/n; las consultas, Git, Wine y la papelera del usuario nunca se elevan automáticamente)"
+    );
+    let Some(answer) = menu_input(i18n::text("menu.prompt")) else {
+        return false;
+    };
+    let enabled = matches!(
+        answer.trim().to_ascii_lowercase().as_str(),
+        "s" | "si" | "sí" | "y" | "yes"
+    );
+    match gui_preferences::set_elevate_by_default(enabled) {
+        Ok(()) => println!(
+            "Elevación por defecto: {}.",
+            if enabled { "activada" } else { "desactivada" }
+        ),
+        Err(error) => eprintln!("No se pudo guardar la preferencia de elevación: {error}"),
     }
     true
 }
@@ -1659,10 +1819,10 @@ fn host_doctor() -> Result<(), String> {
     }
     println!(
         "  FUSE    {}",
-        if platform::fuse_available() {
-            "available"
+        if platform::fuse_prerequisites_detected() {
+            "device and helper detected; actual mount permission unverified"
         } else {
-            "missing (AppImage extraction fallback is available)"
+            "device/helper missing (AppImage extraction fallback is available)"
         }
     );
     #[cfg(windows)]
@@ -1707,10 +1867,57 @@ fn print_heroic_paths(file: &std::path::Path) {
 
 #[cfg(test)]
 mod tests {
-    use super::command_needs_plan;
+    use super::{command_needs_plan, extract_global_options};
+    use std::path::PathBuf;
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).into()).collect()
+    }
+
+    #[test]
+    fn global_options_do_not_consume_values_or_arguments_after_double_dash() {
+        let (filtered, options) = extract_global_options(&args(&[
+            "--args",
+            "--elevate",
+            "--no-elevate",
+            "--path",
+            "--dry-run",
+            "--",
+            "--elevate",
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            filtered,
+            args(&[
+                "--args",
+                "--elevate",
+                "--path",
+                "--dry-run",
+                "--",
+                "--elevate",
+            ])
+        );
+        assert_eq!(options.elevate_override, Some(false));
+        assert!(!options.dry_run);
+    }
+
+    #[test]
+    fn global_options_still_apply_after_a_local_option_value() {
+        let (filtered, options) = extract_global_options(&args(&[
+            "--operation",
+            "--elevate",
+            "--elevate",
+            "--plan=/tmp/ltools-test-plan",
+        ]))
+        .unwrap();
+
+        assert_eq!(filtered, args(&["--operation", "--elevate"]));
+        assert_eq!(options.elevate_override, Some(true));
+        assert_eq!(
+            options.plan_path,
+            Some(PathBuf::from("/tmp/ltools-test-plan"))
+        );
     }
 
     #[test]
@@ -1758,6 +1965,18 @@ mod tests {
             false
         ));
         assert!(!command_needs_plan("unknown-command", &[], false, false));
+        assert!(!command_needs_plan(
+            "storage",
+            &args(&["partition"]),
+            false,
+            false
+        ));
+        assert!(!command_needs_plan(
+            "storage",
+            &args(&["partition"]),
+            true,
+            false
+        ));
         assert!(command_needs_plan(
             "native",
             &args(&["network", "flush-dns"]),

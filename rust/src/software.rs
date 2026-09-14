@@ -201,6 +201,36 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
     }
 }
 
+/// Indicates whether a selected installer should run LTools itself elevated.
+/// Managers that elevate their own package operation (or are user-scoped)
+/// must retain the caller's environment. When no manager has been selected,
+/// defer the decision until the candidate is chosen; `install_command` then
+/// uses each manager's native privilege behavior.
+pub(crate) fn install_manager_needs_process_elevation(manager_id: Option<&str>) -> Option<bool> {
+    let Some(manager_id) = manager_id else {
+        return Some(false);
+    };
+    // A malformed or unsupported manager will be rejected by the install
+    // parser before any package operation. Never prompt for elevation just
+    // to report that input error.
+    let Ok(normalized) = normalize_manager(manager_id) else {
+        return Some(false);
+    };
+    let Some(manager) = MANAGERS.iter().find(|manager| manager.id == normalized) else {
+        return Some(false);
+    };
+    #[cfg(windows)]
+    {
+        // Scoop is explicitly user-scoped and rejects an elevated shell;
+        // winget/Chocolatey may install machine-wide packages.
+        Some(manager.id != "scoop")
+    }
+    #[cfg(not(windows))]
+    {
+        Some(manager.privileged)
+    }
+}
+
 fn list_managers() -> Result<(), String> {
     println!("{}", crate::i18n::tools_text("stores_title"));
     for manager in MANAGERS {
@@ -280,8 +310,16 @@ fn install_command(ctx: &Context, args: &[String]) -> Result<(), String> {
         candidate.manager,
         candidate.package_id
     );
+    let use_process_elevation = if cfg!(windows) {
+        ctx.elevate_by_default
+            && install_manager_needs_process_elevation(Some(manager.id)).unwrap_or(false)
+    } else {
+        manager.privileged
+    };
     let display_program = if manager.privileged && !cfg!(windows) {
         format!("sudo {}", manager.install_command)
+    } else if use_process_elevation && cfg!(windows) {
+        format!("UAC {}", manager.install_command)
     } else {
         manager.install_command.to_string()
     };
@@ -303,7 +341,7 @@ fn install_command(ctx: &Context, args: &[String]) -> Result<(), String> {
         record(ctx, &candidate, "cancelled", &command_args);
         return Err(crate::i18n::tools_text("cancelled").to_string());
     }
-    let success = if manager.privileged && !cfg!(windows) {
+    let success = if (manager.privileged && !cfg!(windows)) || use_process_elevation {
         common::run_with_sudo(manager.install_command, &command_args, false)
             .map_err(|e| e.to_string())?
     } else {
@@ -786,6 +824,45 @@ fn run_capture(program: &str, args: &[String], timeout: Duration) -> ToolOutput 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installer_elevation_is_scoped_to_the_selected_native_manager() {
+        assert_eq!(install_manager_needs_process_elevation(None), Some(false));
+        assert_eq!(
+            install_manager_needs_process_elevation(Some("unsupported")),
+            Some(false)
+        );
+        #[cfg(windows)]
+        {
+            assert_eq!(
+                install_manager_needs_process_elevation(Some("winget")),
+                Some(true)
+            );
+            assert_eq!(
+                install_manager_needs_process_elevation(Some("choco")),
+                Some(true)
+            );
+            assert_eq!(
+                install_manager_needs_process_elevation(Some("scoop")),
+                Some(false)
+            );
+        }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(
+                install_manager_needs_process_elevation(Some("apt")),
+                Some(true)
+            );
+            assert_eq!(
+                install_manager_needs_process_elevation(Some("paru")),
+                Some(false)
+            );
+            assert_eq!(
+                install_manager_needs_process_elevation(Some("flatpak")),
+                Some(false)
+            );
+        }
+    }
 
     #[test]
     fn search_args_are_native_and_not_shell_fragments() {

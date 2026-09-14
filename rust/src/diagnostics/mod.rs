@@ -16,7 +16,11 @@ pub(crate) struct Probe {
     pub key: &'static str,
     pub command: &'static str,
     pub available: bool,
+    pub installed: bool,
     pub output: String,
+    pub error: String,
+    pub status_code: Option<i32>,
+    pub timed_out: bool,
 }
 
 pub fn run(_ctx: &Context, args: &[String]) -> Result<(), String> {
@@ -90,6 +94,8 @@ fn print_human(action: &str, probes: &[Probe]) {
     for probe in probes {
         let state = if probe.available {
             crate::i18n::diagnostics_available()
+        } else if probe.installed {
+            "falló"
         } else {
             crate::i18n::diagnostics_unavailable()
         };
@@ -99,18 +105,33 @@ fn print_human(action: &str, probes: &[Probe]) {
         } else {
             println!("{}", probe.output);
         }
+        if !probe.error.trim().is_empty() {
+            println!("Detalle del error: {}", probe.error);
+        }
+        if let Some(code) = probe.status_code {
+            println!("Código de salida: {code}");
+        }
+        if probe.timed_out {
+            println!("Estado: tiempo de espera agotado");
+        }
     }
 }
 
 fn print_tsv(probes: &[Probe]) {
-    println!("key\tcommand\tavailable\toutput");
+    println!("key\tcommand\tavailable\tinstalled\tstatus_code\ttimed_out\toutput\terror");
     for probe in probes {
         println!(
-            "{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             probe.key,
             probe.command,
             if probe.available { "yes" } else { "no" },
-            crate::common::clean(&probe.output)
+            if probe.installed { "yes" } else { "no" },
+            probe
+                .status_code
+                .map_or_else(String::new, |code| code.to_string()),
+            if probe.timed_out { "yes" } else { "no" },
+            crate::common::clean(&probe.output),
+            crate::common::clean(&probe.error)
         );
     }
 }
@@ -124,11 +145,15 @@ fn print_json(action: &str, probes: &[Probe]) {
             .iter()
             .map(|probe| {
                 format!(
-                    "{{\"key\":\"{}\",\"command\":\"{}\",\"available\":{},\"output\":\"{}\"}}",
+                    "{{\"key\":\"{}\",\"command\":\"{}\",\"available\":{},\"installed\":{},\"status_code\":{},\"timed_out\":{},\"output\":\"{}\",\"error\":\"{}\"}}",
                     escape(probe.key),
                     escape(probe.command),
                     probe.available,
-                    escape(&probe.output)
+                    probe.installed,
+                    probe.status_code.map_or_else(|| "null".to_owned(), |code| code.to_string()),
+                    probe.timed_out,
+                    escape(&probe.output),
+                    escape(&probe.error)
                 )
             })
             .collect::<Vec<_>>()

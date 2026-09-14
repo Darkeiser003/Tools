@@ -85,8 +85,9 @@ admiten `--dry-run` y generan planes reversibles cuando corresponde.
   siendo módulos separados para no mezclar sus dependencias con el anfitrión.
   El catálogo se publica también en `capabilities --format json` para
   frontends.
-- Genera AppImage con fallback de extracción si FUSE no está disponible y un
-  ZIP portable nativo para Windows.
+- Genera AppImage con fallback por extracción si FUSE falta o el sistema
+  bloquea el montaje, aunque detecte el dispositivo y su helper; también genera
+  un ZIP portable nativo para Windows.
 
 ## Acciones guiadas y valores seguros
 
@@ -196,7 +197,8 @@ systemd-boot` y `boot secure-boot` son consultas. `boot set-next --entry
 "Título exacto"` usa `grub-reboot` para el siguiente arranque, exige elevación
 y confirmación (o `--yes` desde una interfaz que ya confirmó); nunca reinicia
 el equipo automáticamente. `boot plan` explica el flujo protegido para una
-Wine no se considera una prueba válida de firmware o arranque.
+operación de arranque. Wine no se considera una prueba válida de firmware o
+arranque.
 
 ## Requisitos
 
@@ -301,7 +303,7 @@ uniforme:
   explícitamente esa exigencia.
 
 La comprobación reproducible está en `tests/encoding.sh` y se ejecuta también
-durante `./build.sh`. Valida UTF-8, presencia o ausencia de BOM, y que los CMD
+durante `bash scripts/build.sh`. Valida UTF-8, presencia o ausencia de BOM, y que los CMD
 no contengan bytes dependientes de una página de código.
 
 ### Para compilar
@@ -348,8 +350,9 @@ saturado. Cada entrada abre la siguiente pantalla y no conserva un panel duplica
    servicios. Esta es la única sección que ofrece instalación.
 3. **Herramientas nativas**: discos, particiones, montajes, servicios, procesos,
    usuarios, red, hardware, energía, seguridad, arranque, rutas y configuración.
-4. **Herramientas instalables**: Git/GitHub, SSH/SCP/SFTP, ADB, Docker/Podman/Compose
-   y Kubernetes, cada uno con su propio flujo operativo.
+4. **Herramientas instalables**: Git/GitHub, software/paquetes, SSH/SCP/SFTP,
+   ADB, Docker/Podman/Compose y Kubernetes, cada uno con su propio menú final
+   de operaciones agrupadas por consulta, gestión, transferencia y diagnóstico.
 5. **Automatización**: registrar, listar, ejecutar y retirar automatizaciones,
    además de acciones guiadas.
 6. **Ajustes**: idioma, tema, modo de color y visibilidad de secciones.
@@ -358,23 +361,46 @@ Los comandos antiguos (`menu-storage`, `menu-services`, `menu-import`, etc.) sig
 aceptándose como compatibilidad de terminal, pero ya no aparecen como botones ni
 categorías duplicadas en la portada.
 
-En Windows aparece una categoría **WinSlim** después de Ajustes únicamente si existe
-`C:\WSCore`. La sección informa también si encuentra `NSudoLC.exe`, `NSudoLG.exe`
-o `NSudo.exe` dentro de esa raíz (o en el `PATH`). La elevación normal continúa
-usando UAC; NSudo no se activa automáticamente. Solo una integración WinSlim
-explícita puede habilitarlo para la sesión, evitando que una acción accidental
-se ejecute con privilegios de TrustedInstaller/SYSTEM.
+En Windows aparece una categoría **WinSlim / NSudo** si existe `C:\WSCore` o se
+detecta un lanzador compatible. Busca `NSudoLC.exe`, `NSudoLG.exe` o `NSudo.exe`
+en la raíz de WinSlim, sus subdirectorios de herramientas y el `PATH` (o el
+archivo explícito `LTOOLS_NSUDO_PATH`); prioriza la variante de consola y no
+confunde complementos como `NSudoDM.exe` con un lanzador. El estado también
+está disponible con `ltools winslim status`.
 
-NSudo se busca primero en `C:\WSCore`, incluyendo sus subdirectorios de
-herramientas, y después en el `PATH`. LTools no descarga ejecutables de
-privilegios desde URLs no verificadas ni crea usuarios administrativos. Si no
-está disponible, la instalación debe hacerse mediante una fuente de Windows
-que el usuario haya elegido y confirmado.
+La guía y el asistente están en `ltools winslim guide` y `ltools winslim menu`;
+la GUI abre el asistente en una consola independiente. Para automatizar una
+acción, usa `ltools winslim launch --identity PERFIL --program PROGRAMA`, añade
+cualquier argumento con `--arg VALOR` repetido y registra esa orden mediante
+el gestor de automatizaciones. Perfiles admitidos: `current`, `elevated`,
+`system`, `trustedinstaller`, `process` y `drop-rights`. `--integrity`,
+`--all-privileges`, `--cwd`, `--window`, `--console` y `--wait` habilitan las
+opciones correspondientes cuando la versión detectada de NSudo las admite.
+`--dry-run` inspecciona el contexto sin iniciar procesos; para ejecución
+automatizada sin pregunta interactiva se requiere `--yes`, que debe añadirse
+solo después de revisar el programa y todos sus argumentos.
 
-Para una automatización WinSlim que requiera explícitamente ese backend, la
-sesión puede habilitarlo con `LTOOLS_USE_NSUDO=1`. Sin esa variable, incluso
-cuando NSudo esté presente, las acciones de LTools continúan usando la
-elevación UAC nativa de Windows.
+Como opción avanzada por sesión, `LTOOLS_USE_NSUDO=1` selecciona el token
+elevado del usuario actual para las suboperaciones compatibles de LTools que
+ya requieren privilegios, sin activar por defecto todos los privilegios de
+NSudo. No cambia el perfil persistente ni equivale a TrustedInstaller/SYSTEM.
+En PowerShell, limita la variable a una sola operación:
+
+```powershell
+$env:LTOOLS_USE_NSUDO = '1'
+try { .\ltools-cli.exe accounts admin-add --user NOMBRE }
+finally { Remove-Item Env:LTOOLS_USE_NSUDO -ErrorAction SilentlyContinue }
+```
+
+La elevación normal continúa usando UAC y NSudo no se activa automáticamente
+para acciones comunes. Un lanzamiento NSudo cambia el token del proceso hijo;
+no agrega usuarios al grupo Administradores ni inicia sesión como una cuenta
+arbitraria. Para cambiar membresías usa **Cuentas** y el grupo local
+Administradores; TrustedInstaller es una identidad de servicio, no un grupo de
+usuarios. Si falta NSudo, no se descarga ni ejecuta un reemplazo: las acciones
+normales conservan UAC. NSudo está archivado/depreciado por su mantenedor; usa
+solo una copia de confianza y comprueba la compatibilidad del Windows y del
+lanzador instalado antes de ejecutar tareas sensibles.
 
 La CLI comparte la misma gramática de navegación: cabecera persistente,
 sección activa como ruta, grupos de acciones, `Enter`/`b` para volver, `h`/`?`
@@ -447,7 +473,7 @@ Para automatización o integración desde otra terminal usa el perfil CLI:
 Si ejecutas windows\ltools.ps1 desde un checkout del proyecto, el lanzador
 busca automáticamente el ejecutable en el paquete Windows de dist y en el
 target Rust. Si todavía no existe, ejecuta primero `windows\build.cmd` o
-`windows\build.ps1`; el lanzador no compila implícitamente y conserva el
+`scripts\build.ps1`; el lanzador no compila implícitamente y conserva el
 mensaje visible para poder diagnosticar la ausencia del ejecutable.
 
 La release Windows no incluye scripts Bash, FUSE, Wine, Proton ni comandos
@@ -550,8 +576,14 @@ La guía de Git cubre `status`, `log`, `clone`, `fetch`, `pull`, `add`,
 `commit`, `push`, ramas, tags y releases. También documenta la compatibilidad
 avanzada con GitHub CLI (`gh`): `login`, `auth-status`, repositorios, pull
 requests y releases, incluyendo cuándo hace falta red, credenciales o un
-repositorio `OWNER/REPO`. El login sigue siendo interactivo y LTools no lee,
-guarda ni imprime tokens.
+repositorio `OWNER/REPO`. `gh native` reenvía comandos y opciones a la versión
+instalada, incluidas funciones nuevas como Projects/API y extensiones; la GUI
+ofrece un campo de argumentos citado sin ejecutar una shell. La guía explica
+consulta, mutación, autenticación y diferencias de versión. El login sigue
+siendo interactivo y LTools no lee, guarda ni imprime tokens. `git repair`
+puede reconstruir un índice desde HEAD íntegro o recuperar solo la metadata
+`.git` ausente desde un remoto explícito, sin checkout ni sobrescritura del
+árbol local.
 
 Las acciones de red, EFI/GRUB, servicios, cuentas, almacenamiento, Wine/Proton,
 contenedores, Kubernetes, SSH/ADB, paquetes y automatización tienen la misma
@@ -579,6 +611,8 @@ El descriptor se incluye también en el tarball Linux, el AppImage y el ZIP
 portable Windows junto con `ltools-capabilities.schema.json`. Un frontend puede
 usar `entrypoints.menu` para abrir el menú y `terminal_integration` para saber
 qué protocolo necesita la terminal anfitriona.
+La carpeta `release/` publica además el descriptor y su esquema por separado,
+para que los integradores puedan validarlos sin extraer el paquete completo.
 
 El descriptor específico incluye además `actions`: un catálogo directamente
 convertible en botones de acciones rápidas. Cada acción ofrece `id`, `label`,
@@ -597,6 +631,23 @@ acciones que puedan cambiar el sistema deben declarar confirmación y, cuando
 proceda, ofrecer `--dry-run`; la terminal no debe ocultar ni elevar comandos
 por su cuenta. `requiresCommands` permite ocultar o marcar un botón cuando la
 dependencia concreta no está disponible, sin convertir LTools en una tienda.
+
+La elevación se decide por acción, no de forma ciega. `ltools privileges` muestra
+la política completa. `--elevate` solicita elevar la acción actual y
+`--no-elevate` desactiva la elevación opcional para esa ejecución. En Ajustes se
+puede activar «Elevar acciones modificadoras por defecto»: entonces LTools
+relanza con sudo/pkexec en Linux o UAC/NSudo elegido en Windows las operaciones
+opcionales y obligatorias. Las acciones obligatorias informan y solicitan la
+contraseña cuando hace falta; las consultas no se elevan. Git/GitHub,
+Wine/Proton, automatizaciones, aliases, la limpieza guiada y la papelera del
+usuario se ejecutan siempre con la identidad actual, porque elevar el proceso
+completo cambiaría el perfil, los propietarios o el destino de la papelera.
+La instalación aplaza la decisión hasta conocer el gestor y el candidato:
+APT/pacman y otros gestores de sistema autorizan únicamente esa instalación;
+Flatpak de usuario, Pamac, AUR helpers, Homebrew, Nix, Guix y Scoop conservan la sesión
+del usuario. En Windows, Winget y Chocolatey pueden usar UAC cuando la opción
+por defecto está activada; Scoop nunca se inicia desde un LTools elevado. Una
+acción incompatible con elevación lo informa y continúa sin sudo/UAC.
 
 El flujo recomendado para LTerminal/WinSlim Terminal es: leer
 `distribution/ltools-project.json` desde el catálogo de proyectos, descargar
@@ -772,8 +823,11 @@ submenú permite consultar y gestionar el flujo habitual:
 la comprobación usa `fsck -N` y nunca repara. Además, Linux ofrece el menú
 `storage operate` y sus submenús GUI para ejecutar, con confirmación, las
 operaciones de `parted`, formateado/etiquetas/redimensionado, montajes, swap,
-LUKS, LVM, Btrfs, ZFS y RAID mdadm. Cada acción valida los argumentos, muestra
-el comando completo y admite `--dry-run` sobre objetivos sintéticos. `mount`,
+LUKS, LVM, Btrfs, ZFS y RAID mdadm. La guía cubre rescate/alineación de parted
+y las operaciones RAID de consulta, ensamblado, reemplazo, verificación y
+reparación; los dispositivos miembro se validan y se rechazan duplicados.
+Cada acción valida los argumentos, muestra el comando completo y admite
+`--dry-run` sobre objetivos sintéticos. `mount`,
 `unmount` y las operaciones mutables se anotan en el plan. `open-gparted` queda
 como alternativa externa, no como requisito. Si falta una herramienta, se
 ofrece su instalación puntual mediante `doctor --install`.
@@ -784,8 +838,24 @@ observados, nodos inaccesibles y rutas estándar explicadas. `--depth` controla
 cuánto se abre el árbol, `--max-children` limita solo el detalle visual (el
 tamaño de la carpeta sigue incluyendo las entradas omitidas) y `--format
 json|tsv` permite alimentar otra GUI o guardar un inventario. El escaneo marca
-los permisos insuficientes y permite repetirlo desde una terminal elevada;
-no sigue otros montajes salvo que se use `--follow-mounts`.
+los permisos insuficientes, muestra el modo observado (`mode=...` en Linux o
+`readonly/read-write` en Windows) y, en la GUI Linux, mantiene la ventana
+usable durante el escaneo con contador de rutas y barra de actividad. Cuando
+hay rutas bloqueadas aparece «Reintentar como administrador»: solicita
+autorización explícita mediante polkit/`pkexec`, vuelve a generar el mapa como
+root y reconstruye el árbol sin elevar LTools silenciosamente. «Expandir
+todo» y «Colapsar todo» actúan sobre el árbol cargado; «Cerrar» solo se activa
+cuando el escaneo termina. No sigue otros montajes salvo que se use
+`--follow-mounts`. Cada raíz o volumen muestra además su capacidad real del
+sistema de archivos: total, ocupado, libre total y disponible para el usuario. El
+campo `size`/«contenido» es independiente: representa lo que el árbol pudo
+leer con la profundidad elegida y no debe confundirse con el espacio usado del
+volumen. En JSON aparecen `filesystem_total`, `filesystem_used`,
+`filesystem_free` y `filesystem_available`; `filesystem_free` es el espacio
+libre total del volumen y `filesystem_available` el que puede usar la cuenta
+actual. En TSV son las últimas cuatro columnas. Si no se puede
+consultar la capacidad, esos campos quedan vacíos/null y el mapa conserva el
+resto de la información.
 
 Las acciones sobre archivos se mantienen separadas del escaneo y siempre
 requieren objetivo explícito:
@@ -804,7 +874,14 @@ ltools storage manage open --path /home/yo
 conservan los argumentos separados, `zip` y `tar` delegan en la herramienta
 nativa instalada y `open` usa el explorador/gestor de archivos de la
 plataforma. Las acciones admiten `--dry-run` y `--yes` cuando la confirmación
-ya fue realizada por una interfaz.
+ya fue realizada por una interfaz. Un destino que ya existe nunca se
+sobrescribe; para copiar tampoco se siguen enlaces simbólicos, y se retira la
+copia parcial si una lectura o escritura falla. Un movimiento dentro del mismo
+volumen es atómico y queda registrado para rollback. Entre volúmenes se copia
+primero y la fuente se envía a la papelera; si la papelera no está disponible,
+la copia completa se conserva en el destino y el programa informa que la
+fuente también permanece. Los archivos ZIP/TAR no pueden guardarse dentro de
+la carpeta que se está archivando.
 
 Ejemplos seguros de simulación:
 
@@ -990,6 +1067,8 @@ Ejemplos seguros:
 ./ltools.sh packages --out "$HOME/Informes/ltools-packages"
 ./ltools.sh clean --dry-run --package-caches --plan /tmp/ltools-clean.tsv
 ./ltools.sh clean --dry-run --path "$HOME/.cache/paru" --plan /tmp/ltools-cache.tsv
+./ltools.sh clean --package org.example.App --manager flatpak
+./ltools.sh clean --package org.example.App --manager flatpak --scope user
 ./ltools.sh clean --automatic --preview
 ./ltools.sh clean --automatic --include-personal --ask-each
 ./ltools.sh --dry-run rollback --plan /tmp/ltools-cache.tsv
@@ -999,6 +1078,25 @@ Ejemplos seguros:
 El modo de limpieza no incluye automáticamente bibliotecas de juegos, máquinas
 virtuales, prefijos ni puntos de montaje. Esas rutas requieren selección
 explícita y mantienen los bloqueos de seguridad.
+
+La desinstalación Flatpak detecta si la referencia está en la instalación de
+usuario, sistema o una instalación personalizada declarada por Flatpak y
+ejecuta Flatpak con tu identidad para conservar el perfil y permitir su
+autorización Polkit. Si la misma referencia existe en varios ámbitos, cancela
+en vez de adivinar; indica `--scope user`, `--scope system` o el nombre de la
+instalación personalizada. Homebrew también se ejecuta como usuario y nunca mediante
+sudo. Pamac conserva su autorización nativa y no se inicia como root; los
+ayudantes AUR se mantienen como usuario para que la compilación de paquetes no
+se ejecute con privilegios. `--cascade` solo se admite con Pacman y se rechaza
+para otros gestores en lugar de ignorarse. `clean --flatpak-unused` ejecuta la
+limpieza por separado en user, system y las instalaciones personalizadas
+declaradas en `/etc/flatpak/installations.d`, sin elevar el proceso global.
+`clean --package-caches` usa `pamac clean --keep 3` cuando Pamac está
+disponible y no existe `paccache`, evitando limpiar dos veces la misma caché.
+
+Si hay varios gestores instalados, `clean --package` exige `--manager`; nunca
+elige el primero de la lista porque el mismo nombre puede pertenecer a otra
+fuente. El menú interactivo pide el gestor antes de continuar.
 
 `clean --automatic` es el asistente de liberación máxima de espacio. Primero
 calcula el tamaño de cachés regenerables, temporales conocidos, cachés de
@@ -1082,53 +1180,95 @@ imprime tokens o contraseñas.
 
 ## Build y distribución
 
-Build Linux completa:
+En Linux ejecuta `bash scripts/build.sh`; en Windows ejecuta
+`powershell -ExecutionPolicy Bypass -File scripts\build.ps1` o abre
+`windows\build.cmd`. El menú separa preview, pruebas sobre binarios existentes,
+builds de backend/paquetes y limpieza. Los argumentos avanzados siguen
+disponibles en los mismos dos scripts.
+
+En Linux, el menú ofrece smoke y E2E del binario existente sin compilar,
+compilación del backend GUI, perfil CLI en un target aislado, tarball, AppImages,
+build rápida de desarrollo y release completa. La opción de build rápida del
+menú desactiva explícitamente tests Rust, smoke y E2E; para validar todo sin
+empaquetar usa `Build → Validar backend`. El argumento `--fast` por sí solo
+cambia la configuración de optimización, pero conserva la cobertura de pruebas
+que se haya seleccionado para esa ejecución. Las salidas locales del menú se
+separan entre `dist/local/` (staging) y `dist/local-release/` (paquete local)
+y permiten una excepción sin firma; la release publicable conserva la firma
+Ed25519 obligatoria en `release/`.
+En Windows, `scripts/build.ps1` ofrece preview, pruebas sin recompilar,
+builds y limpieza para el ejecutable nativo y el ZIP portable. Su perfil rápido
+de desarrollo conserva las pruebas; solo la opción explícita de compilar
+backend las omite. `-NoSmoke` y `-NoE2E` permiten omitir cada suite posterior
+por separado; `-NoRun` se conserva como alias para omitir ambas, pero no omite
+`cargo test`. `-NoTests` omite las tres.
+
+Build Linux completa, con perfil release optimizado y todas las pruebas:
 
 ```bash
-./build.sh --non-interactive --fast
+bash scripts/build.sh --non-interactive --appimage
 ```
 
-La build Linux ejecuta rustfmt, Clippy, tests Rust, sintaxis Bash, contratos,
+La build Linux ejecuta rustfmt, Clippy, tests Rust, sintaxis Bash y PowerShell
+(cuando `pwsh` está instalado), contratos,
 compilación release, tarball, AppImage, smoke, E2E de migración/rollback, E2E
-de menús y funciones, y una E2E aislada de stores simuladas y Git. También valida AppStream, FUSE, idiomas, gestores de
-paquetes, duplicados y las rutas efectivas del ecosistema Wine. En una build
+de menús y funciones, una E2E aislada de stores simuladas y Git, y acciones GUI
+reales de copiar/mover/papelera en el mapa con capturas verificadas y fixtures
+aislados. También contrasta ayudas nativas con guías GUI y valida AppStream si
+está disponible, usa FUSE cuando el sistema lo permite (o extracción en caso
+contrario), audita idiomas, gestores de paquetes, duplicados y rutas efectivas
+del ecosistema Wine. En una build
 interactiva, Wine/Proton viene activado por defecto (`S/n`); se puede desactivar
 con `n` o con `--no-windows-wine`.
 
 `dist/` es staging local: contiene logs, tiempos, informes y salidas de trabajo.
-`release/` es la carpeta canónica de publicación: el builder copia allí los
-artefactos finales sin mezclar código Linux y Windows. Tras ejecutar ambos
-builders, contiene los dos AppImage Linux, los dos `.exe` y ZIP Windows, los
-perfiles CLI, los descriptores JSON, sus esquemas y `ltools-release.json`.
+`release/` es la carpeta canónica de publicación: el builder prepara una copia
+paralela, verifica artefactos, manifiesto, checksums, firma y E2E, y solo
+entonces la intercambia con el destino. Si falla la preparación, la release
+anterior permanece disponible; se conservan también los archivos ajenos y se
+rechazan enlaces u objetos especiales en el destino existente. Tras ejecutar
+ambos builders, contiene los dos AppImage Linux, los dos `.exe` y ZIP Windows,
+los perfiles CLI, los descriptores JSON, sus esquemas y `ltools-release.json`.
 
 Validación Windows opcional desde la misma build Linux:
 
 ```bash
-./build.sh --windows-wine
-./build.sh --windows-wine --windows-wine-runner "$HOME/.local/share/umu/compatibilitytools/UMU-Latest/files/bin/wine"
+bash scripts/build.sh --windows-wine
+bash scripts/build.sh --windows-wine --windows-wine-runner "$HOME/.local/share/umu/compatibilitytools/UMU-Latest/files/bin/wine"
 ```
 
 Esta etapa compila `x86_64-pc-windows-gnu`, comprueba que el runner puede abrir
 una consola Windows y ejecuta la misma superficie verificable del ejecutable:
 versión, ayuda, capacidades JSON, rutas por defecto y menú. Usa un prefijo
 temporal aislado, registra tiempos y salida en el log principal, y genera en
-`dist/windows-wine/` los dos perfiles (`.exe` normal y `-cli.exe`). Cuando se
-ejecuta desde el builder raíz, ambos perfiles se copian también a `release/` y
-la E2E exige que estén presentes y cubiertos por el manifiesto y sus hashes.
+`dist/windows-wine/` los dos perfiles (`.exe` normal y `-cli.exe`). También
+valida el ZIP portable, lo extrae dentro del prefijo y ejecuta desde ahí los
+perfiles GUI y CLI. El builder sitúa ese prefijo temporal dentro de `dist/`
+para evitar agotar un `/tmp` montado como tmpfs; al ejecutar el helper
+directamente, `TMPDIR` permite elegir el volumen temporal. Los prefijos creados
+por la prueba se retiran al salir, pero nunca se borra una ruta explícita de
+`--prefix`. Si se omite `--log`, el registro se guarda en la carpeta de salida
+(o en `dist/` si no se indicó una) y sobrevive a la retirada del prefijo.
+Cuando se ejecuta el pipeline completo, `TMPDIR` debe estar fuera del checkout:
+varias pruebas preparan repositorios Git temporales y un directorio temporal
+interno se interpretaría como parte del repositorio bajo prueba. El builder lo
+rechaza en el preflight, antes de compilar.
+Cuando se ejecuta desde el builder raíz, ambos perfiles se copian también a
+`release/` y la E2E exige que estén presentes y cubiertos por el manifiesto y
+sus hashes.
 El target de Cargo de esta etapa está aislado en
 `rust/target/windows-wine`; por ello `--clean --windows-wine` no puede borrar
 el binario Linux que todavía necesita el empaquetado. Se puede cambiar de
 forma explícita con `LTOOLS_WINDOWS_CARGO_TARGET_DIR`, aunque no es necesario
 para el uso normal.
 Estos `.exe` GNU están validados bajo Wine; la release oficial Windows para
-distribuir a usuarios Windows sigue siendo la producida por `windows/build.ps1`
+distribuir a usuarios Windows sigue siendo la producida por `scripts/build.ps1`
 con MSVC.
 
-En una ejecución interactiva sin argumentos, el builder pregunta si se mantiene
-esta etapa activada por defecto. `--windows-wine-prefix` permite usar un prefijo
-concreto, y `--windows-wine-install-mono` permite preparar Wine Mono cuando el
-runner no lo incluye. LTools no necesita Mono: se ofrece únicamente para
-validar el entorno de otras aplicaciones Windows.
+`--windows-wine-prefix` permite usar un prefijo concreto, y
+`--windows-wine-install-mono` permite preparar Wine Mono cuando el runner no lo
+incluye. LTools no necesita Mono: se ofrece únicamente para validar el entorno
+de otras aplicaciones Windows.
 
 La salida Linux ofrece tres entregables de uso:
 
@@ -1149,14 +1289,24 @@ anunciar la terminal. No es necesario para ejecutar el AppImage ni el `.exe`.
 Opciones frecuentes:
 
 ```bash
-./build.sh --clean --output /tmp/ltools-dist
-./build.sh --release-dir /tmp/ltools-release
-./build.sh --appimage --no-package
-./build.sh --non-interactive --no-smoke --no-e2e
-./build.sh --appimage --require-fuse
+bash scripts/build.sh --clean --output /tmp/ltools-dist
+bash scripts/build.sh --release-dir /tmp/ltools-release
+bash scripts/build.sh --appimage --no-package
+bash scripts/build.sh --non-interactive --no-smoke --no-e2e
+bash scripts/build.sh --appimage --require-fuse
 ```
 
-El builder Windows está en `windows/build.ps1` y usa MSVC por defecto:
+`--fast` conserva la misma cobertura de pruebas, pero usa un perfil
+incremental con menos optimización para iterar durante el desarrollo. No debe
+usarse para el artefacto final que se vaya a publicar.
+El builder Windows está en `scripts/build.ps1` y usa MSVC por defecto:
+
+Los builders Linux comprueban las rutas ya resueltas antes de crear logs o
+retirar paquetes: no aceptan `/`, la raíz del proyecto, un directorio que la
+contenga ni `/tmp` o `/var/tmp` directamente. Las carpetas de staging y
+publicación tampoco pueden coincidir, anidarse ni atravesar enlaces en Windows.
+Usa carpetas dedicadas y separadas, por ejemplo `/tmp/ltools-dist` y
+`/tmp/ltools-release`.
 
 ### Validación Windows desde Linux con Wine/Proton
 
@@ -1207,12 +1357,12 @@ la firma por defecto, tanto en Linux como en Windows; si faltan las claves la
 release se detiene antes de publicar artefactos:
 
 ```bash
-./build.sh
+bash scripts/build.sh --non-interactive
 ```
 
 Para una build local deliberadamente no publicable sin firma hay que declarar
-la excepción explícita `./build.sh --allow-unsigned` o
-`.\windows\build.ps1 -AllowUnsigned`. `--require-signing` y las variables
+la excepción explícita `bash scripts/build.sh --allow-unsigned` o
+`.\scripts\build.ps1 -AllowUnsigned`. `--require-signing` y las variables
 `LTOOLS_REQUIRE_SIGNING`/`LTERMINAL_REQUIRE_SIGNING` se mantienen como
 compatibilidad para pipelines que quieran expresar la exigencia de forma
 explícita. El backend también permite verificar manualmente una release:
@@ -1254,18 +1404,27 @@ Para cambiar de repositorio o de etiqueta sin editar archivos, usa
 `LTOOLS_GITHUB_REPOSITORY` y `LTOOLS_GITHUB_TAG` al ejecutar los builders.
 
 ```powershell
-.\windows\build.ps1
-.\windows\build.ps1 -Fast
-.\windows\build.ps1 -Force -NoRun
-.\windows\build.ps1 -ReleaseOutput .\release
-.\windows\build.ps1 -Target x86_64-pc-windows-gnu
+.\scripts\build.ps1
+.\scripts\build.ps1 -Fast
+.\scripts\build.ps1 -Force -NoRun
+.\scripts\build.ps1 -ReleaseOutput .\release
+.\scripts\build.ps1 -Target x86_64-pc-windows-gnu
 ```
 
-Mantiene su estado incremental en `dist/windows/.build-state.json`, separa el
-target en `rust/target/windows`, genera un ZIP portable por arquitectura y
-publica el `.exe`, el perfil CLI, el ZIP y los JSON en `release/`. `-Output`
-controla el staging Windows y `-ReleaseOutput` la carpeta que se puede subir a
-GitHub.
+Compara huellas SHA-256 y guarda el estado incremental junto al binario de cada
+target en `rust/target/windows/<target>/release/.build-state.json`. El estado
+compartido detecta los cambios entre `-Fast` (solo para iterar localmente) y la
+release optimizada, incluso si usan carpetas de salida diferentes; al cambiar
+de perfil recompila antes de empaquetar. También separa el staging de la carpeta
+publicable, genera un ZIP portable por arquitectura y publica el `.exe`, el
+perfil CLI, el ZIP y los JSON en `release/`. `-Output` controla el staging
+Windows y `-ReleaseOutput` la carpeta que se puede subir a GitHub; deben ser
+rutas independientes, no pueden anidarse ni atravesar junctions/symlinks, y no
+pueden ser la raíz del proyecto ni la de una unidad. La release se prepara en
+una carpeta paralela, se validan manifiesto, checksums, firma y contenidos antes
+de sustituir el destino, y se conservan los archivos previos que no pertenecen
+a los artefactos Windows de esa versión/arquitectura. Los targets admitidos son
+`x86_64`, `aarch64` o `i686` con `msvc` o `gnu`.
 
 ## Arquitectura
 
@@ -1281,17 +1440,17 @@ El proyecto mantiene dos capas compatibles:
 │       ├── storage/          Discos y particiones: Linux/Windows separados
 │       ├── registry/         Configuración: Linux/Windows separados
 │       └── automation.rs     Registro seguro de scripts y automatizaciones
-├── platform/
-│   └── linux/
-│       └── build.sh          Builder Linux/AppImage
+├── scripts/
+│   ├── build.sh              Menú y builder Linux/AppImage
+│   └── build.ps1             Menú y builder Windows nativo
 ├── appimage/                 AppRun, desktop, icono y metadata AppStream
-├── windows/                  Builder, lanzadores y tests nativos Windows
+├── windows/                  Lanzadores y tests nativos Windows
 ├── release/                  Artefactos publicables regenerables (ignorado)
 ├── dist/                     Staging, logs y salidas locales (ignorado)
-├── clean-repository.sh       Limpieza segura de artefactos regenerables
-├── tests/                    Contratos y pruebas
-│   └── linux/                Smoke y E2E Linux/AppImage
-└── build.sh                  Lanzador compatible del builder Linux
+└── tests/
+    ├── scripts-syntax.sh     Sintaxis Bash y PowerShell sin compilar
+    ├── contracts.sh          Contratos de distribución
+    └── linux/                Smoke y E2E Linux/AppImage
 ```
 
 Rust es el único backend de LTools para Linux, AppImage y Windows. Los scripts
@@ -1374,11 +1533,11 @@ locales y están excluidos por `.gitignore`. Para inspeccionar qué residuos
 regenerables existen antes de limpiar el árbol de trabajo:
 
 ```bash
-./clean-repository.sh --dry-run
+bash scripts/build.sh clean --dry-run
 ```
 
 Los planes automáticos legacy se almacenan fuera del repositorio. Para
-revisarlos sin borrar nada, usa `./clean-repository.sh --plans-only --dry-run`.
+revisarlos sin borrar nada, usa `bash scripts/build.sh clean --plans-only --dry-run`.
 La retirada requiere `--plans-only --apply`; solo coincide con los nombres
 fechados o asociados a un PID de la implementación antigua y conserva los
 planes estables y los ficheros que el usuario haya nombrado explícitamente.
@@ -1391,20 +1550,37 @@ configuración. La simulación es el comportamiento predeterminado; para
 retirar los candidatos confirmados:
 
 ```bash
-./clean-repository.sh --apply
+bash scripts/build.sh clean --apply
 ```
 
 Para automatizaciones no interactivas, después de revisar previamente el plan:
 
 ```bash
-./clean-repository.sh --apply --yes
+bash scripts/build.sh clean --apply --yes
 ```
 
-La limpieza no afecta cachés fuera del repositorio ni paquetes del sistema.
-Los artefactos de release se regeneran con `./build.sh`; los cambios de código
+La limpieza ordinaria no afecta cachés fuera del repositorio ni paquetes del sistema.
+Los artefactos de release se regeneran con `bash scripts/build.sh`; los cambios de código
 sin commit permanecen intactos.
 
-`./build.sh --clean` limpia solamente los targets Rust y conserva los demás
+Los temporales que dejan builds y pruebas fallidas se revisan por separado y
+de forma explícita. `bash scripts/build.sh clean --only build-tmp --dry-run`
+busca únicamente formatos allowlist de artefactos temporales de build/E2E de
+LTools directamente en `/tmp` y `/var/tmp`; no recorre subcarpetas ni limpia
+temporales de otras aplicaciones. No incluye registros normales de ejecución
+ni temporales de terceros. Comprueba propietario, tipo de archivo y uso activo
+cuando `fuser` está disponible, y vuelve a validar cada ruta antes de borrarla.
+Para retirarlos tras revisar la simulación, usa
+`bash scripts/build.sh clean --only build-tmp --apply`. `--only tmp` se conserva
+como alias compatible. La simulación sigue siendo el comportamiento predeterminado.
+
+El menú `bash scripts/build.sh` agrupa estas mismas acciones en **Limpiar
+artefactos**. Desde allí se puede revisar el plan, retirar solo el target Rust,
+limpiar staging y cachés conservando `release/`, o incluir también la carpeta
+de publicación. En Windows, **Limpiar artefactos Windows** muestra las rutas y
+pide escribir `SI` antes de retirar el target o staging Windows.
+
+`bash scripts/build.sh --clean` limpia solamente los targets Rust y conserva los demás
 resultados locales; el builder vuelve a crear todo lo necesario en la próxima
 ejecución.
 
@@ -1413,7 +1589,7 @@ ejecución.
 Para ejecutar la batería completa:
 
 ```bash
-./build.sh --non-interactive --fast
+bash scripts/build.sh --non-interactive
 ```
 
 Pruebas individuales:
@@ -1425,13 +1601,41 @@ cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings
 ./tests/linux/smoke.sh --binary rust/target/release/ltools
 ./tests/linux/e2e.sh --binary rust/target/release/ltools
 ./tests/linux/menu-e2e.sh --binary rust/target/release/ltools
+./tests/linux/native-help-e2e.sh --binary rust/target/release/ltools
 ./tests/linux/software-git-e2e.sh --binary rust/target/release/ltools
+./tests/linux/tarball-e2e.sh --tarball dist/ltools-1.0.0-linux-x86_64.tar.gz
+tmp_dir="$(mktemp -d)"
+./tests/linux/storage-map-gui-e2e.sh --binary rust/target/release/ltools \
+  --tmp "$tmp_dir" --captures "$tmp_dir/captures"
 ```
+
+La E2E del mapa abre la ventana GTK y comprueba Cancelar por defecto, Copiar,
+Mover y Papelera; usa un `XDG_DATA_HOME` temporal y guarda capturas de las
+confirmaciones en español. Requiere `xvfb-run`, `xdotool` y un gestor de papelera
+(`gio` o `trash-put`) para verificar también esa acción.
+
+`tarball-e2e.sh` extrae el paquete en un directorio temporal y ejecuta sus
+lanzadores, backend, ayuda y capacidades; si hay Xvfb, también abre y cierra
+la GUI empaquetada. La build lo ejecuta inmediatamente después de crear el
+tarball, además de verificar su lista de contenido, manifiesto y hashes.
+
+`native-help-e2e.sh` ejecuta la ayuda real de cada herramienta disponible en el
+anfitrión. Para ADB usa expresamente `adb help`; para Git obtiene el catálogo
+con `git help -a`; para las herramientas con subcomandos consulta también la
+ayuda del subcomando. Contrasta las operaciones documentadas de Git y GitHub
+CLI, transferencia SSH/SCP/SFTP, ADB, Kubernetes y Docker/Podman con la ayuda
+nativa y la guía GUI. Para SSH/SCP/SFTP también verifica argumentos de
+conexión y dirección de transferencia. No afirma que todas las opciones de
+todas las herramientas estén cubiertas, ni inventa comandos Linux para el
+perfil Windows.
+Las herramientas ausentes se omiten y las diferencias de sintaxis de Linux y
+Windows se mantienen separadas; la E2E Windows aplica el mismo principio con
+`/?`, `-h` o `--help` según la herramienta nativa.
 
 En Windows nativo:
 
 ```powershell
-.\windows\build.ps1 -Force
+.\scripts\build.ps1 -Force
 ```
 
 El ejecutable Windows es nativo y no comparte los detectores Linux: `games`
@@ -1446,10 +1650,10 @@ el contrato de capacidades, el inventario nativo, informes, planes y acciones
 del sistema. Usan `native-process.ps1`, un capturador .NET común con UTF-8,
 timeouts, cierre de stdin y diagnóstico de stdout/stderr; no dependen del
 pipeline frágil de PowerShell para procesos nativos. Deben ejecutarse en
-Windows. Desde Linux, la compilación y prueba aislada bajo Wine/Proton viene
-activa por defecto en `./build.sh`; se puede desactivar con
-`--no-windows-wine`. Usa un prefijo temporal y no activa la lógica Linux de
-prefijos.
+Windows. Desde Linux, el menú deja elegir una build validada con Wine/Proton o
+una build sin esa etapa. En el modo de línea de comandos, Wine/Proton queda
+incluido por defecto; `--no-windows-wine` lo desactiva y `--windows-wine` lo
+fuerza. Usa un prefijo temporal y no activa la lógica Linux de prefijos.
 
 ## Seguridad y límites
 

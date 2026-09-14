@@ -49,7 +49,7 @@ if (Test-Path -LiteralPath $releaseOutput) {
         ForEach-Object { $candidates.Add($_.FullName) }
 }
 if (-not $binary) {
-    throw "No se encontró ltools.exe. Ejecuta build.cmd o windows\build.ps1 para generarlo, o coloca el ejecutable junto a este lanzador."
+    throw "No se encontró ltools.exe. Ejecuta build.cmd o scripts\build.ps1 para generarlo, o coloca el ejecutable junto a este lanzador."
 }
 & $binary @Arguments
 $exitCode = $LASTEXITCODE

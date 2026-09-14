@@ -1,6 +1,5 @@
-use crate::common::{command_exists, Context};
+use crate::common::{command_exists, command_output_detailed, Context};
 use std::io::{self, Write};
-use std::process::Command;
 
 pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
     let action = args
@@ -77,18 +76,30 @@ fn probe(label: &str, program: &str, args: &[&str]) {
         println!("{label}: no disponible ({program})");
         return;
     }
-    match Command::new(program).args(args).output() {
-        Ok(output) => {
-            let text = String::from_utf8_lossy(if output.stdout.is_empty() {
-                &output.stderr
-            } else {
-                &output.stdout
-            });
-            let text = text.trim();
+    match command_output_detailed(program, args) {
+        Ok(output) if output.success() => {
+            let text = output.stdout.trim();
             println!(
                 "{label}: {}",
                 if text.is_empty() { "disponible" } else { text }
             );
+        }
+        Ok(output) => {
+            let detail = if output.stderr.trim().is_empty() {
+                format!(
+                    "código de salida {}",
+                    output
+                        .status_code
+                        .map_or_else(|| "desconocido".into(), |code| code.to_string())
+                )
+            } else {
+                output.stderr.trim().to_owned()
+            };
+            if output.timed_out {
+                println!("{label}: error: tiempo de espera agotado (30 s)");
+            } else {
+                println!("{label}: error: {detail}");
+            }
         }
         Err(error) => println!("{label}: no se pudo consultar: {error}"),
     }

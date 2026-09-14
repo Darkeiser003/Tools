@@ -1,6 +1,5 @@
 use super::Probe;
-use crate::common::command_exists;
-use std::process::Command;
+use crate::common::{command_exists, command_output_detailed};
 
 pub(super) fn collect(action: &str) -> Vec<Probe> {
     match action {
@@ -91,21 +90,27 @@ pub(super) fn collect(action: &str) -> Vec<Probe> {
 }
 
 fn command_probe(key: &'static str, command: &'static str, args: &[&str]) -> Probe {
-    let result = Command::new(command)
-        .args(args)
-        .output()
-        .ok()
-        .filter(|result| result.status.success())
-        .map(|result| {
-            String::from_utf8_lossy(&result.stdout)
-                .trim_end()
-                .to_string()
-        });
+    let result = command_output_detailed(command, args);
+    let installed = command_exists(command);
+    let (available, output, error, status_code, timed_out) = match result {
+        Ok(value) => (
+            installed && value.success(),
+            value.stdout.trim_end().to_owned(),
+            value.stderr.trim_end().to_owned(),
+            value.status_code,
+            value.timed_out,
+        ),
+        Err(error) => (false, String::new(), error.to_string(), None, false),
+    };
     Probe {
         key,
         command,
-        available: command_exists(command) && result.is_some(),
-        output: result.unwrap_or_default(),
+        installed,
+        available,
+        output,
+        error,
+        status_code,
+        timed_out,
     }
 }
 
@@ -113,24 +118,43 @@ fn powershell_probe(key: &'static str, script: &'static str) -> Probe {
     let shell = ["powershell", "pwsh"]
         .into_iter()
         .find(|name| command_exists(name));
-    let result = shell
-        .and_then(|shell| {
-            Command::new(shell)
-                .args(["-NoProfile", "-NonInteractive", "-Command", script])
-                .output()
-                .ok()
-        })
-        .filter(|result| result.status.success())
-        .map(|result| {
-            String::from_utf8_lossy(&result.stdout)
-                .trim_end()
-                .to_string()
-        });
+    let (available, output, error, status_code, timed_out) = match shell {
+        Some(shell) => match command_output_detailed(
+            shell,
+            &["-NoProfile", "-NonInteractive", "-Command", script],
+        ) {
+            Ok(result) => (
+                result.success(),
+                result.stdout.trim_end().to_owned(),
+                result.stderr.trim_end().to_owned(),
+                result.status_code,
+                result.timed_out,
+            ),
+            Err(error) => (
+                false,
+                String::new(),
+                format!("no se pudo ejecutar {shell}: {error}"),
+                None,
+                false,
+            ),
+        },
+        None => (
+            false,
+            String::new(),
+            "no se encontró powershell ni pwsh".to_owned(),
+            None,
+            false,
+        ),
+    };
     Probe {
         key,
         command: "PowerShell",
-        available: shell.is_some() && result.is_some(),
-        output: result.unwrap_or_default(),
+        installed: shell.is_some(),
+        available,
+        output,
+        error,
+        status_code,
+        timed_out,
     }
 }
 
@@ -152,6 +176,14 @@ fn powershell_or_command_probe(
         key,
         command: "PowerShell/fallback",
         available: false,
+        installed: primary.installed || fallback.installed,
         output: String::new(),
+        error: if !primary.error.is_empty() {
+            primary.error.clone()
+        } else {
+            fallback.error.clone()
+        },
+        status_code: primary.status_code.or(fallback.status_code),
+        timed_out: primary.timed_out || fallback.timed_out,
     }
 }

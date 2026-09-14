@@ -33,8 +33,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
         .unwrap_or_else(|| "Darkeiser003/Tools".into());
     validate_repository(&repository)?;
     let tag = option(args, "--tag").unwrap_or_else(|| format!("v{VERSION}"));
-    if !tag.starts_with('v') || tag.len() < 2 {
-        return Err("--tag debe tener el formato vVERSION".into());
+    if !valid_tag(&tag) {
+        return Err("--tag debe ser una etiqueta segura con formato vVERSION".into());
     }
     let dirs = repeated_options(args, "--artifacts-dir");
     if dirs.is_empty() {
@@ -89,7 +89,11 @@ pub fn checksums(args: &[String]) -> Result<(), String> {
             let entry = entry
                 .map_err(|e| format!("no se pudo leer una entrada de {}: {e}", path.display()))?;
             let file = entry.path();
-            if !file.is_file() {
+            if !entry
+                .file_type()
+                .map_err(|e| format!("no se pudo inspeccionar {}: {e}", file.display()))?
+                .is_file()
+            {
                 continue;
             }
             let name = file_name(&file)?;
@@ -141,7 +145,11 @@ fn collect_artifacts(
             let entry = entry
                 .map_err(|e| format!("no se pudo leer una entrada de {}: {e}", path.display()))?;
             let file = entry.path();
-            if !file.is_file() {
+            if !entry
+                .file_type()
+                .map_err(|e| format!("no se pudo inspeccionar {}: {e}", file.display()))?
+                .is_file()
+            {
                 continue;
             }
             let Some((platform, architecture, kind, executable)) =
@@ -150,6 +158,9 @@ fn collect_artifacts(
                 continue;
             };
             let filename = file_name(&file)?;
+            if artifacts.contains_key(&filename) {
+                return Err(format!("nombre de artefacto duplicado: {filename}"));
+            }
             let metadata = fs::metadata(&file)
                 .map_err(|e| format!("no se pudo inspeccionar {}: {e}", file.display()))?;
             let sha256 = sha256_file(&file)?;
@@ -188,12 +199,8 @@ fn classify(
     if !filename.starts_with(&version_prefix) {
         return None;
     }
-    let parts: Vec<&str> = filename.split('-').collect();
-    if parts.len() < 4 {
-        return None;
-    }
-    if parts[2] == "linux" {
-        let remainder = filename.strip_prefix(&format!("ltools-{}-linux-", parts[1]))?;
+    let versioned_name = filename.strip_prefix(&version_prefix)?;
+    if let Some(remainder) = versioned_name.strip_prefix("linux-") {
         let remainder = remainder
             .strip_suffix(".AppImage")
             .or_else(|| remainder.strip_suffix(".tar.gz"))?;
@@ -212,15 +219,10 @@ fn classify(
         };
         return Some(("linux", architecture, kind, kind != "tarball"));
     }
-    if parts[2] == "windows" {
-        let architecture = filename
-            .strip_prefix(&format!("ltools-{}-windows-", parts[1]))?
+    if let Some(windows_name) = versioned_name.strip_prefix("windows-") {
+        let architecture = windows_name
             .strip_suffix(".exe")
-            .or_else(|| {
-                filename
-                    .strip_prefix(&format!("ltools-{}-windows-", parts[1]))
-                    .and_then(|value| value.strip_suffix(".zip"))
-            })?;
+            .or_else(|| windows_name.strip_suffix(".zip"))?;
         let architecture = architecture
             .strip_suffix("-cli")
             .unwrap_or(architecture)
@@ -335,10 +337,34 @@ fn repeated_options(args: &[String], name: &str) -> Vec<String> {
 
 fn validate_repository(repository: &str) -> Result<(), String> {
     let mut parts = repository.split('/');
-    if parts.next().is_none() || parts.next().is_none() || parts.next().is_some() {
+    let valid_component = |value: &str| {
+        !value.is_empty()
+            && value != "."
+            && value != ".."
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+    };
+    if !parts.next().is_some_and(valid_component)
+        || !parts.next().is_some_and(valid_component)
+        || parts.next().is_some()
+    {
         return Err("--repository debe tener el formato propietario/repositorio".into());
     }
     Ok(())
+}
+
+fn valid_tag(tag: &str) -> bool {
+    let Some(version) = tag.strip_prefix('v') else {
+        return false;
+    };
+    !version.is_empty()
+        && !version.starts_with('.')
+        && !version.ends_with('.')
+        && !version.contains("..")
+        && version
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._+-".contains(&byte))
 }
 
 fn file_name(path: &Path) -> Result<String, String> {
@@ -430,7 +456,7 @@ fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify, write_atomic};
+    use super::{classify, valid_tag, validate_repository, write_atomic};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -490,6 +516,28 @@ mod tests {
             ),
             None
         );
+        assert_eq!(
+            classify("ltools-2.4.0-rc.1-linux-aarch64-cli.AppImage", "2.4.0-rc.1"),
+            Some(("linux", "aarch64".into(), "appimage-cli", true))
+        );
+        assert_eq!(
+            classify("ltools-2.4.0-rc.1-windows-arm64.zip", "2.4.0-rc.1"),
+            Some(("windows", "arm64".into(), "portable-zip", false))
+        );
+    }
+
+    #[test]
+    fn release_coordinates_reject_empty_and_path_like_values() {
+        for repository in ["/project", "owner/", "owner//project", "../project"] {
+            assert!(validate_repository(repository).is_err(), "{repository}");
+        }
+        for repository in ["owner/project", "owner-name/project.name"] {
+            assert!(validate_repository(repository).is_ok(), "{repository}");
+        }
+        assert!(valid_tag("v2.4.0-rc.1+build.3"));
+        for tag in ["", "2.4.0", "v", "v../secret", "v2..4", "v2/"] {
+            assert!(!valid_tag(tag), "{tag}");
+        }
     }
 
     #[test]

@@ -81,9 +81,8 @@ rust-games-*/
 rust-package-audit-*/
 test-results/
 .test-results/
-.tmp/
-tmp/
-**/tmp/
+/.tmp/
+/tmp/
 *.plan.tsv
 *-plan.tsv
 migrate-plan.tsv
@@ -92,9 +91,7 @@ cleanup-plan.tsv
 *.junit.xml
 *.tap
 
-# Estado incremental y salidas locales del builder Windows.
-windows/.build-state.json
-dist/windows/.build-state.json
+# Salidas locales del builder Windows.
 windows/target/
 windows/bin/
 windows/obj/
@@ -135,3 +132,7 @@ Desktop.ini
 .ltools/
 .ltools-state/
 .cargo-local/
+
+# IA
+.agents/
+.codex/

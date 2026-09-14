@@ -140,6 +140,14 @@ pub fn run_with_privilege(program: &str, args: &[String], dry_run: bool) -> io::
     Ok(false)
 }
 
+pub fn is_elevated() -> bool {
+    geteuid() == 0
+}
+
+pub fn gui_privilege_available() -> bool {
+    geteuid() == 0 || sudo_available_without_prompt() || command_exists("pkexec")
+}
+
 pub fn run_with_privilege_input(
     program: &str,
     args: &[String],
@@ -2061,23 +2069,40 @@ pub fn install_tool(id: &str, dry_run: bool) -> Result<bool, String> {
         );
         return Ok(false);
     }
-    let ok = crate::platform::run_with_privilege(manager, &args, dry_run)
-        .map_err(|error| error.to_string())?;
+    let ok = if tool_install_uses_privilege_wrapper(manager) {
+        crate::platform::run_with_privilege(manager, &args, dry_run)
+    } else {
+        // Pamac and AUR helpers perform their own narrowly-scoped
+        // authorization. Running the frontend itself as root breaks user
+        // session access and can make AUR build steps execute as root.
+        run_command(manager, &args, dry_run)
+    }
+    .map_err(|error| error.to_string())?;
     // En una simulación no se instala nada, así que la herramienta seguirá
     // ausente. El resultado correcto es que el plan se pudo ejecutar.
     Ok(ok && (dry_run || host_tool_available(tool)))
+}
+
+fn tool_install_uses_privilege_wrapper(manager: &str) -> bool {
+    !matches!(manager, "pamac" | "paru" | "yay")
 }
 
 fn append_gui_install_flags(manager: &str, args: &mut Vec<String>) {
     if std::env::var_os("LTOOLS_FRONTEND").is_none_or(|value| value != "gui") {
         return;
     }
+    args.extend(gui_install_flags(manager).iter().map(|flag| (*flag).into()));
+}
+
+fn gui_install_flags(manager: &str) -> &'static [&'static str] {
     match manager {
-        "pacman" | "pamac" | "paru" | "yay" => args.push("--noconfirm".into()),
-        "apt" | "apt-get" | "dnf" | "yum" => args.push("-y".into()),
-        "zypper" => args.push("--non-interactive".into()),
-        "xbps-install" => args.push("-y".into()),
-        _ => {}
+        "pacman" | "paru" | "yay" => &["--noconfirm"],
+        "apt" | "apt-get" | "dnf" | "yum" | "xbps-install" => &["-y"],
+        "zypper" => &["--non-interactive"],
+        // Pamac already receives its native --no-confirm flag at the call
+        // site. --noconfirm is a pacman option and is not a Pamac CLI flag.
+        "pamac" => &[],
+        _ => &[],
     }
 }
 
@@ -2179,7 +2204,7 @@ fn install_package_name(id: &str, manager: &str) -> &'static str {
         .unwrap_or("")
 }
 
-pub fn fuse_available() -> bool {
+pub fn fuse_prerequisites_detected() -> bool {
     let device = fs::metadata("/dev/fuse")
         .map(|metadata| {
             use std::os::unix::fs::FileTypeExt;
@@ -2261,4 +2286,27 @@ fn geteuid() -> u32 {
                 .and_then(|uid| uid.parse().ok())
         })
         .unwrap_or(1)
+}
+
+#[cfg(test)]
+mod privilege_tests {
+    use super::{gui_install_flags, tool_install_uses_privilege_wrapper};
+
+    #[test]
+    fn user_managers_keep_their_own_authentication_and_build_context() {
+        for manager in ["pamac", "paru", "yay"] {
+            assert!(!tool_install_uses_privilege_wrapper(manager));
+        }
+        for manager in ["pacman", "apt", "dnf", "zypper", "apk"] {
+            assert!(tool_install_uses_privilege_wrapper(manager));
+        }
+    }
+
+    #[test]
+    fn gui_install_flags_match_each_package_managers_native_cli() {
+        assert!(gui_install_flags("pamac").is_empty());
+        assert_eq!(gui_install_flags("pacman"), &["--noconfirm"]);
+        assert_eq!(gui_install_flags("apt-get"), &["-y"]);
+        assert_eq!(gui_install_flags("zypper"), &["--non-interactive"]);
+    }
 }

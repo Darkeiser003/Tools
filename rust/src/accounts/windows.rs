@@ -24,10 +24,12 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
         "group-delete" => group_mutation(ctx, args, false, false),
         "group-add" => group_mutation(ctx, args, true, true),
         "group-remove" => group_mutation(ctx, args, false, true),
+        "admin-add" | "grant-admin" => add_administrator_access(ctx, args),
+        "admin-groups" => powershell("$g=Get-LocalGroup -SID 'S-1-5-32-544'; $g | Format-List Name,SID,Description; Get-LocalGroupMember -Group $g.Name | Format-Table Name,ObjectClass,PrincipalSource -AutoSize"),
         "set-primary-group" => Err("Windows no expone un grupo primario local equivalente; usa group-add para administrar membresías.".into()),
         "open-lusrmgr" => open_lusrmgr(ctx),
         "menu" => menu(ctx),
-        _ => Err("accounts admite list, groups, sessions, inspect USER, create USER, modify USER, password USER, enable USER, disable USER, delete USER, expire USER, group-create GROUP, group-delete GROUP, group-add USER:GROUP, group-remove USER:GROUP, open-lusrmgr o menu".into()),
+        _ => Err("accounts admite list, groups, sessions, inspect USER, create USER, modify USER, password USER, enable USER, disable USER, delete USER, expire USER, group-create GROUP, group-delete GROUP, group-add USER:GROUP, group-remove USER:GROUP, admin-groups, admin-add [USUARIO], open-lusrmgr o menu".into()),
     }
 }
 
@@ -90,12 +92,38 @@ fn valid_name(raw: &str) -> Result<&str, String> {
     }
 }
 
+fn valid_principal(raw: &str) -> Result<&str, String> {
+    if raw.is_empty()
+        || raw.len() > 256
+        || raw.starts_with('-')
+        || !raw
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || ".@_+-\\".contains(c))
+    {
+        Err("principal Windows no válido; usa cuenta, dominio\\cuenta o AzureAD\\UPN".into())
+    } else {
+        Ok(raw)
+    }
+}
+
+fn is_trustedinstaller_identity(value: &str) -> bool {
+    value.eq_ignore_ascii_case("TrustedInstaller")
+        || value.eq_ignore_ascii_case("NT SERVICE\\TrustedInstaller")
+}
+
 fn valid_value<'a>(raw: &'a str, label: &str) -> Result<&'a str, String> {
     if raw.is_empty() || raw.contains(['\0', '\r', '\n', '\'']) {
         Err(format!("{label} no válido"))
     } else {
         Ok(raw)
     }
+}
+
+fn is_builtin_administrators_group(group: &str) -> bool {
+    matches!(
+        group.to_ascii_lowercase().as_str(),
+        "admin" | "administrators" | "administradores" | "s-1-5-32-544"
+    )
 }
 
 fn ps_quote(value: &str, label: &str) -> Result<String, String> {
@@ -263,18 +291,33 @@ fn group_mutation(
         };
         let user = valid_name(&user)?;
         let group = valid_name(&group)?;
+        let builtin_administrators = is_builtin_administrators_group(group);
         let script = if add {
-            format!(
-                "Add-LocalGroupMember -Group {} -Member {}",
-                ps_quote(group, "grupo")?,
-                ps_quote(user, "usuario")?
-            )
+            if builtin_administrators {
+                format!(
+                    "Add-LocalGroupMember -SID 'S-1-5-32-544' -Member {}",
+                    ps_quote(user, "usuario")?
+                )
+            } else {
+                format!(
+                    "Add-LocalGroupMember -Group {} -Member {}",
+                    ps_quote(group, "grupo")?,
+                    ps_quote(user, "usuario")?
+                )
+            }
         } else {
-            format!(
-                "Remove-LocalGroupMember -Group {} -Member {} -Confirm:$false",
-                ps_quote(group, "grupo")?,
-                ps_quote(user, "usuario")?
-            )
+            if builtin_administrators {
+                format!(
+                    "Remove-LocalGroupMember -SID 'S-1-5-32-544' -Member {} -Confirm:$false",
+                    ps_quote(user, "usuario")?
+                )
+            } else {
+                format!(
+                    "Remove-LocalGroupMember -Group {} -Member {} -Confirm:$false",
+                    ps_quote(group, "grupo")?,
+                    ps_quote(user, "usuario")?
+                )
+            }
         };
         return run_mutation(
             ctx,
@@ -321,6 +364,55 @@ fn group_mutation(
     )
 }
 
+fn add_administrator_access(ctx: &Context, args: &[String]) -> Result<(), String> {
+    let mut user = None;
+    let mut index = 1;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--user" => {
+                user = Some(
+                    args.get(index + 1)
+                        .ok_or("--user requiere una cuenta")?
+                        .clone(),
+                );
+                index += 2;
+            }
+            "--yes" => index += 1,
+            value if value.starts_with('-') => {
+                return Err(format!("opción admin-add desconocida: {value}"));
+            }
+            value if user.is_none() => {
+                user = Some(value.to_owned());
+                index += 1;
+            }
+            value => return Err(format!("argumento inesperado: {value}")),
+        }
+    }
+    let (target, member) = match user {
+        Some(value) => {
+            let value = valid_principal(&value)?;
+            if is_trustedinstaller_identity(value) {
+                return Err("TrustedInstaller es una identidad de servicio, no un grupo de usuarios. LTools solo puede añadir cuentas al grupo local Administradores.".into());
+            }
+            (value.to_owned(), ps_quote(value, "cuenta")?)
+        }
+        None => (
+            "usuario actual".to_owned(),
+            "[System.Security.Principal.WindowsIdentity]::GetCurrent().Name".to_owned(),
+        ),
+    };
+    let script = format!(
+        "$member={member}; Add-LocalGroupMember -SID 'S-1-5-32-544' -Member $member -Confirm:$false"
+    );
+    run_mutation(
+        ctx,
+        &target,
+        "añadir la cuenta al grupo local Administradores (control total del equipo)",
+        script,
+        "Add-LocalGroupMember Administrators",
+    )
+}
+
 fn run_mutation(
     ctx: &Context,
     target: &str,
@@ -339,7 +431,31 @@ fn run_mutation(
         record(ctx, target, "planned", record_data)?;
         return Ok(());
     }
-    let result = powershell(&script);
+    let program = if command_exists("powershell") {
+        "powershell"
+    } else {
+        "pwsh"
+    };
+    let args = vec![
+        "-NoProfile".to_owned(),
+        "-NonInteractive".to_owned(),
+        "-ExecutionPolicy".to_owned(),
+        "Bypass".to_owned(),
+        "-Command".to_owned(),
+        script,
+    ];
+    let result = crate::platform::run_with_privilege(program, &args, false)
+        .map_err(|error| format!("no se pudo solicitar elevación UAC: {error}"))
+        .and_then(|ok| {
+            if ok {
+                Ok(())
+            } else {
+                Err(
+                    "la acción falló o fue cancelada; comprueba la autorización UAC y los permisos"
+                        .into(),
+                )
+            }
+        });
     record(
         ctx,
         target,
@@ -406,7 +522,9 @@ fn menu(ctx: &Context) -> Result<(), String> {
         println!(" 1) Cuentas  2) Grupos  3) Sesiones  4) Inspeccionar  5) Crear  6) Editar");
         println!(" 7) Contraseña  8) Activar  9) Desactivar  10) Eliminar  11) Caducidad");
         println!("12) Crear grupo  13) Eliminar grupo  14) Añadir miembro  15) Retirar miembro");
-        println!("16) Administración avanzada  q) Volver");
+        println!(
+            "16) Administración avanzada  17) Añadir usuario actual a Administradores  q) Volver"
+        );
         let choice =
             crate::menu_input("Elige una opción (Enter para volver): ").unwrap_or_default();
         let result = match choice.trim() {
@@ -458,6 +576,7 @@ fn menu(ctx: &Context) -> Result<(), String> {
                 group_mutation(c, &vec!["group-remove".into(), value.into()], false, true)
             }),
             "16" => open_lusrmgr(ctx),
+            "17" => add_administrator_access(ctx, &["admin-add".into()]),
             "" | "q" | "Q" => return Ok(()),
             _ => Ok(()),
         };
@@ -481,4 +600,32 @@ where
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_builtin_administrators_group, is_trustedinstaller_identity, valid_principal};
+
+    #[test]
+    fn resolves_local_administrators_by_alias_or_well_known_sid() {
+        assert!(is_builtin_administrators_group("Administrators"));
+        assert!(is_builtin_administrators_group("Administradores"));
+        assert!(is_builtin_administrators_group("S-1-5-32-544"));
+        assert!(!is_builtin_administrators_group("Remote Desktop Users"));
+    }
+
+    #[test]
+    fn accepts_domain_and_entra_principals_but_rejects_option_injection() {
+        assert!(valid_principal("CONTOSO\\alice").is_ok());
+        assert!(valid_principal("AzureAD\\user@example.com").is_ok());
+        assert!(valid_principal("--command").is_err());
+        assert!(valid_principal("bad;name").is_err());
+    }
+
+    #[test]
+    fn does_not_treat_trustedinstaller_as_a_user_group() {
+        assert!(is_trustedinstaller_identity("TrustedInstaller"));
+        assert!(is_trustedinstaller_identity("nt service\\trustedinstaller"));
+        assert!(!is_trustedinstaller_identity("CONTOSO\\alice"));
+    }
 }

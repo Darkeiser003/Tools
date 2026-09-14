@@ -144,26 +144,34 @@ pub fn host_tool_version(tool: &super::HostTool) -> Option<String> {
 }
 
 pub fn run_with_privilege(program: &str, args: &[String], dry_run: bool) -> io::Result<bool> {
-    println!("  > {} {}", program, args.join(" "));
+    println!(
+        "  > {} ({} argumento(s); valores no mostrados)",
+        program,
+        args.len()
+    );
     if dry_run {
         return Ok(true);
     }
     if is_elevated() {
         return Ok(Command::new(program).args(args).status()?.success());
     }
-    // NSudo nunca se usa silenciosamente. Solo se activa desde la superficie
-    // WinSlim después de que el usuario lo haya elegido para esta sesión.
+    // NSudo solo se usa tras una selección explícita de backend para esta
+    // sesión; las acciones normales siguen solicitando la elevación UAC.
     if std::env::var_os("LTOOLS_USE_NSUDO").is_some_and(|value| value == "1") {
         if let Some(nsudo) = nsudo_path() {
             let mut nsudo_args = vec![
                 "-U:E".into(),
-                "-P:E".into(),
                 "-Wait".into(),
                 "-UseCurrentConsole".into(),
                 program.to_string(),
             ];
             nsudo_args.extend_from_slice(args);
-            println!("  > {} {}", nsudo.display(), nsudo_args.join(" "));
+            println!(
+                "  > {} -U:E -Wait -UseCurrentConsole {} ({} argumento(s) omitidos)",
+                nsudo.display(),
+                program,
+                args.len()
+            );
             return Ok(Command::new(nsudo).args(nsudo_args).status()?.success());
         }
         eprintln!("Se solicitó NSudo para esta sesión, pero no se encontró en WinSlim ni en PATH.");
@@ -176,15 +184,19 @@ pub fn run_with_privilege(program: &str, args: &[String], dry_run: bool) -> io::
     } else {
         return Ok(false);
     };
+    // Start-Process combina los elementos de -ArgumentList en una sola línea
+    // de comandos. Cada argumento debe ir citado según las reglas de Windows;
+    // citarlo solo como literal PowerShell pierde los límites cuando hay
+    // espacios y puede cambiar el destino o las opciones de la acción.
     let arguments = args
         .iter()
-        .map(|value| format!("'{}'", value.replace('\'', "''")))
+        .map(|value| crate::common::windows_command_line_argument(value))
         .collect::<Vec<_>>()
-        .join(",");
+        .join(" ");
     let script = format!(
-        "$p=Start-Process -FilePath '{}' -ArgumentList @({}) -Verb RunAs -Wait -PassThru; exit $p.ExitCode",
-        program.replace('\'', "''"),
-        arguments
+        "$p=Start-Process -FilePath {} -ArgumentList {} -Verb RunAs -Wait -PassThru; exit $p.ExitCode",
+        crate::common::powershell_single_quoted(program),
+        crate::common::powershell_single_quoted(&arguments)
     );
     Ok(Command::new(shell)
         .args([
@@ -1235,7 +1247,7 @@ fn running_under_wine() -> bool {
     std::env::var_os("WINEPREFIX").is_some() || std::env::var_os("WINELOADERNOEXEC").is_some()
 }
 
-pub fn fuse_available() -> bool {
+pub fn fuse_prerequisites_detected() -> bool {
     false
 }
 
@@ -1245,6 +1257,11 @@ pub fn winslim_root() -> Option<PathBuf> {
 }
 
 pub fn nsudo_path() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("LTOOLS_NSUDO_PATH").map(PathBuf::from) {
+        if path.is_file() && is_nsudo_launcher(&path) {
+            return Some(path);
+        }
+    }
     let mut candidates = Vec::new();
     if let Some(root) = winslim_root() {
         for directory in [
@@ -1280,24 +1297,68 @@ fn find_nsudo(directory: &Path, depth: usize) -> Option<PathBuf> {
         .ok()?
         .flatten()
         .collect::<Vec<_>>();
-    for entry in &entries {
-        let path = entry.path();
-        if path.is_file()
-            && path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| {
-                    let lower = name.to_ascii_lowercase();
-                    lower.starts_with("nsudo") && lower.ends_with(".exe")
-                })
-        {
-            return Some(path);
+    let mut launchers = entries
+        .iter()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file())
+        .filter(|path| is_nsudo_launcher(path))
+        .collect::<Vec<_>>();
+    launchers.sort_by_key(|path| {
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        match name.as_str() {
+            "nsudolc.exe" => 0,
+            "nsudolg.exe" => 1,
+            "nsudo.exe" => 2,
+            _ => 3,
         }
+    });
+    if let Some(launcher) = launchers.into_iter().next() {
+        return Some(launcher);
     }
-    entries
+    let mut directories = entries
         .into_iter()
         .filter(|entry| entry.path().is_dir())
+        .collect::<Vec<_>>();
+    directories.sort_by_key(|entry| entry.file_name().to_string_lossy().to_ascii_lowercase());
+    directories
+        .into_iter()
         .find_map(|entry| find_nsudo(&entry.path(), depth + 1))
+}
+
+fn is_nsudo_launcher(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            matches!(
+                name.to_ascii_lowercase().as_str(),
+                "nsudolc.exe" | "nsudolg.exe" | "nsudo.exe"
+            )
+        })
+}
+
+#[cfg(test)]
+mod nsudo_detection_tests {
+    use super::is_nsudo_launcher;
+    use std::path::Path;
+
+    #[test]
+    fn detector_accepts_supported_launchers_but_not_sibling_tools() {
+        for name in ["NSudoLC.exe", "NSudoLG.exe", "NSudo.exe", "nsudolg.EXE"] {
+            assert!(is_nsudo_launcher(Path::new(name)), "missed {name}");
+        }
+        for name in [
+            "NSudoDM.exe",
+            "NSudoHelper.exe",
+            "NSudoGUI.exe",
+            "NSudo.txt",
+        ] {
+            assert!(!is_nsudo_launcher(Path::new(name)), "misdetected {name}");
+        }
+    }
 }
 
 fn command_path(name: &str) -> Option<PathBuf> {
@@ -1317,7 +1378,7 @@ fn command_output(program: &str, args: &[&str]) -> Option<String> {
     })
 }
 
-fn is_elevated() -> bool {
+pub fn is_elevated() -> bool {
     let shell = if command_exists("powershell") {
         "powershell"
     } else if command_exists("pwsh") {

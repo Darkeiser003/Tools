@@ -8,6 +8,7 @@ BIN="$ROOT_DIR/rust/target/release/ltools"
 VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/rust/Cargo.toml" | head -n1)"
 APPIMAGE_PATH=""
 KEEP_TEMP=0
+REQUIRE_GUI=0
 
 die() { printf 'MENU E2E ERROR: %s\n' "$1" >&2; exit 1; }
 ok() { printf '  OK    %s\n' "$1"; }
@@ -17,11 +18,18 @@ while (($#)); do
         --binary) (($# >= 2)) || die '--binary necesita una ruta'; BIN="$2"; shift ;;
         --appimage) (($# >= 2)) || die '--appimage necesita una ruta'; APPIMAGE_PATH="$2"; shift ;;
         --keep-temp) KEEP_TEMP=1 ;;
-        -h|--help) printf 'Uso: %s [--binary RUTA] [--appimage RUTA] [--keep-temp]\n' "$0"; exit 0 ;;
+        --require-gui) REQUIRE_GUI=1 ;;
+        -h|--help) printf 'Uso: %s [--binary RUTA] [--appimage RUTA] [--require-gui] [--keep-temp]\n' "$0"; exit 0 ;;
         *) die "opción desconocida: $1" ;;
     esac
     shift
 done
+
+if (( REQUIRE_GUI )); then
+    command -v timeout >/dev/null 2>&1 || die '--require-gui exige timeout'
+    command -v xvfb-run >/dev/null 2>&1 || die '--require-gui exige xvfb-run'
+    timeout 10 xvfb-run -a true >/dev/null 2>&1 || die '--require-gui no pudo iniciar un display Xvfb'
+fi
 
 [[ -x "$BIN" ]] || die "no existe el binario ejecutable: $BIN"
 [[ -x "$ROOT_DIR/ltools.sh" ]] || die "no existe ltools.sh ejecutable"
@@ -42,6 +50,7 @@ export HOME="$TMP_DIR/home"
 export XDG_CONFIG_HOME="$HOME/.config"
 export XDG_DATA_HOME="$HOME/.local/share"
 export XDG_STATE_HOME="$HOME/.local/state"
+export LTOOLS_LANG=es
 export LTOOLS_NO_MOUNTS=1
 export LTOOLS_NO_AUTO_TERMINAL=1
 mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"
@@ -147,6 +156,76 @@ run_menu_expected_status() {
 }
 
 assert_file() { [[ -f "$1" ]] || die "falta el fichero esperado: $1"; }
+
+printf 'E2E: recorriendo el índice completo de guías CLI y GUI...\n'
+GUIDE_TOPICS=(
+    audit packages software installable git gh aliases automation automation-register clean
+    storage storage-partitions storage-filesystems storage-volumes system
+    services accounts native network connectivity boot registry diagnostics
+    wine defaults settings containers containers-lifecycle containers-images
+    containers-volumes containers-compose kubernetes ssh adb utilities actions
+    privileges
+)
+for guide_topic in "${GUIDE_TOPICS[@]}"; do
+    for guide_mode in cli gui; do
+        guide_output="$TMP_DIR/guide-${guide_mode}-${guide_topic}.out"
+        if [[ -n "$APPIMAGE_PATH" ]]; then
+            if timeout 60 env APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" guide "$guide_mode" "$guide_topic" >"$guide_output" 2>&1; then
+                guide_status=0
+            else
+                guide_status=$?
+            fi
+        else
+            if timeout 60 "$BIN" guide "$guide_mode" "$guide_topic" >"$guide_output" 2>&1; then
+                guide_status=0
+            else
+                guide_status=$?
+            fi
+        fi
+        if [[ "$guide_status" -ne 0 ]]; then
+            sed -n '1,100p' "$guide_output" >&2
+            die "la guía $guide_mode/$guide_topic terminó con código $guide_status"
+        fi
+        grep -Eq 'GUÍA (CLI|GRÁFICA)' "$guide_output" ||
+            die "la guía $guide_mode/$guide_topic no tiene cabecera"
+        if [[ "$guide_mode" == gui ]]; then
+            # Las guías de familias sin pantalla propia (por ejemplo
+            # privilegios o acciones) son referencias transversales; las que
+            # sí se abren desde un menú deben contener su índice contextual.
+            if ! grep -Eq 'Esta categoría no tiene un catálogo contextual registrado' "$guide_output"; then
+                grep -Fq 'Volver' "$guide_output" ||
+                    die "la guía GUI/$guide_topic no documenta la navegación de vuelta"
+                grep -Eq 'Menú completo|PANTALLA PRINCIPAL|MENÚ COMPLETO' "$guide_output" ||
+                    die "la guía GUI/$guide_topic no contiene su índice de menú"
+            fi
+        else
+            grep -Eq 'Opciones de consulta:|GUÍA CLI' "$guide_output" ||
+                die "la guía CLI/$guide_topic no contiene sus opciones nativas"
+        fi
+    done
+done
+ALL_GUIDES_OUTPUT="$TMP_DIR/guide-all.out"
+if [[ -n "$APPIMAGE_PATH" ]]; then
+    if timeout 60 env APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" guide gui all >"$ALL_GUIDES_OUTPUT" 2>&1; then
+        guide_status=0
+    else
+        guide_status=$?
+    fi
+else
+    if timeout 60 "$BIN" guide gui all >"$ALL_GUIDES_OUTPUT" 2>&1; then
+        guide_status=0
+    else
+        guide_status=$?
+    fi
+fi
+if [[ "$guide_status" -ne 0 ]]; then
+    sed -n '1,100p' "$ALL_GUIDES_OUTPUT" >&2
+    die "el índice de guías GUI terminó con código $guide_status"
+fi
+for index_marker in 'Panel principal:' 'Cada categoría abre un menú propio' 'Las guías contextuales'; do
+    grep -Fq "$index_marker" "$ALL_GUIDES_OUTPUT" || die "el índice GUI no contiene: $index_marker"
+done
+ok 'todas las guías CLI/GUI tienen índice, opciones y navegación documentada'
 
 printf 'E2E: comprobando la fachada, que siempre usa el backend Rust...\n'
 run_menu main-facade-quit $'q\n' 'LTools'
@@ -305,6 +384,29 @@ for language_category in "${LANGUAGE_CATEGORIES[@]}"; do
 done
 ok 'categorías principales traducidas en los 15 idiomas compatibles'
 
+SETTINGS_GUIDE_LABELS=(
+    'es:Guía de ajustes y visibilidad' 'en:Settings and visibility guide'
+    'de:Hilfe zu Einstellungen und Sichtbarkeit'
+    'fr:Guide des réglages et de la visibilité'
+    'pt:Guia de definições e visibilidade' 'it:Guida a impostazioni e visibilità'
+    'pl:Przewodnik po ustawieniach i widoczności'
+    'ar:دليل الإعدادات والظهور' 'hi:सेटिंग और दृश्यता मार्गदर्शिका'
+    'ja:設定と表示のガイド' 'ko:설정 및 표시 안내'
+    'ro:Ghid pentru setări și vizibilitate'
+    'ru:Руководство по настройкам и видимости'
+    'uk:Посібник із налаштувань і видимості' 'zh:设置与可见性指南'
+)
+for settings_guide_label in "${SETTINGS_GUIDE_LABELS[@]}"; do
+    language="${settings_guide_label%%:*}"
+    marker="${settings_guide_label#*:}"
+    guide_output="$TMP_DIR/settings-guide-${language}.out"
+    env LTOOLS_LANG="$language" LTOOLS_NO_MOUNTS=1 "$BIN" guide gui settings >"$guide_output" 2>&1 ||
+        die "la guía GUI/Ajustes no respondió en $language"
+    grep -Fq -- "$marker" "$guide_output" ||
+        die "la guía GUI/Ajustes no refleja sus controles traducidos en $language"
+done
+ok 'guía de Ajustes coincide con su control de ayuda en los 15 idiomas compatibles'
+
 CLEAN_PATH="$HOME/cache-candidate"
 mkdir -p "$CLEAN_PATH"
 printf 'keep-me\n' > "$CLEAN_PATH/file.txt"
@@ -313,6 +415,78 @@ printf 'y\n' | run_bash clean --dry-run --path "$CLEAN_PATH" --plan "$CLEAN_PLAN
 [[ -d "$CLEAN_PATH" ]] || die 'clean --dry-run modificó una ruta'
 grep -Fq $'trash-move\t' "$CLEAN_PLAN" || die 'clean --dry-run no registró el plan'
 ok 'limpieza protegida en dry-run sin mutar datos'
+
+MAP_COPY_DEST="$TMP_DIR/map-copy.bin"
+MAP_MOVE_DEST="$TMP_DIR/map-move.bin"
+MAP_DELETE_TARGET="$FIXTURE/duplicate-b.bin"
+run_bash storage manage copy --source "$FIXTURE/duplicate-a.bin" --destination "$MAP_COPY_DEST" --dry-run >"$TMP_DIR/map-copy.out"
+grep -Fq 'Simulación: se ejecutaría copy' "$TMP_DIR/map-copy.out" || die 'el mapa no expuso la acción de copiar en dry-run'
+run_bash storage manage move --source "$FIXTURE/duplicate-a.bin" --destination "$MAP_MOVE_DEST" --dry-run >"$TMP_DIR/map-move.out"
+grep -Fq 'Simulación: se ejecutaría move' "$TMP_DIR/map-move.out" || die 'el mapa no expuso la acción de mover en dry-run'
+run_bash storage manage delete --path "$MAP_DELETE_TARGET" --dry-run >"$TMP_DIR/map-delete.out"
+[[ -s "$TMP_DIR/map-delete.out" ]] || die 'el mapa no expuso la acción de papelera en dry-run'
+[[ -f "$FIXTURE/duplicate-a.bin" && -f "$MAP_DELETE_TARGET" && ! -e "$MAP_COPY_DEST" && ! -e "$MAP_MOVE_DEST" ]] ||
+    die 'las acciones del mapa en dry-run modificaron el fixture'
+ok 'acciones del mapa (copiar, mover y papelera) verificadas sin mutar datos'
+
+if [[ "$(id -u)" -eq 0 ]]; then
+    printf '  SKIP  permisos efectivos del mapa: root puede eludir los bits de modo\n'
+else
+    MAP_READ_ONLY="$TMP_DIR/map-read-only.txt"
+    printf 'read-only fixture\n' >"$MAP_READ_ONLY"
+    chmod 0444 "$MAP_READ_ONLY"
+    run_bash storage map --path "$MAP_READ_ONLY" --depth 0 --format json >"$TMP_DIR/map-read-only.json"
+    grep -Fq '"writable":false' "$TMP_DIR/map-read-only.json" ||
+        die 'el mapa marcó como escribible un archivo que el usuario actual no puede modificar'
+    chmod 0644 "$MAP_READ_ONLY"
+    run_bash storage map --path "$MAP_READ_ONLY" --depth 0 --format json >"$TMP_DIR/map-writable.json"
+    grep -Fq '"writable":true' "$TMP_DIR/map-writable.json" ||
+        die 'el mapa no reconoció un archivo escribible por el usuario actual'
+    ok 'el mapa contrasta escritura efectiva del usuario, no solo bits del modo'
+fi
+
+MAP_COPY_SOURCE="$TMP_DIR/map-copy-source.txt"
+MAP_COPY_REAL="$TMP_DIR/map-copy-real.txt"
+MAP_MOVE_SOURCE="$TMP_DIR/map-move-source.txt"
+MAP_MOVE_REAL="$TMP_DIR/map-move-real.txt"
+MAP_DELETE_REAL="$TMP_DIR/map-delete-real.txt"
+printf 'copy fixture\n' >"$MAP_COPY_SOURCE"
+printf 'move fixture\n' >"$MAP_MOVE_SOURCE"
+printf 'trash fixture\n' >"$MAP_DELETE_REAL"
+run_bash storage manage copy --source "$MAP_COPY_SOURCE" --destination "$MAP_COPY_REAL" --yes >/dev/null
+cmp -s "$MAP_COPY_SOURCE" "$MAP_COPY_REAL" || die 'storage manage copy no conservó el contenido'
+MAP_EXISTING_DEST="$TMP_DIR/map-existing-destination.txt"
+printf 'must stay unchanged\n' >"$MAP_EXISTING_DEST"
+if run_bash storage manage copy --source "$MAP_COPY_SOURCE" --destination "$MAP_EXISTING_DEST" --yes >"$TMP_DIR/map-copy-collision.out" 2>&1; then
+    die 'storage manage copy sobrescribió un destino existente'
+fi
+[[ "$(<"$MAP_EXISTING_DEST")" == 'must stay unchanged' ]] || die 'un destino existente cambió tras rechazar la copia'
+MAP_SOURCE_DIR="$TMP_DIR/map-copy-tree"
+MAP_SOURCE_ALIAS="$TMP_DIR/map-copy-tree-alias"
+mkdir -p "$MAP_SOURCE_DIR"
+printf 'tree fixture\n' >"$MAP_SOURCE_DIR/data.txt"
+ln -s "$MAP_SOURCE_DIR" "$MAP_SOURCE_ALIAS"
+if run_bash storage manage copy --source "$MAP_SOURCE_DIR" --destination "$MAP_SOURCE_ALIAS/nested-copy" --yes >"$TMP_DIR/map-copy-alias.out" 2>&1; then
+    die 'storage manage copy permitió crear el destino dentro de la fuente a través de un enlace'
+fi
+[[ ! -e "$MAP_SOURCE_DIR/nested-copy" ]] || die 'la copia mediante enlace comenzó a mutar la fuente'
+run_bash storage manage move --source "$MAP_MOVE_SOURCE" --destination "$MAP_MOVE_REAL" --yes >/dev/null
+[[ ! -e "$MAP_MOVE_SOURCE" && -f "$MAP_MOVE_REAL" ]] || die 'storage manage move no trasladó el fixture'
+MAP_ROLLBACK_SOURCE="$TMP_DIR/map-rollback-source.txt"
+MAP_ROLLBACK_DEST="$TMP_DIR/map-rollback-destination.txt"
+MAP_ROLLBACK_PLAN="$TMP_DIR/map-rollback-plan.tsv"
+printf 'rollback fixture\n' >"$MAP_ROLLBACK_SOURCE"
+run_bash storage manage move --source "$MAP_ROLLBACK_SOURCE" --destination "$MAP_ROLLBACK_DEST" --yes --plan "$MAP_ROLLBACK_PLAN" >/dev/null
+grep -Fq $'path-move\t' "$MAP_ROLLBACK_PLAN" || die 'storage manage move no registró el origen para rollback'
+printf 'y\n' | run_bash rollback --plan "$MAP_ROLLBACK_PLAN" >"$TMP_DIR/map-rollback.out"
+[[ -f "$MAP_ROLLBACK_SOURCE" && ! -e "$MAP_ROLLBACK_DEST" ]] || die 'el rollback no restauró un movimiento del mapa'
+if command -v gio >/dev/null 2>&1 || command -v trash-put >/dev/null 2>&1; then
+    run_bash storage manage delete --path "$MAP_DELETE_REAL" --yes >/dev/null
+    [[ ! -e "$MAP_DELETE_REAL" ]] || die 'storage manage delete no retiró el fixture a la papelera'
+    ok 'acciones reales del mapa no sobrescriben archivos, revierten movimientos y usan la papelera nativa'
+else
+    ok 'copiar, mover y rollback del mapa verificados; se omite solo la papelera real (sin gio ni trash-put)'
+fi
 
 SYSTEM_PLAN="$TMP_DIR/system-plan.tsv"
 run_bash system --dry-run --plan "$SYSTEM_PLAN" status >/dev/null
@@ -439,9 +613,11 @@ if command -v xvfb-run >/dev/null 2>&1; then
             || { sed -n '1,120p' "$TMP_DIR/rust-gui-noargs.out" >&2; die 'la GUI Rust no arrancó sin argumentos'; }
         ok 'ejecutable Rust normal abre y cierra la GUI sin argumentos'
     else
+        (( REQUIRE_GUI == 0 )) || die '--require-gui no pudo iniciar Xvfb para el arranque GUI'
         printf '  SKIP  GUI Rust sin argumentos: Xvfb no puede crear un display aislado\n'
     fi
 else
+    (( REQUIRE_GUI == 0 )) || die '--require-gui exige xvfb-run para el arranque GUI'
     printf '  SKIP  GUI Rust sin argumentos: xvfb-run no está disponible\n'
 fi
 

@@ -10,11 +10,14 @@ APPIMAGE_PATH=""
 RUNNER_PATH=""
 LOG_PATH=""
 KEEP_TEMP=0
+REQUIRE_FUSE=0
+REQUIRE_GUI=0
+APPIMAGE_FUSE_WORKS=0
 
 die() { printf 'SMOKE ERROR: %s\n' "$1" >&2; exit 1; }
 ok() { printf '  OK    %s\n' "$1"; }
 skip() { printf '  SKIP  %s\n' "$1"; }
-usage() { printf 'Uso: %s [--binary RUTA] [--appimage RUTA] [--runner RUTA] [--log RUTA] [--keep-temp]\n' "$0"; }
+usage() { printf 'Uso: %s [--binary RUTA] [--appimage RUTA] [--runner RUTA] [--log RUTA] [--require-fuse] [--require-gui] [--keep-temp]\n' "$0"; }
 
 while (($#)); do
     case "$1" in
@@ -22,6 +25,8 @@ while (($#)); do
         --appimage) (($# >= 2)) || die '--appimage necesita una ruta'; APPIMAGE_PATH="$2"; shift ;;
         --runner) (($# >= 2)) || die '--runner necesita una ruta'; RUNNER_PATH="$2"; shift ;;
         --log) (($# >= 2)) || die '--log necesita una ruta'; LOG_PATH="$2"; shift ;;
+        --require-fuse) REQUIRE_FUSE=1 ;;
+        --require-gui) REQUIRE_GUI=1 ;;
         --keep-temp) KEEP_TEMP=1 ;;
         -h|--help) usage; exit 0 ;;
         *) die "opción desconocida: $1" ;;
@@ -29,14 +34,31 @@ while (($#)); do
     shift
 done
 
+if (( REQUIRE_GUI )); then
+    for command_name in timeout xvfb-run xdotool import identify file; do
+        command -v "$command_name" >/dev/null 2>&1 || die "--require-gui exige «$command_name»"
+    done
+    timeout 10 xvfb-run -a -s "-screen 0 1280x900x24" true >/dev/null 2>&1 ||
+        die '--require-gui no pudo iniciar un display Xvfb'
+fi
+
 [[ -x "$BIN" ]] || die "no existe el binario ejecutable: $BIN"
 [[ -f "$ROOT_DIR/ltools-cli.sh" ]] || die 'no existe el lanzador CLI Linux'
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/cachyos-smoke.XXXXXX")"
-if [[ "$KEEP_TEMP" -eq 0 ]]; then
-    trap 'rm -rf -- "$TMP_DIR"' EXIT
-else
+cleanup_smoke_temp() {
+    local status=$?
+    if (( KEEP_TEMP != 0 || status != 0 )); then
+        if (( status != 0 && KEEP_TEMP == 0 )); then
+            printf 'Smoke fallido; temporales conservados para diagnóstico: %s\n' "$TMP_DIR" >&2
+        fi
+    else
+        rm -rf -- "$TMP_DIR"
+    fi
+}
+if [[ "$KEEP_TEMP" -ne 0 ]]; then
     printf 'Temporales conservados en: %s\n' "$TMP_DIR"
 fi
+trap cleanup_smoke_temp EXIT
 # Toda la batería debe ser hermética: los dry-run de acciones mutables crean
 # una frontera de transacción aunque no ejecuten el comando. Si se hereda el
 # XDG_STATE_HOME del host, una política de solo lectura del entorno puede
@@ -45,6 +67,7 @@ export HOME="$TMP_DIR/default-home"
 export XDG_CONFIG_HOME="$TMP_DIR/default-config"
 export XDG_DATA_HOME="$TMP_DIR/default-data"
 export XDG_STATE_HOME="$TMP_DIR/default-state"
+export LTOOLS_LANG=es
 mkdir -p -- "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"
 
 printf 'Smoke tests de LTools\n'
@@ -67,6 +90,10 @@ GUIDE_GUI_STORAGE_OUTPUT="$("$BIN" guide gui storage)"
 grep -Fq 'GUÍA GRÁFICA' <<<"$GUIDE_GUI_STORAGE_OUTPUT" || die 'la guía gráfica no se identifica como GUI'
 grep -Fq 'Proceso complejo' <<<"$GUIDE_GUI_STORAGE_OUTPUT" || die 'la guía gráfica no explica un proceso complejo'
 ! grep -Fq 'parted' <<<"$GUIDE_GUI_STORAGE_OUTPUT" || die 'la guía gráfica expuso comandos internos'
+for internal_option in wipefs mdadm --depth pkexec; do
+    ! grep -Fq -- "$internal_option" <<<"$GUIDE_GUI_STORAGE_OUTPUT" ||
+        die "la guía gráfica expuso la opción interna $internal_option"
+done
 GUIDE_ALL_OUTPUT="$("$BIN" guide all)" || die 'el índice de guías no responde'
 for guide_topic in network boot services storage wine containers kubernetes actions; do
     grep -Fq "$guide_topic" <<<"$GUIDE_ALL_OUTPUT" || die "el índice de guías no incluye $guide_topic"
@@ -113,9 +140,13 @@ ok 'gestor de alias Linux: creación, expansión, desactivación y lanzador'
 
 MAP_OUTPUT="$(XDG_STATE_HOME="$TMP_DIR/map-state" "$BIN" storage map --path "$TMP_DIR" --depth 1 --max-children 3)"
 grep -Fq 'MAPA DE DISCOS' <<<"$MAP_OUTPUT" || die 'el mapa de almacenamiento no mostró su cabecera'
-grep -Fq 'Tamaño = contenido accesible acumulado' <<<"$MAP_OUTPUT" || die 'el mapa no documentó el tamaño acumulado'
+grep -Fq 'Contenido = tamaño accesible acumulado' <<<"$MAP_OUTPUT" || die 'el mapa no documentó el tamaño acumulado'
+grep -Fq 'total=' <<<"$MAP_OUTPUT" || die 'el mapa no mostró capacidad total, ocupado y libre'
 MAP_JSON="$(XDG_STATE_HOME="$TMP_DIR/map-state" "$BIN" storage map --path "$TMP_DIR" --depth 0 --format json)"
 grep -Fq 'ltools-storage-map-v1' <<<"$MAP_JSON" || die 'el mapa JSON no declaró su esquema'
+grep -Fq 'filesystem_total' <<<"$MAP_JSON" || die 'el mapa JSON no mostró capacidad total del sistema de archivos'
+grep -Fq 'filesystem_free' <<<"$MAP_JSON" || die 'el mapa JSON no mostró espacio libre total'
+grep -Fq 'filesystem_available' <<<"$MAP_JSON" || die 'el mapa JSON no mostró espacio disponible para la cuenta'
 EXPLAIN_OUTPUT="$(XDG_STATE_HOME="$TMP_DIR/map-state" "$BIN" storage explain --path "$TMP_DIR")"
 grep -Fq 'Permisos máximos del proceso:' <<<"$EXPLAIN_OUTPUT" || die 'storage explain no mostró el contexto de permisos'
 ok 'mapa Linux: árbol, tamaños acumulados, JSON y explicación de permisos'
@@ -127,9 +158,9 @@ done
 ! grep -Fq -- 'WinSlim' <<<"$MENU_OUTPUT" || die 'la build Linux mostró la categoría exclusiva de WinSlim'
 ok 'menú principal Linux con categorías generales y sin WinSlim'
 if command -v xvfb-run >/dev/null 2>&1; then
-    if timeout 10 xvfb-run -a true >/dev/null 2>&1; then
+    if timeout 10 xvfb-run -a -s "-screen 0 1280x900x24" true >/dev/null 2>&1; then
         set +e
-        GUI_OUTPUT="$(timeout 30 xvfb-run -a env GDK_BACKEND=x11 \
+        GUI_OUTPUT="$(timeout 30 xvfb-run -a -s "-screen 0 1280x900x24" env GDK_BACKEND=x11 \
             LTOOLS_GUI_SMOKE=1 LTOOLS_GUI_REQUIRED=1 LTOOLS_DISABLE_GUI=0 \
             LTOOLS_TERMINAL=auto \
             HOME="$TMP_DIR/gui-home" XDG_STATE_HOME="$TMP_DIR/gui-state" \
@@ -148,18 +179,20 @@ if command -v xvfb-run >/dev/null 2>&1; then
         # también se detectan botones que no llevan comando, argumento o
         # navegación asociada. Las capturas se dejan en dist/captures para
         # poder revisarlas después del build.
-        GUI_CAPTURE_DIR="$ROOT_DIR/dist/captures"
+        GUI_CAPTURE_DIR="${LTOOLS_GUI_CAPTURE_DIR:-$ROOT_DIR/dist/captures}"
         GUI_AUDIT_MARKER="$TMP_DIR/gui-audit.marker"
         mkdir -p -- "$GUI_CAPTURE_DIR"
         rm -f -- "$GUI_AUDIT_MARKER"
 
         capture_gui_page() {
-            local page capture marker capture_log
+            local page capture marker capture_log window_log scroll_capture
             page="$1"
             capture="$2"
             marker="${3:-}"
+            scroll_capture="${4:-}"
             capture_log="$TMP_DIR/gui-capture-${page}.log"
-            timeout 30 xvfb-run -a bash -c '
+            window_log="$TMP_DIR/gui-window-${page}.log"
+            timeout 30 xvfb-run -a -s "-screen 0 1280x900x24" bash -c '
                 set -Eeuo pipefail
                 export GDK_BACKEND=x11
                 unset WAYLAND_DISPLAY WAYLAND_SOCKET
@@ -168,11 +201,17 @@ if command -v xvfb-run >/dev/null 2>&1; then
                 page="$2"
                 capture="$3"
                 marker="$4"
+                window_log="$7"
+                scroll_capture="$8"
                 export LTOOLS_NO_MOUNTS=1
                 export LTOOLS_GUI_SMOKE=1
                 export LTOOLS_GUI_REQUIRED=1
                 export LTOOLS_DISABLE_GUI=0
-                export LTOOLS_GUI_SMOKE_HOLD_MS=1800
+                if [[ -n "$scroll_capture" ]]; then
+                    export LTOOLS_GUI_SMOKE_HOLD_MS=6000
+                else
+                    export LTOOLS_GUI_SMOKE_HOLD_MS=1800
+                fi
                 export LTOOLS_GUI_SMOKE_NAV_PAGE="$page"
                 export HOME="$5"
                 export XDG_STATE_HOME="$6"
@@ -181,7 +220,7 @@ if command -v xvfb-run >/dev/null 2>&1; then
                 else
                     unset LTOOLS_GUI_AUDIT_MARKER
                 fi
-                "$binary" >"$capture.log" 2>&1 &
+                "$binary" >"$window_log" 2>&1 &
                 pid=$!
                 window_id=""
                 for _ in {1..24}; do
@@ -198,25 +237,190 @@ if command -v xvfb-run >/dev/null 2>&1; then
                 sleep 0.6
                 import -window "$window_id" "$capture" >/dev/null 2>&1 ||
                     import -window root "$capture" >/dev/null 2>&1
+                if [[ -n "$scroll_capture" ]]; then
+                    # Captura también las opciones que quedan fuera del primer
+                    # viewport y confirma que los menús largos se desplazan.
+                    xdotool mousemove --window "$window_id" 700 560 \
+                        click --repeat 50 --delay 80 5
+                    sleep 0.3
+                    import -window "$window_id" "$scroll_capture" >/dev/null 2>&1 ||
+                        import -window root "$scroll_capture" >/dev/null 2>&1
+                fi
                 wait "$pid"
                 [[ -s "$capture" ]]
             ' _ "$BIN" "$page" "$capture" "$marker" \
                 "$TMP_DIR/gui-page-${page}-home" "$TMP_DIR/gui-page-${page}-state" \
+                "$window_log" "$scroll_capture" \
                 >"$capture_log" 2>&1
         }
 
-        capture_gui_page 8 "$GUI_CAPTURE_DIR/linux-git-github.png" "$GUI_AUDIT_MARKER" || {
+        capture_gui_page 8 "$GUI_CAPTURE_DIR/linux-git-github.png" "$GUI_AUDIT_MARKER" \
+            "$GUI_CAPTURE_DIR/linux-git-github-bottom.png" || {
             cat "$TMP_DIR/gui-capture-8.log" >&2 || true
             die 'la captura/auditoría de la página Git y GitHub falló'
         }
-        capture_gui_page 10 "$GUI_CAPTURE_DIR/linux-storage-menu.png" || die 'la captura del menú de almacenamiento falló'
-        capture_gui_page 21 "$GUI_CAPTURE_DIR/linux-storage-partitions.png" || die 'la captura de particionado falló'
-        capture_gui_page 22 "$GUI_CAPTURE_DIR/linux-storage-filesystems.png" || die 'la captura de sistemas de archivos falló'
-        capture_gui_page 23 "$GUI_CAPTURE_DIR/linux-storage-volumes.png" || die 'la captura de volúmenes falló'
-        capture_gui_page 27 "$GUI_CAPTURE_DIR/linux-network.png" || die 'la captura de red falló'
-        capture_gui_page 28 "$GUI_CAPTURE_DIR/linux-boot-efi.png" || die 'la captura de arranque EFI falló'
-        capture_gui_page 29 "$GUI_CAPTURE_DIR/linux-services.png" || die 'la captura de servicios falló'
+        capture_gui_page 7 "$GUI_CAPTURE_DIR/linux-settings.png" "" \
+            "$GUI_CAPTURE_DIR/linux-settings-bottom.png" || die 'la captura de Ajustes falló'
+        capture_gui_page 6 "$GUI_CAPTURE_DIR/linux-software-packages.png" || die 'la captura del menú de paquetes falló'
+        capture_gui_page 10 "$GUI_CAPTURE_DIR/linux-storage-menu.png" "" \
+            "$GUI_CAPTURE_DIR/linux-storage-menu-bottom.png" || die 'la captura del menú de almacenamiento falló'
+        capture_gui_page 21 "$GUI_CAPTURE_DIR/linux-storage-partitions.png" "" \
+            "$GUI_CAPTURE_DIR/linux-storage-partitions-bottom.png" || die 'la captura de particionado falló'
+        capture_gui_page 22 "$GUI_CAPTURE_DIR/linux-storage-filesystems.png" "" \
+            "$GUI_CAPTURE_DIR/linux-storage-filesystems-bottom.png" || die 'la captura de sistemas de archivos falló'
+        capture_gui_page 23 "$GUI_CAPTURE_DIR/linux-storage-volumes.png" "" \
+            "$GUI_CAPTURE_DIR/linux-storage-volumes-bottom.png" || die 'la captura de volúmenes falló'
+        capture_gui_page 27 "$GUI_CAPTURE_DIR/linux-network.png" "" \
+            "$GUI_CAPTURE_DIR/linux-network-bottom.png" || die 'la captura de red falló'
+        capture_gui_page 28 "$GUI_CAPTURE_DIR/linux-boot-efi.png" "" \
+            "$GUI_CAPTURE_DIR/linux-boot-efi-bottom.png" || die 'la captura de arranque EFI falló'
+        capture_gui_page 29 "$GUI_CAPTURE_DIR/linux-services.png" "" \
+            "$GUI_CAPTURE_DIR/linux-services-bottom.png" || die 'la captura de servicios falló'
         capture_gui_page 30 "$GUI_CAPTURE_DIR/linux-wine-proton.png" || die 'la captura de Wine/Proton falló'
+
+        # Abre el diálogo real de gh, rellena campos representativos y lo
+        # cancela automáticamente: se auditan título, argumentos y captura
+        # sin ejecutar ninguna petición contra GitHub.
+        GH_DIALOG_CAPTURE="$GUI_CAPTURE_DIR/linux-git-gh-native-dialog.png"
+        timeout 12 xvfb-run -a -s "-screen 0 1280x900x24" bash -c '
+            set -Eeuo pipefail
+            export GDK_BACKEND=x11 GTK_USE_PORTAL=0 LTOOLS_NO_MOUNTS=1
+            export LTOOLS_GUI_SMOKE=1 LTOOLS_GUI_REQUIRED=1 LTOOLS_DISABLE_GUI=0
+            export LTOOLS_GUI_SMOKE_HOLD_MS=4000 LTOOLS_GUI_SMOKE_NAV_PAGE=8
+            export LTOOLS_GUI_GH_DIALOG_SMOKE=1 LTOOLS_LANG=es
+            export HOME="$4" XDG_STATE_HOME="$5" LTOOLS_GUI_AUDIT_MARKER="$3"
+            "$1" >"$6" 2>&1 &
+            pid=$!
+            trap "kill \"$pid\" 2>/dev/null || true" EXIT
+            dialog_id=""
+            for _ in {1..30}; do
+                dialog_id="$(xdotool search --onlyvisible --name "Comando nativo de GitHub CLI" 2>/dev/null | tail -n1 || true)"
+                [[ -n "$dialog_id" ]] && break
+                sleep 0.1
+            done
+            [[ -n "$dialog_id" ]]
+            sleep 0.2
+            import -window "$dialog_id" "$2" >/dev/null 2>&1
+            wait "$pid"
+            trap - EXIT
+        ' _ "$BIN" "$GH_DIALOG_CAPTURE" "$GUI_AUDIT_MARKER" \
+            "$TMP_DIR/gui-gh-dialog-home" "$TMP_DIR/gui-gh-dialog-state" \
+            "$TMP_DIR/gui-gh-dialog.log" || {
+            cat "$TMP_DIR/gui-gh-dialog.log" >&2 || true
+            die 'no se pudo abrir/capturar de forma segura el diálogo nativo de gh'
+        }
+        grep -Fq $'DIALOG\tComando nativo de GitHub CLI (gh)\t--command!' "$GUI_AUDIT_MARKER" ||
+            die 'el diálogo gh no expone el campo de comando obligatorio en el título esperado'
+        grep -Fq $'DIALOG\tComando nativo de GitHub CLI (gh)\t--command!=Comando gh' "$GUI_AUDIT_MARKER" ||
+            die 'la ayuda del campo de comando gh no coincide con la GUI'
+        grep -Fq $'DIALOG_INITIAL_VALUES\tgh-native\tissue\tlist --state open' "$GUI_AUDIT_MARKER" ||
+            die 'el E2E no rellenó la muestra de comando y argumentos del diálogo gh'
+        grep -Fq 'DIALOG_SHOWN	gh-native' "$GUI_AUDIT_MARKER" || die 'no se registró la apertura del diálogo gh'
+        grep -Fq 'DIALOG_CANCELLED	gh-native' "$GUI_AUDIT_MARKER" || die 'el E2E no canceló el diálogo gh sin ejecutarlo'
+        ok 'diálogo nativo de gh: título, campos, captura y cancelación sin efectos remotos'
+
+        TREE_CAPTURE="$GUI_CAPTURE_DIR/linux-storage-map-dialog.png"
+        TREE_MARKER="$TMP_DIR/gui-tree.marker"
+        TREE_FIXTURE="$TMP_DIR/gui-tree-fixture"
+        mkdir -p "$TREE_FIXTURE/Carpeta de prueba"
+        mkdir -p "$TMP_DIR/gui-tree-home" "$TMP_DIR/gui-tree-state"
+        printf 'contenido visible\n' >"$TREE_FIXTURE/Carpeta de prueba/archivo.txt"
+        timeout 45 xvfb-run -a -s "-screen 0 1280x900x24" bash -c '
+            set -Eeuo pipefail
+            export GDK_BACKEND=x11 GTK_USE_PORTAL=0
+            unset WAYLAND_DISPLAY WAYLAND_SOCKET
+            export LTOOLS_NO_MOUNTS=1 LTOOLS_GUI_REQUIRED=1 LTOOLS_DISABLE_GUI=0
+            export LTOOLS_GUI_TREE_SMOKE=1 LTOOLS_GUI_TREE_PATH="$1" LTOOLS_GUI_TREE_MARKER="$2"
+            export LTOOLS_LANG=es HOME="$3" XDG_STATE_HOME="$4"
+            "$5" >"$6" 2>&1 &
+            pid=$!
+            window_id=""
+            for _ in {1..100}; do
+                window_id="$(xdotool search --onlyvisible --name "Mapa interactivo" 2>/dev/null | head -n1 || true)"
+                [[ -n "$window_id" ]] && break
+                sleep 0.1
+            done
+            if [[ -z "$window_id" ]]; then
+                printf "No apareció el mapa interactivo. Ventanas visibles:\n" >&2
+                xdotool search --onlyvisible --name . 2>/dev/null | while read -r visible_window; do
+                    printf "%s %s\n" "$visible_window" \
+                        "$(xdotool getwindowname "$visible_window" 2>/dev/null || true)" >&2
+                done
+                cat "$6" >&2 || true
+                exit 1
+            fi
+            sleep 0.2
+            # Verifica el árbol con menos ancho que el predeterminado para
+            # detectar regresiones de columnas que oculten el espacio libre.
+            xdotool windowsize --sync "$window_id" 800 640
+            sleep 0.3
+            geometry="$(xdotool getwindowgeometry --shell "$window_id")"
+            window_top="$(sed -n "s/^Y=//p" <<<"$geometry")"
+            window_height="$(sed -n "s/^HEIGHT=//p" <<<"$geometry")"
+            [[ "$window_top" =~ ^-?[0-9]+$ && "$window_height" =~ ^[0-9]+$ ]]
+            ((window_top >= 0 && window_top + window_height <= 900)) || {
+                printf "El diálogo del mapa se sale de la pantalla Xvfb: Y=%s HEIGHT=%s\n" \
+                    "$window_top" "$window_height" >&2
+                exit 1
+            }
+            printf "MAP_WINDOW_FITS_SCREEN y=%s height=%s screen=900\n" \
+                "$window_top" "$window_height"
+            import -window "$window_id" "$7" >/dev/null 2>&1 ||
+                import -window root "$7" >/dev/null 2>&1
+            wait "$pid"
+            [[ -s "$2" && -s "$7" ]]
+        ' _ "$TREE_FIXTURE" "$TREE_MARKER" "$TMP_DIR/gui-tree-home" \
+            "$TMP_DIR/gui-tree-state" "$BIN" "$TMP_DIR/gui-tree.log" "$TREE_CAPTURE" \
+            >"$TMP_DIR/gui-tree-capture.log" 2>&1 || {
+            cat "$TMP_DIR/gui-tree-capture.log" "$TMP_DIR/gui-tree.log" >&2 || true
+            die 'la E2E no pudo abrir/capturar/cerrar el mapa interactivo real'
+        }
+        grep -Fq 'tree-opened' "$TREE_MARKER" || die 'la E2E no confirmó que se abriera el mapa interactivo'
+        bash "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" \
+            --binary "$BIN" --tmp "$TMP_DIR" --captures "$GUI_CAPTURE_DIR" \
+            >"$TMP_DIR/storage-map-gui-actions.log" 2>&1 || {
+            cat "$TMP_DIR/storage-map-gui-actions.log" >&2 || true
+            die 'falló la E2E de acciones reales del mapa GUI'
+        }
+        cat "$TMP_DIR/storage-map-gui-actions.log"
+
+        GUI_CAPTURES=(
+            "$GUI_CAPTURE_DIR/linux-git-github.png"
+            "$GUI_CAPTURE_DIR/linux-git-github-bottom.png"
+            "$GUI_CAPTURE_DIR/linux-settings.png"
+            "$GUI_CAPTURE_DIR/linux-settings-bottom.png"
+            "$GUI_CAPTURE_DIR/linux-storage-menu.png"
+            "$GUI_CAPTURE_DIR/linux-storage-menu-bottom.png"
+            "$GUI_CAPTURE_DIR/linux-storage-partitions.png"
+            "$GUI_CAPTURE_DIR/linux-storage-filesystems.png"
+            "$GUI_CAPTURE_DIR/linux-storage-volumes.png"
+            "$GUI_CAPTURE_DIR/linux-network.png"
+            "$GUI_CAPTURE_DIR/linux-network-bottom.png"
+            "$GUI_CAPTURE_DIR/linux-boot-efi.png"
+            "$GUI_CAPTURE_DIR/linux-boot-efi-bottom.png"
+            "$GUI_CAPTURE_DIR/linux-services.png"
+            "$GUI_CAPTURE_DIR/linux-services-bottom.png"
+            "$GUI_CAPTURE_DIR/linux-wine-proton.png"
+            "$GH_DIALOG_CAPTURE"
+            "$TREE_CAPTURE"
+            "$GUI_CAPTURE_DIR/linux-storage-map-confirm-no-es.png"
+            "$GUI_CAPTURE_DIR/linux-storage-map-confirm-yes-es.png"
+        )
+        for capture in "${GUI_CAPTURES[@]}"; do
+            [[ -s "$capture" ]] || die "captura GUI vacía: $capture"
+            if command -v identify >/dev/null 2>&1; then
+                dimensions="$(identify -format '%w %h' "$capture" 2>/dev/null || true)"
+                read -r width height <<<"$dimensions"
+                [[ "${width:-0}" -ge 800 && "${height:-0}" -ge 600 ]] ||
+                    die "captura GUI recortada o con dimensiones insuficientes: $capture (${dimensions:-desconocidas})"
+                colors="$(identify -format '%k' "$capture" 2>/dev/null || echo 0)"
+                [[ "$colors" -ge 20 ]] || die "captura GUI sin contenido visual suficiente: $capture ($colors colores)"
+            else
+                file_type="$(file -b --mime-type "$capture" 2>/dev/null || true)"
+                [[ "$file_type" == image/png ]] || die "captura GUI no es PNG: $capture ($file_type)"
+            fi
+        done
+        ok 'capturas GUI verificadas con dimensiones visibles y no solo existencia'
 
         [[ -s "$GUI_AUDIT_MARKER" ]] || die 'la GUI no produjo el marcador estructural'
         grep -Fq 'GUI_AUDIT_BEGIN' "$GUI_AUDIT_MARKER" || die 'la auditoría GUI no comenzó'
@@ -224,6 +428,7 @@ if command -v xvfb-run >/dev/null 2>&1; then
         for page_title in \
             $'PAGE\t8\tGit / GitHub' \
             $'PAGE\t10\tAlmacenamiento y particiones' \
+            $'PAGE\t6\tSoftware, paquetes y almacenes' \
             $'PAGE\t21\tParticionado y tablas' \
             $'PAGE\t22\tSistemas de archivos' \
             $'PAGE\t23\tCifrado y volúmenes' \
@@ -236,6 +441,10 @@ if command -v xvfb-run >/dev/null 2>&1; then
         done
         for expected_button in \
             $'BUTTON\tGuía completa de Git y GitHub (gh)\tCLI\tcommand=guide\targs=git' \
+            $'BUTTON\tComando nativo de gh…\tGIT\toperation=gh-native' \
+            $'BUTTON\tDiagnosticar repositorio\tGIT\toperation=diagnose' \
+            $'BUTTON\tReconstruir índice .git…\tGIT\toperation=repair' \
+            $'BUTTON\tRecuperar .git desde remoto…\tGIT\toperation=repair-remote' \
             $'BUTTON\tCrear tabla GPT\tSTORAGE\toperation=mklabel-gpt\tfields=--device!' \
             $'BUTTON\tMapa desplegable de discos y rutas\tCLI\tcommand=storage\targs=map --depth 4 --interactive-tree' \
             $'BUTTON\tExplicar ruta y permisos\tSTORAGE\toperation=manage-permissions\tfields=--path!' \
@@ -243,11 +452,13 @@ if command -v xvfb-run >/dev/null 2>&1; then
             $'BUTTON\tCopiar archivo o carpeta\tSTORAGE\toperation=manage-copy\tfields=--source!,--destination!' \
             $'BUTTON\tCrear archivo ZIP\tSTORAGE\toperation=manage-zip\tfields=--source!,--destination!' \
             $'BUTTON\tCrear / formatear sistema de archivos\tSTORAGE\toperation=mkfs' \
-            $'BUTTON\tOperación LVM\tSTORAGE\toperation=lvm' \
-            $'BUTTON\tOperación RAID mdadm\tSTORAGE\toperation=raid' \
+            $'BUTTON\tGestionar volúmenes LVM\tSTORAGE\toperation=lvm' \
+            $'BUTTON\tGestionar conjuntos RAID\tSTORAGE\toperation=raid' \
             $'BUTTON\tActivar / desactivar interfaz\tNETWORK\taction=set-interface' \
             $'BUTTON\tProgramar siguiente entrada GRUB\tBOOT' \
             $'BUTTON\tAutomáticos y estáticos (system)\tCLI\tcommand=system\targs=services --scope system --filter automatic --limit 100' \
+            $'BUTTON\tConceder permisos de administrador\tACCOUNT\taction=admin-add' \
+            $'BUTTON\tVer grupo y miembros administradores\tACCOUNT\taction=admin-groups' \
             $'BUTTON\tCrear prefijo\tWINE'; do
             grep -Fq "$expected_button" "$GUI_AUDIT_MARKER" ||
                 die "la auditoría GUI no registró la opción: ${expected_button#*$'\t'}"
@@ -256,16 +467,61 @@ if command -v xvfb-run >/dev/null 2>&1; then
             grep -Fq $'FIELD\tgit\t'"$field"$'\t' "$GUI_AUDIT_MARKER" ||
                 die "la auditoría GUI no registró el argumento/campo Git: $field"
         done
-        duplicate_pages="$(awk -F '\t' '$1 == "PAGE" { print $3 }' "$GUI_AUDIT_MARKER" | sort | uniq -d)"
+        duplicate_pages="$(awk -F '\t' '
+            $1 == "GUI_AUDIT_BEGIN" { session++; next }
+            $1 == "PAGE" {
+                key = session SUBSEP $3
+                if (key in page_id && page_id[key] != $2) print $3
+                else page_id[key] = $2
+            }
+        ' "$GUI_AUDIT_MARKER" | sort -u)"
         [[ -z "$duplicate_pages" ]] || die "la GUI tiene títulos de página duplicados: $duplicate_pages"
-        duplicate_categories="$(awk -F '\t' '$1 == "BUTTON" && $3 == "CATEGORY" { print $2 }' "$GUI_AUDIT_MARKER" | sort | uniq -d)"
+        duplicate_categories="$(awk -F '\t' '
+            $1 == "GUI_AUDIT_BEGIN" { session++; next }
+            $1 == "BUTTON" && $3 == "CATEGORY" {
+                key = session SUBSEP $2
+                if (seen[key]++) print $2
+            }
+        ' "$GUI_AUDIT_MARKER" | sort -u)"
         [[ -z "$duplicate_categories" ]] || die "la GUI tiene categorías duplicadas: $duplicate_categories"
+
+        # Contrato guía→menú: cada botón que abre una guía debe apuntar al
+        # índice del mismo menú y ese índice debe contener todas las etiquetas
+        # de botones que GTK construyó en esa página. Se normalizan saltos de
+        # línea porque las guías largas ajustan visualmente algunos nombres.
+        GUIDE_AUDIT_DIR="$TMP_DIR/guide-audit"
+        mkdir -p -- "$GUIDE_AUDIT_DIR"
+        while IFS= read -r guide_button; do
+            guide_label="$(cut -f2 <<<"$guide_button")"
+            guide_topic="$(sed -n 's/.*args=\([^[:space:]]*\).*/\1/p' <<<"$guide_button")"
+            guide_page="$(sed -n 's/.*\tpage=\([0-9][0-9]*\)$/\1/p' <<<"$guide_button")"
+            [[ -n "$guide_topic" && -n "$guide_page" ]] ||
+                die "botón de guía sin tema o página: $guide_label"
+            guide_file="$GUIDE_AUDIT_DIR/${guide_page}-${guide_topic}.out"
+            "$BIN" guide gui "$guide_topic" >"$guide_file" 2>&1 ||
+                die "no se pudo abrir la guía del botón: $guide_label"
+            guide_flat="$(tr '\n' ' ' <"$guide_file" | sed -E 's/[[:space:]]+/ /g')"
+            while IFS= read -r menu_label; do
+                [[ -n "$menu_label" ]] || continue
+                grep -Fq -- "$menu_label" <<<"$guide_flat" ||
+                    die "la guía '$guide_topic' no enumera '$menu_label' del menú página $guide_page"
+            done < <(awk -F '\t' -v page="$guide_page" '
+                $1 == "BUTTON" {
+                    found = 0
+                    for (i = 4; i <= NF; i++) if ($i == "page=" page) found = 1
+                    if (found && $2 != "Guía completa de Git y GitHub (gh)") print $2
+                }
+            ' "$GUI_AUDIT_MARKER")
+        done < <(awk -F '\t' '$1 == "BUTTON" && $4 == "command=guide" { print }' "$GUI_AUDIT_MARKER")
+        ok 'E2E compara cada índice de guía con todos los botones del menú real'
         ok 'E2E GUI abre menús, ayudas, campos y argumentos; auditoría sin duplicados'
-        ok "capturas GUI: $GUI_CAPTURE_DIR (almacenamiento, Git, red, EFI, servicios y Wine/Proton)"
-    else
-        skip 'GUI Rust Linux: xvfb-run está instalado, pero Xvfb no puede crear un display aislado'
-    fi
+        ok "capturas GUI con pantalla Xvfb 1280x900 y primera/última página de menús desplazados: $GUI_CAPTURE_DIR (paquetes, ajustes, almacenamiento, Git, red, EFI, servicios y Wine/Proton)"
 else
+    (( REQUIRE_GUI == 0 )) || die '--require-gui no pudo iniciar un display Xvfb para la GUI Rust'
+    skip 'GUI Rust Linux: xvfb-run está instalado, pero Xvfb no puede crear un display aislado'
+fi
+else
+    (( REQUIRE_GUI == 0 )) || die '--require-gui exige xvfb-run para la GUI Rust'
     skip 'GUI Rust Linux: xvfb-run no está disponible'
 fi
 CAPABILITIES_JSON="$("$BIN" capabilities --format json)"
@@ -308,6 +564,11 @@ for native_tool in ssh scp sftp adb docker kubectl; do
     grep -Fq "$native_tool" <<<"$NATIVE_TOOLS_OUTPUT" || die "native tools no enumeró $native_tool"
 done
 ok 'catálogo de SSH, ADB, Docker y Kubernetes en la consulta nativa'
+bash "$ROOT_DIR/tests/linux/native-help-e2e.sh" --binary "$BIN" >"$TMP_DIR/native-help-e2e.out" 2>&1 || {
+    sed -n '1,220p' "$TMP_DIR/native-help-e2e.out" >&2
+    die 'la auditoría de ayudas nativas o la correspondencia GUI falló'
+}
+ok 'ayudas nativas reales y correspondencia de operaciones GUI'
 UTILITIES_OUTPUT="$("$BIN" native utilities status)"
 for utility in curl file openssl gpg; do
     grep -Fq "$utility" <<<"$UTILITIES_OUTPUT" || die "native utilities no enumeró $utility"
@@ -400,7 +661,7 @@ done
 ok 'los 15 idiomas del contrato se aceptan y la ayuda permanece operativa'
 THEMED_MENU="$(printf 'q\n' | LTOOLS_LANG=en LTERMINAL_THEME=amber LTOOLS_COLOR=always LTOOLS_NO_CLEAR=1 "$BIN" menu 2>&1)"
 grep -Fq $'\033[' <<<"$THEMED_MENU" || die 'la CLI no aplica color ANSI al tema recibido de la terminal'
-grep -Fq 'Usage:' <<<"$(LTERMINAL_LANG=en LTOOLS_NO_CLEAR=1 "$BIN" --help)" ||
+grep -Fq 'Usage:' <<<"$(env -u LTOOLS_LANG LTERMINAL_LANG=en LTOOLS_NO_CLEAR=1 "$BIN" --help)" ||
     die 'la CLI no recibe el idioma alternativo de la terminal'
 MACHINE_WITH_THEME="$(LTOOLS_THEME=matrix LTOOLS_COLOR=always "$BIN" capabilities --format json)"
 if command -v jq >/dev/null 2>&1; then
@@ -507,13 +768,13 @@ ok 'arranque Linux: estado, alias, submenú y red separada sin modificaciones'
 
 DIAGNOSTICS_JSON="$("$BIN" diagnostics health --format json)"
 if command -v jq >/dev/null 2>&1; then
-    jq -e '.schema == "ltools-diagnostics-v1" and .platform == "linux" and (.probes | length >= 3) and all(.probes[]; .key and (.available | type == "boolean") and (.output | type == "string"))' \
+    jq -e '.schema == "ltools-diagnostics-v1" and .platform == "linux" and (.probes | length >= 3) and all(.probes[]; .key and (.available | type == "boolean") and (.installed | type == "boolean") and (.timed_out | type == "boolean") and (.output | type == "string") and (.error | type == "string"))' \
         <<<"$DIAGNOSTICS_JSON" >/dev/null || die 'diagnostics no generó un JSON válido o incompleto'
 else
     grep -Fq 'ltools-diagnostics-v1' <<<"$DIAGNOSTICS_JSON" || die 'diagnostics no generó su esquema JSON'
 fi
 DIAGNOSTICS_TSV="$("$BIN" diagnostics network --format tsv)"
-grep -Fq $'key\tcommand\tavailable\toutput' <<<"$DIAGNOSTICS_TSV" || die 'diagnostics no generó cabecera TSV'
+grep -Fq $'key\tcommand\tavailable\tinstalled\tstatus_code\ttimed_out\toutput\terror' <<<"$DIAGNOSTICS_TSV" || die 'diagnostics no generó cabecera TSV completa'
 for diagnostic_action in health network hardware users; do
     "$BIN" diagnostics "$diagnostic_action" >/dev/null || die "diagnostics $diagnostic_action terminó con error"
 done
@@ -553,24 +814,50 @@ if [[ -n "$APPIMAGE_PATH" ]]; then
         printf 'Permisos: %s\n\n' "$(stat -c '%A %a %U:%G' "$APPIMAGE_PATH" 2>/dev/null || printf 'desconocidos')"
         printf '$ %q --doctor\n' "$APPIMAGE_PATH"
     } >> "$DIRECT_LOG"
-    set +e
     if [[ -c /dev/fuse ]] &&
         { command -v fusermount3 >/dev/null 2>&1 || command -v fusermount >/dev/null 2>&1; }; then
+        set +e
         timeout 30 "$APPIMAGE_PATH" --doctor >> "$DIRECT_LOG" 2>&1
+        DIRECT_STATUS=$?
+        set -e
+        if [[ "$DIRECT_STATUS" -eq 0 ]]; then
+            APPIMAGE_FUSE_WORKS=1
+            ok "AppImage montado y ejecutado directamente con FUSE; log: $DIRECT_LOG"
+        elif grep -Eiq 'Cannot mount AppImage|mount failed:|Operation not permitted|Cannot access /dev/fuse|fusermount.*failed' "$DIRECT_LOG"; then
+            if [[ "$REQUIRE_FUSE" -eq 1 ]]; then
+                sed -n '1,160p' "$DIRECT_LOG" >&2
+                die 'se exigió FUSE, pero el host rechazó el montaje real del AppImage'
+            fi
+            printf 'El host anuncia soporte FUSE, pero el montaje real fue denegado; se probará el fallback.\n' >> "$DIRECT_LOG"
+            set +e
+            APPIMAGE_EXTRACT_AND_RUN=1 timeout 30 "$APPIMAGE_PATH" --doctor >> "$DIRECT_LOG" 2>&1
+            FALLBACK_STATUS=$?
+            set -e
+            if [[ "$FALLBACK_STATUS" -ne 0 ]]; then
+                sed -n '1,180p' "$DIRECT_LOG" >&2
+                die "falló el fallback AppImage por extracción (código $FALLBACK_STATUS); log: $DIRECT_LOG"
+            fi
+            skip 'montaje FUSE no autorizado por el host; fallback de extracción verificado'
+        else
+            sed -n '1,160p' "$DIRECT_LOG" >&2
+            die "el AppImage no se pudo abrir directamente (código $DIRECT_STATUS); log: $DIRECT_LOG"
+        fi
     else
+        [[ "$REQUIRE_FUSE" -eq 0 ]] || die 'se exigió FUSE, pero faltan /dev/fuse o fusermount/fusermount3'
         # En hosts sin FUSE la ejecución directa del runtime AppImage no
         # puede montar su SquashFS. El contrato del builder ofrece extracción
         # como fallback, así que la prueba debe ejercer ese mismo camino.
+        set +e
         APPIMAGE_EXTRACT_AND_RUN=1 timeout 30 "$APPIMAGE_PATH" --doctor >> "$DIRECT_LOG" 2>&1
+        FALLBACK_STATUS=$?
+        set -e
+        if [[ "$FALLBACK_STATUS" -ne 0 ]]; then
+            printf 'Salida de la ejecución por extracción:\n' >&2
+            sed -n '1,160p' "$DIRECT_LOG" >&2
+            die "el AppImage no se pudo abrir por extracción (código $FALLBACK_STATUS); log: $DIRECT_LOG"
+        fi
+        ok "AppImage probado por extracción (FUSE ausente); log: $DIRECT_LOG"
     fi
-    DIRECT_STATUS=$?
-    set -e
-    if [[ "$DIRECT_STATUS" -ne 0 ]]; then
-        printf 'Salida de la ejecución directa:\n' >&2
-        sed -n '1,160p' "$DIRECT_LOG" >&2
-        die "el AppImage no se pudo abrir directamente (código $DIRECT_STATUS); log: $DIRECT_LOG"
-    fi
-    ok "ejecución directa del AppImage; log: $DIRECT_LOG"
 
     if command -v xvfb-run >/dev/null 2>&1; then
         if timeout 10 xvfb-run -a true >/dev/null 2>&1; then
@@ -738,7 +1025,9 @@ if [[ -n "$APPIMAGE_PATH" ]]; then
                         exit 21
                     fi
                     # La GUI dispara el callback GTK real del primer botón de
-                    # acción cuando se establece este marcador. No usamos
+                    # acción cuando se establece este marcador. El archivo se
+                    # crea antes, al dibujar la ventana, así que esperar solo
+                    # a que exista introduce una carrera con el clic. No usamos
                     # coordenadas: el rail y el layout son responsivos y la
                     # prueba debe seguir siendo válida al redimensionar.
                     # La extracción de un AppImage y la inicialización GTK
@@ -747,10 +1036,25 @@ if [[ -n "$APPIMAGE_PATH" ]]; then
                     # estado observable, no un plazo arbitrario de 2 s,
                     # evita falsos negativos sin aceptar una acción ausente.
                     for _ in $(seq 1 300); do
-                        [[ -f "$LTOOLS_GUI_SMOKE_ACTION_MARKER" ]] && break
+                        if grep -Fq "action-button-trigger" "$LTOOLS_GUI_SMOKE_ACTION_MARKER" 2>/dev/null &&
+                           grep -Fq "clicked" "$LTOOLS_GUI_SMOKE_ACTION_MARKER" 2>/dev/null &&
+                           grep -Fq "busy-begin" "$LTOOLS_GUI_SMOKE_ACTION_MARKER" 2>/dev/null &&
+                           grep -Fq "modal-open" "$LTOOLS_GUI_SMOKE_ACTION_MARKER" 2>/dev/null; then
+                            break
+                        fi
                         sleep 0.1
                     done
                     [[ -f "$LTOOLS_GUI_SMOKE_ACTION_MARKER" ]] || exit 22
+                    grep -Fq "action-button-trigger" "$LTOOLS_GUI_SMOKE_ACTION_MARKER" || {
+                        printf "La GUI no pulsó el botón de acción real.\n"
+                        cat "$LTOOLS_GUI_SMOKE_ACTION_MARKER"
+                        exit 27
+                    }
+                    grep -Fq "clicked" "$LTOOLS_GUI_SMOKE_ACTION_MARKER" || {
+                        printf "El callback GTK del botón no recibió el clic.\n"
+                        cat "$LTOOLS_GUI_SMOKE_ACTION_MARKER"
+                        exit 28
+                    }
                     grep -Fq "busy-begin" "$LTOOLS_GUI_SMOKE_ACTION_MARKER" || {
                         printf "La GUI no registró el estado ocupado al iniciar la acción.\n"
                         cat "$LTOOLS_GUI_SMOKE_ACTION_MARKER"
@@ -828,7 +1132,10 @@ if [[ -n "$APPIMAGE_PATH" ]]; then
             GUI_SUITE_MARKER="$TMP_DIR/gui-all-buttons.marker"
             rm -f "$GUI_SUITE_MARKER"
             set +e
-            timeout 60 xvfb-run -a env GDK_BACKEND=x11 \
+            # La suite ejecuta cada ruta segura mediante un proceso hijo. En
+            # máquinas lentas, la extracción del AppImage y las consultas
+            # nativas pueden superar un minuto sin que exista un bloqueo.
+            timeout 120 xvfb-run -a env GDK_BACKEND=x11 \
                 LTOOLS_GUI_SMOKE_ALL_BUTTONS_MARKER="$GUI_SUITE_MARKER" \
                 LTOOLS_DISABLE_GUI=0 LTOOLS_TERMINAL=auto \
                 LTOOLS_NO_MOUNTS=1 HOME="$GUI_SUITE_HOME" XDG_STATE_HOME="$GUI_SUITE_STATE" \
@@ -853,12 +1160,15 @@ if [[ -n "$APPIMAGE_PATH" ]]; then
             [[ "$safe_button_count" -ge 20 ]] || die "la suite GUI solo validó $safe_button_count rutas seguras"
             ok "rutas seguras de botones GUI probadas una por una ($safe_button_count OK; externas/formularios protegidos como SKIP)"
             else
+                (( REQUIRE_GUI == 0 )) || die '--require-gui exige xdotool para comprobar interacción GUI'
                 skip 'GUI responsiva durante acción: xdotool no está disponible'
             fi
         else
+            (( REQUIRE_GUI == 0 )) || die '--require-gui no pudo iniciar un display Xvfb para el AppImage'
             skip 'GUI AppImage: Xvfb no puede crear un display aislado'
         fi
     else
+        (( REQUIRE_GUI == 0 )) || die '--require-gui exige xvfb-run para probar el AppImage GUI'
         skip 'GUI AppImage: xvfb-run no está disponible'
     fi
 
@@ -1062,12 +1372,10 @@ EOF
     ok 'idiomas del catálogo LTerminal en la CLI del AppImage'
     APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" --doctor >/dev/null
     ok 'diagnóstico del AppImage'
-    if [[ -c /dev/fuse ]] &&
-        { command -v fusermount3 >/dev/null 2>&1 || command -v fusermount >/dev/null 2>&1; }; then
-        "$APPIMAGE_PATH" --version >/dev/null
-        ok 'AppImage responde con montaje FUSE normal'
+    if [[ "$APPIMAGE_FUSE_WORKS" -eq 1 ]]; then
+        ok 'el montaje real de AppImage con FUSE se verificó durante la prueba inicial'
     else
-        skip 'montaje FUSE normal: no disponible; se validó el fallback por extracción'
+        skip 'montaje FUSE normal: no operativo en este host; se validó el fallback por extracción'
     fi
     set +e
     FUSE_OUTPUT="$(APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" --fuse-check 2>&1)"
@@ -1075,9 +1383,20 @@ EOF
     set -e
     [[ "$FUSE_STATUS" -eq 0 || "$FUSE_STATUS" -eq 1 ]] || die '--fuse-check terminó con un código inesperado'
     grep -Fq 'FUSE' <<<"$FUSE_OUTPUT" || die '--fuse-check no mostró diagnóstico FUSE'
+    grep -Eq 'actual mount permission unverified|device/helper missing' <<<"$FUSE_OUTPUT" ||
+        die '--fuse-check afirmó disponibilidad sin distinguir detección de permiso real de montaje'
     ok 'diagnóstico FUSE'
     if [[ -n "$RUNNER_PATH" ]]; then
         [[ -x "$RUNNER_PATH" ]] || die "lanzador no ejecutable: $RUNNER_PATH"
+        set +e
+        RUNNER_OUTPUT="$(timeout 30 "$RUNNER_PATH" --appimage "$APPIMAGE_PATH" --doctor 2>&1)"
+        RUNNER_STATUS=$?
+        set -e
+        if [[ "$RUNNER_STATUS" -ne 0 ]]; then
+            printf 'Salida del lanzador AppImage (código %s):\n%s\n' "$RUNNER_STATUS" "$RUNNER_OUTPUT" >&2
+            die 'el lanzador no recuperó la ejecución si el montaje FUSE falla'
+        fi
+        ok 'lanzador AppImage prueba FUSE y recupera por extracción si el host lo deniega'
         LTOOLS_FORCE_EXTRACT=1 "$RUNNER_PATH" --version >/dev/null
         ok 'lanzador externo con fallback forzado sin FUSE'
     fi

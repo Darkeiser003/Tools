@@ -7,6 +7,7 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 BIN="$ROOT_DIR/rust/target/release/ltools"
 APPIMAGE_PATH=""
 KEEP_TEMP=0
+REQUIRE_DEPENDENCIES=0
 
 die() { printf 'E2E ERROR: %s\n' "$1" >&2; exit 1; }
 ok() { printf '  OK    %s\n' "$1"; }
@@ -16,15 +17,20 @@ while (($#)); do
         --binary) (($# >= 2)) || die '--binary necesita una ruta'; BIN="$2"; shift ;;
         --appimage) (($# >= 2)) || die '--appimage necesita una ruta'; APPIMAGE_PATH="$2"; shift ;;
         --keep-temp) KEEP_TEMP=1 ;;
-        -h|--help) printf 'Uso: %s [--binary RUTA] [--appimage RUTA] [--keep-temp]\n' "$0"; exit 0 ;;
+        --require-dependencies) REQUIRE_DEPENDENCIES=1 ;;
+        -h|--help) printf 'Uso: %s [--binary RUTA] [--appimage RUTA] [--require-dependencies] [--keep-temp]\n' "$0"; exit 0 ;;
         *) die "opción desconocida: $1" ;;
     esac
     shift
 done
 
 [[ -x "$BIN" ]] || die "no existe el binario ejecutable: $BIN"
-command -v rsync >/dev/null 2>&1 || { printf 'E2E SKIP: rsync no está disponible.\n'; exit 0; }
+command -v rsync >/dev/null 2>&1 || {
+    (( REQUIRE_DEPENDENCIES == 0 )) || die '--require-dependencies exige rsync'
+    printf 'E2E SKIP: rsync no está disponible.\n'; exit 0;
+}
 if ! command -v gio >/dev/null 2>&1 && ! command -v trash-put >/dev/null 2>&1; then
+    (( REQUIRE_DEPENDENCIES == 0 )) || die '--require-dependencies exige gio o trash-put para probar rollback'
     printf 'E2E SKIP: no hay gio ni trash-put para probar rollback.\n'
     exit 0
 fi
@@ -40,6 +46,7 @@ export HOME="$TMP_DIR/home"
 export XDG_DATA_HOME="$TMP_DIR/home/.local/share"
 export XDG_CONFIG_HOME="$TMP_DIR/home/.config"
 export XDG_STATE_HOME="$TMP_DIR/home/.local/state"
+export LTOOLS_LANG=es
 mkdir -p "$HOME" "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME"
 
 SOURCE="$TMP_DIR/source-prefix"

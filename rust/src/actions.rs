@@ -1245,6 +1245,36 @@ mod tests {
         }
     }
 
+    #[test]
+    fn every_catalog_action_has_a_privilege_decision() {
+        for spec in ACTIONS {
+            let args = vec!["run".to_owned(), spec.id.to_owned()];
+            let class = crate::privilege::classify("actions", &args);
+            if !spec.mutating {
+                assert_eq!(
+                    class,
+                    crate::privilege::ActionPrivilege::ReadOnly,
+                    "{} no debe elevarse",
+                    spec.id
+                );
+            } else if matches!(spec.command, "git" | "wine" | "automation" | "aliases") {
+                assert_eq!(
+                    class,
+                    crate::privilege::ActionPrivilege::Never,
+                    "{} debe conservar la identidad del usuario",
+                    spec.id
+                );
+            } else {
+                assert_ne!(
+                    class,
+                    crate::privilege::ActionPrivilege::ReadOnly,
+                    "{} no tiene protección de elevación",
+                    spec.id
+                );
+            }
+        }
+    }
+
     #[cfg(not(windows))]
     #[test]
     fn linux_does_not_publish_windows_only_actions() {

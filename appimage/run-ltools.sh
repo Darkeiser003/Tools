@@ -33,10 +33,49 @@ if [[ "${APPIMAGE_EXTRACT_AND_RUN:-0}" == 1 ]]; then
     exec "$appimage" "$@"
 fi
 
+run_with_fuse_fallback() {
+    local temp_dir tee_pid status
+    if ! temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/ltools-fuse.XXXXXX")"; then
+        printf 'No se pudo preparar la comprobación de FUSE; se usará extracción temporal.\n' >&2
+        APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" "$@"
+        return $?
+    fi
+    if ! mkfifo "$temp_dir/stderr.fifo"; then
+        rmdir -- "$temp_dir" 2>/dev/null || true
+        printf 'No se pudo comprobar FUSE; se usará extracción temporal.\n' >&2
+        APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" "$@"
+        return $?
+    fi
+
+    tee "$temp_dir/stderr.log" <"$temp_dir/stderr.fifo" >&2 &
+    tee_pid=$!
+    "$appimage" "$@" 2>"$temp_dir/stderr.fifo"
+    status=$?
+    wait "$tee_pid" 2>/dev/null || true
+
+    if [[ "$status" -eq 0 ]]; then
+        rm -f -- "$temp_dir/stderr.fifo" "$temp_dir/stderr.log"
+        rmdir -- "$temp_dir" 2>/dev/null || true
+        return 0
+    fi
+    if grep -Eiq 'Cannot mount AppImage|mount failed:|Operation not permitted|Cannot access /dev/fuse|fusermount.*failed' "$temp_dir/stderr.log"; then
+        rm -f -- "$temp_dir/stderr.fifo" "$temp_dir/stderr.log"
+        rmdir -- "$temp_dir" 2>/dev/null || true
+        printf 'FUSE está anunciado, pero el montaje fue rechazado; se reintentará por extracción temporal.\n' >&2
+        APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" "$@"
+        return $?
+    fi
+
+    rm -f -- "$temp_dir/stderr.fifo" "$temp_dir/stderr.log"
+    rmdir -- "$temp_dir" 2>/dev/null || true
+    return "$status"
+}
+
 if [[ "${LTOOLS_FORCE_EXTRACT:-0}" != 1 ]] &&
     [[ -c /dev/fuse ]] &&
     { command -v fusermount3 >/dev/null 2>&1 || command -v fusermount >/dev/null 2>&1; }; then
-    exec "$appimage" "$@"
+    run_with_fuse_fallback "$@"
+    exit $?
 fi
 
 printf 'FUSE no está disponible en este sistema; se usará extracción temporal.\n' >&2

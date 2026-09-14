@@ -1,0 +1,358 @@
+#!/usr/bin/env bash
+# Prueba acciones reales del mapa GTK con datos efímeros y papelera aislada.
+set -Eeuo pipefail
+
+BIN=""
+TMP_DIR=""
+CAPTURE_DIR=""
+REQUIRE_GUI=0
+SCREEN="1280x900"
+LAYOUT_ONLY=0
+SKIP_COMPACT_CHECK=0
+while (($#)); do
+    case "$1" in
+        --binary) (($# >= 2)) || { echo "--binary necesita una ruta" >&2; exit 2; }; BIN="$2"; shift ;;
+        --tmp) (($# >= 2)) || { echo "--tmp necesita una ruta" >&2; exit 2; }; TMP_DIR="$2"; shift ;;
+        --captures) (($# >= 2)) || { echo "--captures necesita una ruta" >&2; exit 2; }; CAPTURE_DIR="$2"; shift ;;
+        --require-gui) REQUIRE_GUI=1 ;;
+        --screen) (($# >= 2)) || { echo "--screen necesita ANCHOxALTO" >&2; exit 2; }; SCREEN="$2"; shift ;;
+        --layout-only) LAYOUT_ONLY=1 ;;
+        --skip-compact-check) SKIP_COMPACT_CHECK=1 ;;
+        -h|--help) printf 'Uso: %s --binary RUTA --tmp RUTA --captures RUTA [--require-gui] [--screen ANCHOxALTO] [--layout-only]\n' "$0"; exit 0 ;;
+        *) echo "Opción desconocida: $1" >&2; exit 2 ;;
+    esac
+    shift
+done
+
+[[ -x "$BIN" ]] || { echo "No existe el binario GUI: $BIN" >&2; exit 2; }
+[[ -n "$TMP_DIR" && -n "$CAPTURE_DIR" ]] || {
+    echo "Se requieren --tmp y --captures" >&2
+    exit 2
+}
+[[ "$SCREEN" =~ ^[0-9]+x[0-9]+$ ]] || { echo "Pantalla inválida: $SCREEN" >&2; exit 2; }
+mkdir -p -- "$TMP_DIR" "$CAPTURE_DIR"
+if ! command -v xvfb-run >/dev/null || ! command -v xdotool >/dev/null \
+    || ! command -v timeout >/dev/null \
+    || { ! command -v import >/dev/null && ! command -v magick >/dev/null; } \
+    || { ! command -v identify >/dev/null && ! command -v magick >/dev/null; }; then
+    if (( REQUIRE_GUI )); then
+        echo "ERROR: se requieren xvfb-run, xdotool, timeout e ImageMagick (import y identify, o magick)" >&2
+        exit 2
+    fi
+    echo "SKIP: faltan xvfb-run, xdotool, timeout o ImageMagick para acciones/capturas GUI"
+    exit 0
+fi
+
+if [[ "${LTOOLS_STORAGE_MAP_GUI_E2E_INNER:-0}" != 1 ]]; then
+    inner_args=(--binary "$BIN" --tmp "$TMP_DIR" --captures "$CAPTURE_DIR")
+    if (( REQUIRE_GUI )); then inner_args+=(--require-gui); fi
+    inner_args+=(--screen "$SCREEN")
+    if (( LAYOUT_ONLY )); then inner_args+=(--layout-only); fi
+    if (( SKIP_COMPACT_CHECK )); then inner_args+=(--skip-compact-check); fi
+    if [[ "$SCREEN" == "1280x900" ]] && (( ! LAYOUT_ONLY && ! SKIP_COMPACT_CHECK )); then
+        compact_args=(--binary "$BIN" --tmp "$TMP_DIR" --captures "$CAPTURE_DIR" \
+            --screen 640x480 --layout-only --skip-compact-check)
+        if (( REQUIRE_GUI )); then compact_args+=(--require-gui); fi
+        bash "$0" "${compact_args[@]}"
+    fi
+    exec timeout 75 xvfb-run -a -s "-screen 0 ${SCREEN}x24" \
+        env LTOOLS_STORAGE_MAP_GUI_E2E_INNER=1 bash "$0" "${inner_args[@]}"
+fi
+
+RUN_DIR="$(mktemp -d "$TMP_DIR/storage-map-gui-e2e.XXXXXX")"
+CONFIRM_ACTION="action"
+SOURCE="$RUN_DIR/source.txt"
+COPY="$RUN_DIR/copy.txt"
+MOVED="$RUN_DIR/moved.txt"
+printf 'LTools GUI map action fixture\n' >"$SOURCE"
+GUI_PID=""
+MAP_WINDOW=""
+ACTION_ROW_Y=0
+
+close_gui() {
+    if [[ -n "$GUI_PID" ]]; then
+        kill "$GUI_PID" 2>/dev/null || true
+        wait "$GUI_PID" 2>/dev/null || true
+        GUI_PID=""
+    fi
+}
+
+cleanup() {
+    local status=$?
+    close_gui
+    if [[ -n "$RUN_DIR" && -d "$RUN_DIR" ]]; then
+        if (( status == 0 )); then
+            rm -rf -- "$RUN_DIR"
+        else
+            printf 'E2E fallida; se conservan fixture y logs para diagnóstico: %s\n' "$RUN_DIR" >&2
+        fi
+    fi
+    return "$status"
+}
+trap cleanup EXIT
+
+capture_screen() {
+    local destination="$1"
+    if command -v import >/dev/null; then
+        import -window root "$destination" >/dev/null 2>&1
+    else
+        magick import -window root "$destination" >/dev/null 2>&1
+    fi
+    [[ -s "$destination" ]] || {
+        echo "No se pudo guardar la captura GUI: $destination" >&2
+        return 1
+    }
+}
+
+capture_window() {
+    local window="$1" destination="$2"
+    if command -v import >/dev/null; then
+        import -window "$window" "$destination" >/dev/null 2>&1
+    else
+        magick import -window "$window" "$destination" >/dev/null 2>&1
+    fi
+    [[ -s "$destination" ]] || {
+        echo "No se pudo guardar la captura del diálogo: $destination" >&2
+        return 1
+    }
+}
+
+image_geometry() {
+    local image="$1"
+    if command -v identify >/dev/null; then
+        identify -format '%wx%h' "$image"
+    else
+        magick identify -format '%wx%h' "$image"
+    fi
+}
+
+launch_map() {
+    local path="$1" tag="$2" home="$RUN_DIR/$2-home"
+    local state="$RUN_DIR/$2-state" data="$RUN_DIR/$2-data" config="$RUN_DIR/$2-config"
+    local ready_marker="$RUN_DIR/$tag.ready"
+    mkdir -p -- "$home" "$state" "$data" "$config" "$home/.local/share/Trash"
+    export GDK_BACKEND=x11 GTK_USE_PORTAL=0
+    unset WAYLAND_DISPLAY WAYLAND_SOCKET
+    export LTOOLS_NO_MOUNTS=1 LTOOLS_GUI_REQUIRED=1 LTOOLS_DISABLE_GUI=0
+    export LTOOLS_GUI_TREE_SMOKE=1 LTOOLS_GUI_TREE_SMOKE_HOLD_MS=45000
+    export LTOOLS_GUI_TREE_PATH="$path" LTOOLS_GUI_TREE_MARKER="$RUN_DIR/$tag.marker"
+    export LTOOLS_GUI_TREE_READY_MARKER="$ready_marker"
+    export LTOOLS_LANG=es HOME="$home" XDG_STATE_HOME="$state" XDG_DATA_HOME="$data" XDG_CONFIG_HOME="$config"
+    "$BIN" >"$RUN_DIR/$tag.log" 2>&1 &
+    GUI_PID=$!
+    MAP_WINDOW=""
+    for _ in {1..100}; do
+        MAP_WINDOW="$(xdotool search --onlyvisible --name "Mapa interactivo" 2>/dev/null | head -n1 || true)"
+        [[ -n "$MAP_WINDOW" ]] && break
+        sleep 0.1
+    done
+    if [[ -z "$MAP_WINDOW" ]]; then
+        cat "$RUN_DIR/$tag.log" >&2 || true
+        echo "No apareció el mapa interactivo ($tag)" >&2
+        return 1
+    fi
+    for _ in {1..100}; do
+        [[ -s "$ready_marker" ]] && break
+        sleep 0.1
+    done
+    if [[ ! -s "$ready_marker" ]]; then
+        cat "$RUN_DIR/$tag.log" >&2 || true
+        echo "El mapa no terminó de cargar ($tag)" >&2
+        return 1
+    fi
+    sleep 0.2
+    if (( LAYOUT_ONLY )); then
+        local compact_geometry compact_x compact_y compact_width compact_height screen_width screen_height
+        compact_geometry="$(xdotool getwindowgeometry --shell "$MAP_WINDOW")"
+        read -r screen_width screen_height < <(xdotool getdisplaygeometry)
+        compact_x="$(awk -F= '$1 == "X" { print $2 }' <<<"$compact_geometry")"
+        compact_y="$(awk -F= '$1 == "Y" { print $2 }' <<<"$compact_geometry")"
+        compact_width="$(awk -F= '$1 == "WIDTH" { print $2 }' <<<"$compact_geometry")"
+        compact_height="$(awk -F= '$1 == "HEIGHT" { print $2 }' <<<"$compact_geometry")"
+        local compact_capture="$CAPTURE_DIR/linux-storage-map-$tag-${SCREEN}-display.png"
+        local compact_window_capture="$CAPTURE_DIR/linux-storage-map-$tag-${SCREEN}-window.png"
+        capture_screen "$compact_capture"
+        capture_window "$MAP_WINDOW" "$compact_window_capture"
+        local capture_geometry window_capture_geometry
+        capture_geometry="$(image_geometry "$compact_capture")"
+        window_capture_geometry="$(image_geometry "$compact_window_capture")"
+        if [[ "$screen_width"x"$screen_height" != "$SCREEN" ||
+            "$capture_geometry" != "$SCREEN" ||
+            "$window_capture_geometry" != "${compact_width}x${compact_height}" ]]; then
+            echo "Las capturas no corresponden a las geometrías esperadas: display=${screen_width}x${screen_height}; imagen=$capture_geometry; ventana=$window_capture_geometry; esperado=$SCREEN; geometría=$compact_width x $compact_height" >&2
+            return 1
+        fi
+        if [[ ! "$compact_x" =~ ^-?[0-9]+$ || ! "$compact_y" =~ ^-?[0-9]+$ ||
+            ! "$compact_width" =~ ^[0-9]+$ || ! "$compact_height" =~ ^[0-9]+$ ]] ||
+            (( compact_x < 0 || compact_y < 0 || compact_x + compact_width > screen_width ||
+                compact_y + compact_height > screen_height )); then
+            echo "El diálogo del mapa no cabe en ${SCREEN}: $compact_geometry; display=${screen_width}x${screen_height}" >&2
+            return 1
+        fi
+        printf 'OK: mapa cargado y completo dentro de %s: display=%s; %s\n' \
+            "$SCREEN" "$capture_geometry" "$compact_geometry"
+        return 0
+    fi
+    xdotool windowsize --sync "$MAP_WINDOW" 800 640
+    sleep 0.35
+    xdotool windowsize --sync "$MAP_WINDOW" 640 480
+    sleep 0.2
+    local small_geometry small_width small_height large_geometry large_height
+    small_geometry="$(xdotool getwindowgeometry --shell "$MAP_WINDOW")"
+    small_width="$(awk -F= '$1 == "WIDTH" { print $2 }' <<<"$small_geometry")"
+    small_height="$(awk -F= '$1 == "HEIGHT" { print $2 }' <<<"$small_geometry")"
+    if [[ ! "$small_width" =~ ^[0-9]+$ || ! "$small_height" =~ ^[0-9]+$ ]] ||
+        ((small_width > 640 || small_height > 480)); then
+        echo "El diálogo del mapa no cabe en 640x480: $small_geometry" >&2
+        return 1
+    fi
+    capture_screen "$CAPTURE_DIR/linux-storage-map-$tag-resized-640x480-on-${SCREEN}.png"
+    xdotool windowsize --sync "$MAP_WINDOW" 800 640
+    sleep 0.25
+    capture_screen "$CAPTURE_DIR/linux-storage-map-$tag-screen.png"
+    large_geometry="$(xdotool getwindowgeometry --shell "$MAP_WINDOW")"
+    large_height="$(awk -F= '$1 == "HEIGHT" { print $2 }' <<<"$large_geometry")"
+    [[ "$large_height" =~ ^[0-9]+$ ]] || {
+        echo "No se pudo obtener la altura del mapa para ubicar sus acciones: $large_geometry" >&2
+        return 1
+    }
+    # La fila de acciones permanece anclada al pie del área de contenido; su
+    # coordenada se deriva del tamaño real, no de una altura absoluta antigua.
+    ACTION_ROW_Y=$((large_height - 90))
+    xdotool mousemove --window "$MAP_WINDOW" 120 110 click 1
+    sleep 0.15
+}
+
+open_path_form() {
+    local x="$1" title="$2" destination="$3" form=""
+    xdotool mousemove --window "$MAP_WINDOW" "$x" "$ACTION_ROW_Y" click 1
+    for _ in {1..60}; do
+        form="$(xdotool search --onlyvisible --name "$title" 2>/dev/null | tail -n1 || true)"
+        [[ -n "$form" ]] && break
+        sleep 0.1
+    done
+    [[ -n "$form" ]] || { echo "No apareció el formulario: $title" >&2; return 1; }
+    xdotool windowfocus --sync "$form"
+    xdotool mousemove --window "$form" 350 95 click 1
+    xdotool key --clearmodifiers ctrl+a
+    xdotool type --clearmodifiers --delay 1 "$destination"
+    xdotool mousemove --window "$form" 435 210 click 1
+    sleep 0.65
+}
+
+confirm_yes() {
+    # El diálogo GTK es una ventana top-level separada; getwindowfocus puede
+    # devolver la raíz cuando Xvfb no tiene gestor de ventanas. Se encuentra el
+    # diálogo entre las ventanas visibles sin título y se omiten la raíz, el
+    # mapa y las ventanas diminutas auxiliares.
+    local screen_width screen_height dialog title geometry width height click_x click_y candidate
+    read -r screen_width screen_height < <(xdotool getdisplaygeometry)
+    dialog=""
+    while IFS= read -r candidate; do
+        [[ "$candidate" != "$MAP_WINDOW" ]] || continue
+        title="$(xdotool getwindowname "$candidate" 2>/dev/null || true)"
+        [[ -z "$title" ]] || continue
+        geometry="$(xdotool getwindowgeometry --shell "$candidate" 2>/dev/null || true)"
+        width="$(awk -F= '$1 == "WIDTH" { print $2 }' <<<"$geometry")"
+        height="$(awk -F= '$1 == "HEIGHT" { print $2 }' <<<"$geometry")"
+        if [[ "$width" =~ ^[0-9]+$ && "$height" =~ ^[0-9]+$ ]] &&
+            (( width >= 200 && height >= 100 && width < screen_width && height < screen_height )); then
+            dialog="$candidate"
+            break
+        fi
+    done < <(xdotool search --onlyvisible --name '.*' 2>/dev/null || true)
+    [[ -n "$dialog" ]] || { echo 'No se identificó la ventana del diálogo de confirmación' >&2; return 1; }
+    geometry="$(xdotool getwindowgeometry --shell "$dialog")"
+    width="$(awk -F= '$1 == "WIDTH" { print $2 }' <<<"$geometry")"
+    height="$(awk -F= '$1 == "HEIGHT" { print $2 }' <<<"$geometry")"
+    [[ "$width" =~ ^[0-9]+$ && "$height" =~ ^[0-9]+$ ]] || {
+        echo "No se pudo leer la geometría del diálogo de confirmación: $geometry" >&2
+        return 1
+    }
+    (( width >= 120 && height >= 60 )) || {
+        echo "Ventana enfocada no parece el diálogo de confirmación: $geometry" >&2
+        return 1
+    }
+    click_x=$((width * 3 / 4))
+    click_y=$((height - 22))
+    xdotool windowraise "$dialog"
+    xdotool mousemove --sync --window "$dialog" "$click_x" "$click_y" click 1
+    sleep 0.3
+    capture_screen "$CAPTURE_DIR/linux-storage-map-${CONFIRM_ACTION}-after-confirm.png"
+}
+
+wait_for_file() {
+    local path="$1"
+    for _ in {1..100}; do
+        [[ -f "$path" ]] && return 0
+        sleep 0.1
+    done
+    echo "No se creó el resultado GUI esperado: $path" >&2
+    return 1
+}
+
+# Copiar: Enter debe cancelar; solo un clic explícito en Sí ejecuta la acción.
+launch_map "$SOURCE" map-copy
+if (( LAYOUT_ONLY )); then
+    close_gui
+    echo "OK: layout compacto del mapa validado en ${SCREEN}"
+    exit 0
+fi
+open_path_form 228 "Copiar ruta seleccionada" "$COPY"
+capture_screen "$CAPTURE_DIR/linux-storage-map-confirm-no-es.png"
+xdotool key Return
+sleep 0.3
+[[ ! -e "$COPY" ]] || { echo "Enter no respetó la negativa predeterminada" >&2; exit 31; }
+open_path_form 228 "Copiar ruta seleccionada" "$COPY"
+capture_screen "$CAPTURE_DIR/linux-storage-map-confirm-yes-es.png"
+CONFIRM_ACTION=copy
+confirm_yes
+wait_for_file "$COPY"
+cmp -s "$SOURCE" "$COPY"
+close_gui
+
+# Mover en una sesión limpia para que ningún modal de resultado intercepte la
+# siguiente pulsación; se comprueba la desaparición del origen y los bytes.
+launch_map "$SOURCE" map-move
+xdotool mousemove --window "$MAP_WINDOW" 320 "$ACTION_ROW_Y" click 1
+form=""
+for _ in {1..60}; do
+    form="$(xdotool search --onlyvisible --name "Mover ruta seleccionada" 2>/dev/null | tail -n1 || true)"
+    [[ -n "$form" ]] && break
+    sleep 0.1
+done
+[[ -n "$form" ]] || { echo "No apareció el formulario Mover" >&2; exit 32; }
+xdotool windowfocus --sync "$form"
+xdotool mousemove --window "$form" 350 95 click 1
+xdotool key --clearmodifiers ctrl+a
+xdotool type --clearmodifiers --delay 1 "$MOVED"
+xdotool mousemove --window "$form" 435 210 click 1
+sleep 0.65
+CONFIRM_ACTION=move
+confirm_yes
+wait_for_file "$MOVED"
+[[ ! -e "$SOURCE" ]]
+cmp -s "$COPY" "$MOVED"
+close_gui
+
+echo "OK: mapa GUI: No predeterminado, Copiar y Mover"
+
+# Papelera: usa un XDG_DATA_HOME aislado; nunca toca la papelera real.
+if command -v gio >/dev/null || command -v trash-put >/dev/null; then
+    launch_map "$MOVED" map-trash
+    xdotool mousemove --window "$MAP_WINDOW" 430 "$ACTION_ROW_Y" click 1
+    sleep 0.65
+    capture_screen "$CAPTURE_DIR/linux-storage-map-confirm-trash-es.png"
+    CONFIRM_ACTION=trash
+    confirm_yes
+    for _ in {1..100}; do [[ ! -e "$MOVED" ]] && break; sleep 0.1; done
+    [[ ! -e "$MOVED" ]]
+    TRASHED="$(find "$RUN_DIR/map-trash-data" "$RUN_DIR/map-trash-home/.local/share/Trash" \
+        -type f -name "$(basename "$MOVED")" -print -quit 2>/dev/null || true)"
+    [[ -n "$TRASHED" && -f "$TRASHED" ]]
+    grep -Fq "LTools GUI map action fixture" "$TRASHED"
+    close_gui
+    echo "OK: papelera del mapa GUI en XDG_DATA_HOME aislado"
+else
+    echo "SKIP: papelera GUI sin gio/trash-put"
+fi

@@ -19,6 +19,7 @@ pub struct Preferences {
     pub theme: Option<String>,
     pub language: Option<String>,
     pub hidden_categories: BTreeSet<String>,
+    pub elevate_by_default: bool,
 }
 
 pub fn path() -> PathBuf {
@@ -70,6 +71,9 @@ pub fn load() -> Preferences {
                 preferences.language = Some(value.to_owned());
             }
             "hidden_categories" => preferences.hidden_categories = parse_set(value),
+            "elevate_by_default" => {
+                preferences.elevate_by_default = matches!(value, "1" | "true" | "yes" | "si")
+            }
             _ => {}
         }
     }
@@ -87,21 +91,67 @@ pub fn save(preferences: &Preferences) -> Result<(), String> {
         .ok_or_else(|| "la ruta de preferencias no tiene directorio padre".to_owned())?;
     fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     let contents = format!(
-        "{HEADER}\ntheme={}\nlanguage={}\nhidden_categories={}\n",
+        "{HEADER}\ntheme={}\nlanguage={}\nhidden_categories={}\nelevate_by_default={}\n",
         preferences.theme.as_deref().unwrap_or("auto"),
         preferences.language.as_deref().unwrap_or("auto"),
         encode_set(&preferences.hidden_categories),
+        if preferences.elevate_by_default {
+            "true"
+        } else {
+            "false"
+        },
     );
     let temporary = target.with_extension(format!("conf.tmp.{}", std::process::id()));
     fs::write(&temporary, contents).map_err(|error| error.to_string())?;
-    // Unix puede reemplazar atómicamente el destino. Windows no permite que
-    // rename sobrescriba un archivo existente, así que retiramos únicamente
-    // el fichero de preferencias anterior justo antes del intercambio.
+    // No borres el fichero anterior antes del intercambio: si el rename
+    // fallara en Windows, se perderían las preferencias que sí eran válidas.
     #[cfg(windows)]
-    if target.exists() {
-        fs::remove_file(&target).map_err(|error| error.to_string())?;
+    replace_file_windows(&temporary, &target).map_err(|error| error.to_string())?;
+    #[cfg(not(windows))]
+    return fs::rename(&temporary, &target).map_err(|error| error.to_string());
+    #[cfg(windows)]
+    return Ok(());
+}
+
+#[cfg(windows)]
+fn replace_file_windows(
+    temporary: &std::path::Path,
+    target: &std::path::Path,
+) -> std::io::Result<()> {
+    use std::iter::once;
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let temporary = temporary
+        .as_os_str()
+        .encode_wide()
+        .chain(once(0))
+        .collect::<Vec<_>>();
+    let target = target
+        .as_os_str()
+        .encode_wide()
+        .chain(once(0))
+        .collect::<Vec<_>>();
+    let result = unsafe {
+        MoveFileExW(
+            temporary.as_ptr(),
+            target.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if result == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
     }
-    fs::rename(&temporary, &target).map_err(|error| error.to_string())
+}
+
+pub fn set_elevate_by_default(enabled: bool) -> Result<(), String> {
+    let mut preferences = load();
+    preferences.elevate_by_default = enabled;
+    save(&preferences)
 }
 
 pub fn apply_environment() {

@@ -84,6 +84,18 @@ pub fn run_with_privilege(program: &str, args: &[String], dry_run: bool) -> io::
     current::run_with_privilege(program, args, dry_run)
 }
 
+pub fn is_elevated() -> bool {
+    current::is_elevated()
+}
+
+/// Indica si una GUI puede pedir autorización sin disponer de un terminal
+/// interactivo. La implementación concreta conoce el mecanismo nativo de
+/// cada sistema (Polkit/sudo en Linux, UAC/PowerShell en Windows).
+#[cfg(target_os = "linux")]
+pub fn gui_privilege_available() -> bool {
+    current::gui_privilege_available()
+}
+
 #[cfg(not(windows))]
 pub fn run_with_privilege_input(
     program: &str,
@@ -110,8 +122,8 @@ pub fn install_tool(id: &str, dry_run: bool) -> Result<bool, String> {
     current::install_tool(id, dry_run)
 }
 
-pub fn fuse_available() -> bool {
-    current::fuse_available()
+pub fn fuse_prerequisites_detected() -> bool {
+    current::fuse_prerequisites_detected()
 }
 
 /// Optional native WinSlim integration root. The platform adapters own this
@@ -123,7 +135,7 @@ pub fn winslim_root() -> Option<PathBuf> {
 
 #[allow(dead_code)]
 pub fn winslim_available() -> bool {
-    winslim_root().is_some()
+    winslim_root().is_some() || nsudo_path().is_some()
 }
 
 /// Localiza el lanzador NSudo únicamente en la superficie WinSlim o en el

@@ -30,9 +30,11 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
         "group-delete" => group_mutation(ctx, args, false, false),
         "group-add" => group_mutation(ctx, args, true, true),
         "group-remove" => group_mutation(ctx, args, false, true),
+        "admin-add" | "grant-admin" => add_administrator_access(ctx, args),
+        "admin-groups" => list_administrator_groups(),
         "set-primary-group" => set_primary_group(ctx, args),
         "menu" => menu(ctx),
-        _ => Err("accounts admite list, identity, groups [USER], group-list, sessions, inspect USER, create USER, modify USER, password USER, lock USER, unlock USER, delete USER, expire USER, group-create GROUP, group-delete GROUP, group-add USER:GROUP, group-remove USER:GROUP, set-primary-group USER:GROUP o menu".into()),
+        _ => Err("accounts admite list, identity, groups [USER], group-list, sessions, inspect USER, create USER, modify USER, password USER, lock USER, unlock USER, delete USER, expire USER, group-create GROUP, group-delete GROUP, group-add USER:GROUP, group-remove USER:GROUP, admin-groups, admin-add [USER] [--group sudo|wheel|admin], set-primary-group USER:GROUP o menu".into()),
     }
 }
 
@@ -84,6 +86,7 @@ fn has_flag(args: &[String], name: &str) -> bool {
 fn valid_name(raw: &str) -> Result<&str, String> {
     let value = raw.trim();
     if value.is_empty()
+        || value.starts_with('-')
         || value.len() > 64
         || !value
             .chars()
@@ -527,6 +530,131 @@ fn group_mutation(
     )
 }
 
+/// Añade una cuenta a un grupo administrativo común de la distribución. Si no
+/// se indica grupo, solo selecciona entre `sudo`, `wheel` o `admin` cuando ese
+/// grupo existe realmente; nunca crea grupos ni presupone que exista una regla
+/// sudoers para un grupo personalizado.
+fn add_administrator_access(ctx: &Context, args: &[String]) -> Result<(), String> {
+    let mut user = None;
+    let mut group = None;
+    let mut index = 1;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--user" => {
+                user = Some(
+                    args.get(index + 1)
+                        .ok_or("--user requiere un usuario")?
+                        .clone(),
+                );
+                index += 2;
+            }
+            "--group" => {
+                group = Some(
+                    args.get(index + 1)
+                        .ok_or("--group requiere un grupo")?
+                        .clone(),
+                );
+                index += 2;
+            }
+            "--yes" => index += 1,
+            value if value.starts_with('-') => {
+                return Err(format!("opción admin-add desconocida: {value}"));
+            }
+            value if user.is_none() => {
+                user = Some(value.to_owned());
+                index += 1;
+            }
+            value => return Err(format!("argumento inesperado: {value}")),
+        }
+    }
+
+    let user = match user {
+        Some(user) => user,
+        None => capture_output("id", &["-un"])?,
+    };
+    let user = valid_name(&user)?.to_owned();
+    let group = match group {
+        Some(group) => {
+            let group = valid_name(&group)?.to_owned();
+            if !system_group_exists(&group) {
+                return Err(format!("el grupo '{group}' no existe en esta máquina"));
+            }
+            group
+        }
+        None => detected_administrator_group().ok_or_else(|| {
+            "no se detectó un grupo administrativo común (sudo, wheel o admin); indica --group tras comprobar la política sudoers".to_owned()
+        })?,
+    };
+
+    println!("Se añadirá {user} al grupo {group}. La pertenencia administrativa puede otorgar control total; cierra sesión y vuelve a entrar para que se aplique. Verifica la política sudoers de la distribución.");
+    execute_user_command(
+        ctx,
+        &format!("{user}:{group}"),
+        "añadir la cuenta al grupo administrativo",
+        vec![
+            "usermod".into(),
+            "--append".into(),
+            "--groups".into(),
+            group,
+            user,
+        ],
+    )
+}
+
+fn list_administrator_groups() -> Result<(), String> {
+    let user = capture_output("id", &["-un"])?;
+    let memberships = capture_output("id", &["-Gn", &user])?;
+    println!("Grupos administrativos convencionales (la regla sudoers depende de la máquina):");
+    for group in ["sudo", "wheel", "admin"] {
+        println!(
+            "  {group}: {}{}",
+            if system_group_exists(group) {
+                "existe"
+            } else {
+                "no existe"
+            },
+            if memberships.split_whitespace().any(|member| member == group) {
+                " · tu usuario pertenece"
+            } else {
+                ""
+            }
+        );
+    }
+    println!("Para añadir una cuenta: accounts admin-add [USUARIO] [--group GRUPO]. La acción pide confirmación y privilegios.");
+    Ok(())
+}
+
+fn system_group_exists(group: &str) -> bool {
+    if !command_exists("getent") {
+        return false;
+    }
+    Command::new("getent")
+        .args(["group", group])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| {
+            String::from_utf8(output.stdout)
+                .ok()
+                .map(|line| line.split(':').next() == Some(group))
+        })
+        .unwrap_or(false)
+}
+
+fn detected_administrator_group() -> Option<String> {
+    let existing = ["sudo", "wheel", "admin"]
+        .into_iter()
+        .filter(|group| system_group_exists(group))
+        .collect::<Vec<_>>();
+    preferred_administrator_group(&existing).map(str::to_owned)
+}
+
+fn preferred_administrator_group(existing: &[&str]) -> Option<&'static str> {
+    ["sudo", "wheel", "admin"]
+        .into_iter()
+        .find(|candidate| existing.contains(candidate))
+}
+
 fn user_group_args(args: &[String], action: &str) -> Result<(String, String), String> {
     if let (Some(user), Some(group)) = (option_value(args, "--user"), option_value(args, "--group"))
     {
@@ -690,7 +818,10 @@ fn menu(ctx: &Context) -> Result<(), String> {
         println!(" 1) Cuentas    2) Grupos    3) Mi identidad    4) Sesiones    5) Inspeccionar");
         println!(" 6) Crear      7) Editar    8) Contraseña    9) Bloquear    10) Desbloquear");
         println!("11) Eliminar   12) Caducidad 13) Crear grupo 14) Eliminar grupo");
-        println!("15) Añadir miembro  16) Retirar miembro  17) Grupo principal  q) Volver");
+        println!("15) Añadir miembro  16) Retirar miembro  17) Grupo principal");
+        println!(
+            "18) Añadir usuario actual a sudo/wheel  19) Ver grupos administrativos  q) Volver"
+        );
         let choice =
             crate::menu_input("Elige una opción (Enter para volver): ").unwrap_or_default();
         let result = match choice.trim() {
@@ -745,6 +876,8 @@ fn menu(ctx: &Context) -> Result<(), String> {
             "17" => prompt(ctx, "Usuario:Grupo: ", |c, value| {
                 set_primary_group(c, &["set-primary-group".into(), value.into()])
             }),
+            "18" => add_administrator_access(ctx, &["admin-add".into()]),
+            "19" => list_administrator_groups(),
             "" | "q" | "Q" => return Ok(()),
             _ => Ok(()),
         };
@@ -772,7 +905,27 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{redacted_command, valid_name};
+    use super::*;
+
+    #[test]
+    fn prefers_the_conventional_admin_group_without_inventing_one() {
+        assert_eq!(
+            preferred_administrator_group(&["wheel", "sudo"]),
+            Some("sudo")
+        );
+        assert_eq!(
+            preferred_administrator_group(&["admin", "wheel"]),
+            Some("wheel")
+        );
+        assert_eq!(preferred_administrator_group(&["users"]), None);
+    }
+
+    #[test]
+    fn linux_account_names_reject_option_injection_for_admin_membership() {
+        assert!(valid_name("alice").is_ok());
+        assert!(valid_name("--help").is_err());
+        assert!(valid_name("alice:wheel").is_err());
+    }
 
     #[test]
     fn names_reject_shell_fragments() {

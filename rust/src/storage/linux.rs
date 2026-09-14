@@ -37,9 +37,7 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
 }
 
 fn first_action(args: &[String]) -> Option<&str> {
-    args.iter()
-        .map(String::as_str)
-        .find(|arg| !arg.starts_with('-'))
+    crate::cli_args::positionals(args).first().copied()
 }
 
 fn target_after<'a>(args: &'a [String], action: &str) -> Result<&'a str, String> {
@@ -169,7 +167,7 @@ fn build_storage_operation(
             .map(|raw| validate_token(&raw, label))
             .transpose()
     };
-    let mut destructive = true;
+    let mut destructive = !matches!(operation, "print" | "print-free" | "probe" | "align-check");
     let (program, command_args, target) = match operation {
         "print" | "print-free" | "probe" => {
             let target = device()?;
@@ -214,8 +212,8 @@ fn build_storage_operation(
             let fs =
                 optional_token("--fs", "sistema de archivos")?.unwrap_or_else(|| "ext4".into());
             validate_filesystem(&fs)?;
-            let start = token("--start", "inicio, por ejemplo 1MiB")?;
-            let end = token("--end", "fin, por ejemplo 100%")?;
+            let start = validate_parted_position(&token("--start", "inicio, por ejemplo 1MiB")?)?;
+            let end = validate_parted_position(&token("--end", "fin, por ejemplo 100%")?)?;
             let name = optional_token("--name", "nombre GPT")?;
             let mut command = vec![
                 "-s".into(),
@@ -252,7 +250,9 @@ fn build_storage_operation(
             }
             match operation {
                 "rm" => {}
-                "resizepart" => command.push(token("--end", "nuevo fin")?),
+                "resizepart" => {
+                    command.push(validate_parted_position(&token("--end", "nuevo fin")?)?)
+                }
                 "name" => command.push(token("--name", "nombre")?),
                 "flag" => {
                     command.push(token("--flag", "bandera")?);
@@ -263,8 +263,14 @@ fn build_storage_operation(
                     command.push(state);
                 }
                 "rescue" => {
-                    command.push(token("--start", "inicio de rescate")?);
-                    command.push(token("--end", "fin de rescate")?);
+                    command.push(validate_parted_position(&token(
+                        "--start",
+                        "inicio de rescate",
+                    )?)?);
+                    command.push(validate_parted_position(&token(
+                        "--end",
+                        "fin de rescate",
+                    )?)?);
                 }
                 "align-check" => {
                     let alignment = optional_token("--alignment", "alineación")?
@@ -442,8 +448,14 @@ fn build_storage_operation(
         }
         "lvm" => build_lvm_operation(args, &value, &device)?,
         "btrfs" => build_btrfs_operation(args, &value, &path)?,
-        "zfs" => build_zfs_operation(args, &value)?,
-        "raid" | "mdadm" => build_raid_operation(args, &value, &device)?,
+        "zfs" => build_zfs_operation(args, &value, dry_run)?,
+        "raid" | "mdadm" => {
+            let raid_operation = value("--operation").unwrap_or_default();
+            if matches!(raid_operation.as_str(), "detail" | "examine") {
+                destructive = false;
+            }
+            build_raid_operation(args, &value, &device, dry_run)?
+        }
         _ => {
             return Err(format!(
                 "operación de almacenamiento desconocida: {operation}"
@@ -553,6 +565,7 @@ fn build_btrfs_operation(
 fn build_zfs_operation(
     _args: &[String],
     value: &dyn Fn(&str) -> Option<String>,
+    dry_run: bool,
 ) -> Result<(String, Vec<String>, String), String> {
     let operation = value("--operation").ok_or_else(|| "falta --operation para zfs".to_owned())?;
     let name = value("--name").ok_or_else(|| "falta --name para zfs".to_owned())?;
@@ -561,7 +574,7 @@ fn build_zfs_operation(
     let target = name.clone();
     let command = match operation.as_str() {
         "pool-create" => {
-            let devices = validate_device_list(&members)?;
+            let devices = validate_device_list(&members, dry_run)?;
             std::iter::once("create".into())
                 .chain(std::iter::once(name.clone()))
                 .chain(devices)
@@ -607,16 +620,53 @@ fn build_raid_operation(
     _args: &[String],
     value: &dyn Fn(&str) -> Option<String>,
     device: &dyn Fn() -> Result<String, String>,
+    dry_run: bool,
 ) -> Result<(String, Vec<String>, String), String> {
     let operation = value("--operation").ok_or_else(|| "falta --operation para RAID".to_owned())?;
     let target = device()?;
     let token = |name: &str| value(name).ok_or_else(|| format!("falta {name} para {operation}"));
+    if operation != "examine" && !is_md_array_path(&target) {
+        return Err("--device debe ser el conjunto RAID, por ejemplo /dev/md0 o /dev/md/datos; examine espera un miembro /dev/...".into());
+    }
+    let member_device = |name: &str| -> Result<String, String> {
+        let raw = token(name)?;
+        validate_device(&raw, dry_run).map(|path| path.display().to_string())
+    };
     let command = match operation.as_str() {
+        "detail" => vec!["--detail".into(), target.clone()],
+        "examine" => vec!["--examine".into(), target.clone()],
+        "assemble" => {
+            let members = validate_device_list(
+                &value("--members").ok_or_else(|| "falta --members para assemble".to_owned())?,
+                dry_run,
+            )?;
+            std::iter::once("--assemble".into())
+                .chain(std::iter::once(target.clone()))
+                .chain(members)
+                .collect()
+        }
         "create" => {
             let members = validate_device_list(
                 &value("--members").ok_or_else(|| "falta --members".to_owned())?,
+                dry_run,
             )?;
             let level = token("--level")?;
+            if !matches!(level.as_str(), "0" | "1" | "4" | "5" | "6" | "10") {
+                return Err(
+                    "--level debe ser uno de los niveles RAID habituales: 0, 1, 4, 5, 6 o 10"
+                        .into(),
+                );
+            }
+            let min_members = match level.as_str() {
+                "4" | "5" => 3,
+                "6" => 4,
+                _ => 2,
+            };
+            if members.len() < min_members {
+                return Err(format!(
+                    "RAID {level} necesita al menos {min_members} miembros"
+                ));
+            }
             let count = members.len().to_string();
             let mut command = vec![
                 "--create".into(),
@@ -629,16 +679,37 @@ fn build_raid_operation(
             command.extend(members);
             command
         }
-        "add" | "remove" | "fail" => {
-            vec![target.clone(), format!("--{operation}"), token("--member")?]
+        "add" | "remove" | "fail" | "re-add" => {
+            vec![
+                target.clone(),
+                format!("--{operation}"),
+                member_device("--member")?,
+            ]
         }
-        "stop" => vec!["--stop".into(), target.clone()],
-        "grow" => vec![
-            "--grow".into(),
+        "replace" => vec![
             target.clone(),
-            "--raid-devices".into(),
-            token("--count")?,
+            "--replace".into(),
+            member_device("--member")?,
+            "--with".into(),
+            member_device("--replacement")?,
         ],
+        "stop" => vec!["--stop".into(), target.clone()],
+        "check" | "repair" => vec![format!("--action={operation}"), target.clone()],
+        "grow" => {
+            let count = token("--count")?;
+            let count = count
+                .parse::<u32>()
+                .ok()
+                .filter(|value| *value > 0)
+                .ok_or("--count debe ser un entero positivo")?
+                .to_string();
+            vec![
+                "--grow".into(),
+                target.clone(),
+                "--raid-devices".into(),
+                count,
+            ]
+        }
         _ => return Err(format!("operación RAID no admitida: {operation}")),
     };
     Ok(("mdadm".into(), command, target))
@@ -703,18 +774,76 @@ fn validate_filesystem(raw: &str) -> Result<(), String> {
     }
 }
 
-fn validate_device_list(raw: &str) -> Result<Vec<String>, String> {
-    let values = raw
-        .split(',')
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| validate_device(value, true).map(|path| path.display().to_string()))
+fn validate_device_list(raw: &str, dry_run: bool) -> Result<Vec<String>, String> {
+    let raw_values = raw.split(',').map(str::trim).collect::<Vec<_>>();
+    if raw_values.is_empty() || raw_values.iter().any(|value| value.is_empty()) {
+        return Err("la lista de dispositivos está vacía o contiene un elemento sin ruta".into());
+    }
+    let values = raw_values
+        .into_iter()
+        .map(|value| validate_device(value, dry_run).map(|path| path.display().to_string()))
         .collect::<Result<Vec<_>, _>>()?;
-    if values.is_empty() {
-        Err("la lista de dispositivos está vacía".into())
+    if values
+        .iter()
+        .collect::<std::collections::HashSet<_>>()
+        .len()
+        != values.len()
+    {
+        Err("la lista contiene dispositivos repetidos".into())
     } else {
         Ok(values)
     }
+}
+
+fn validate_parted_position(raw: &str) -> Result<String, String> {
+    let value = raw.trim();
+    let split = value
+        .find(|character: char| !character.is_ascii_digit() && character != '.')
+        .unwrap_or(value.len());
+    let number = &value[..split];
+    let unit = &value[split..];
+    let valid_number = !number.is_empty()
+        && number.chars().filter(|character| *character == '.').count() <= 1
+        && number
+            .chars()
+            .all(|character| character.is_ascii_digit() || character == '.')
+        && number.chars().any(|character| character.is_ascii_digit());
+    let valid_unit = matches!(
+        unit,
+        "" | "%"
+            | "s"
+            | "B"
+            | "kB"
+            | "MB"
+            | "GB"
+            | "TB"
+            | "KiB"
+            | "MiB"
+            | "GiB"
+            | "TiB"
+            | "C"
+            | "cyl"
+    );
+    if valid_number && valid_unit {
+        Ok(value.to_owned())
+    } else {
+        Err(format!(
+            "posición parted no válida: {raw}; usa un número con unidad (ej. 1MiB, 100% o 2048s)"
+        ))
+    }
+}
+
+fn is_md_array_path(path: &str) -> bool {
+    path.strip_prefix("/dev/md").is_some_and(|suffix| {
+        !suffix.is_empty()
+            && (suffix.chars().all(|character| character.is_ascii_digit())
+                || suffix.strip_prefix('/').is_some_and(|name| {
+                    !name.is_empty()
+                        && name.chars().all(|character| {
+                            character.is_ascii_alphanumeric() || "._-".contains(character)
+                        })
+                }))
+    })
 }
 
 fn format_storage_command(program: &str, args: &[String]) -> String {
@@ -906,7 +1035,8 @@ fn partition_guide() -> Result<(), String> {
     println!("     Flag de disco: parted /dev/sdX disk_set pmbr_boot on");
     println!("     Alternar flag: parted /dev/sdX disk_toggle pmbr_boot");
     println!("     Otras órdenes parted: print, select, unit, align-check, disk_set y");
-    println!("     disk_toggle. print consulta; el resto puede escribir o cambiar metadatos.");
+    println!("     disk_toggle. align-check es de solo lectura; valida posiciones como");
+    println!("     1MiB, 100% o 2048s antes de mkpart, resizepart y rescue.");
     println!();
     println!("     fdisk permite: p listar, g GPT, o MBR, n crear, d borrar, t tipo,");
     println!("     l tipos, x expertos, v validar, w escribir y q salir sin guardar.");
@@ -973,8 +1103,15 @@ fn partition_guide() -> Result<(), String> {
     println!("     destroy y rollback pueden eliminar datos o volver atrás en el tiempo.");
     println!();
     println!("   6.9 RAID por software");
-    println!("     mdadm --detail consulta; --create, --add, --fail y --remove cambian el array.");
-    println!("     --grow puede cambiar nivel o tamaño; espera a que termine el rebuild.");
+    println!("     Primero usa mdadm --detail /dev/mdX y mdadm --examine /dev/sdXN.");
+    println!("     LTools guía detail, examine, assemble, create RAID 0/1/4/5/6/10,");
+    println!("     add, replace, remove, fail, re-add, stop, check, repair y grow.");
+    println!("     Para assemble/create indica cada miembro /dev/... separado por coma;");
+    println!("     para replace indica miembro antiguo y sustituto. La lista de discos");
+    println!("     se valida antes de ejecutar y no acepta duplicados.");
+    println!("     check recorre consistencia; repair puede reescribir datos/paridad.");
+    println!("     grow cambia el número de miembros; espera al rebuild y comprueba detail.");
+    println!("     stop exige desmontar primero todos los sistemas de archivos dependientes.");
     println!("     No formatees ni retires un miembro sin revisar UUID, estado y redundancia.");
     println!();
     println!("   6.10 EFI, recuperación y borrado seguro");
@@ -1903,16 +2040,24 @@ fn zfs_operations_menu(ctx: &Context) -> Result<(), String> {
 
 fn raid_operations_menu(ctx: &Context) -> Result<(), String> {
     println!("\n=== RAID mdadm ===");
-    println!("Operaciones: create, add, remove, fail, stop, grow.");
+    println!("detail consulta el array; examine consulta un miembro /dev/.... Usa assemble solo para reunir miembros existentes.");
+    println!("create admite RAID 0/1/4/5/6/10 y cambia metadatos; revisa UUID, nivel, discos y copia antes de confirmar.");
+    println!("add/replace/remove/fail/re-add cambian miembros; check verifica, repair puede reescribir y grow cambia el recuento.");
+    println!("stop requiere desmontar todo lo que dependa del array. Reconsulta detail para verificar sincronización.");
     prompt_operation(
         ctx,
         "raid",
         &[
             ("--operation", "Operación RAID", true),
-            ("--device", "Dispositivo md /dev/mdX", true),
+            (
+                "--device",
+                "Array /dev/mdX (examine: miembro /dev/...)",
+                true,
+            ),
             ("--level", "Nivel RAID (create)", false),
             ("--members", "Dispositivos separados por coma", false),
             ("--member", "Miembro individual", false),
+            ("--replacement", "Dispositivo sustituto (replace)", false),
             ("--count", "Número de dispositivos (grow)", false),
         ],
     )
@@ -2263,6 +2408,31 @@ mod tests {
     }
 
     #[test]
+    fn parted_alignment_is_read_only_and_does_not_request_destructive_confirmation() {
+        let args = vec![
+            "operate".into(),
+            "align-check".into(),
+            "--device".into(),
+            "/dev/synthetic".into(),
+            "--number".into(),
+            "2".into(),
+            "--alignment".into(),
+            "optimal".into(),
+        ];
+        let spec = build_storage_operation("align-check", &args, true).expect("align-check válido");
+        assert_eq!(
+            spec.args,
+            ["-s", "/dev/synthetic", "align-check", "optimal", "2"]
+        );
+        assert!(!spec.destructive);
+        assert!(validate_parted_position("1MiB").is_ok());
+        assert!(validate_parted_position("100%").is_ok());
+        assert!(validate_parted_position("2048s").is_ok());
+        assert!(validate_parted_position("--help").is_err());
+        assert!(validate_parted_position("1MiB;echo bad").is_err());
+    }
+
+    #[test]
     fn construye_capas_avanzadas_y_rechaza_rutas_inseguras() {
         let lvm = vec![
             "operate".into(),
@@ -2323,5 +2493,115 @@ mod tests {
         assert_eq!(raid_spec.program, "mdadm");
         assert!(raid_spec.args.contains(&"--create".to_owned()));
         assert!(raid_spec.args.contains(&"/dev/a".to_owned()));
+    }
+
+    #[test]
+    fn raid_incluye_consulta_ensamblado_y_reemplazo_guiados() {
+        let build = |operation: &str, extras: &[(&str, &str)]| {
+            let mut args = vec![
+                "operate".to_owned(),
+                "raid".to_owned(),
+                "--operation".to_owned(),
+                operation.to_owned(),
+                "--device".to_owned(),
+                "/dev/md0".to_owned(),
+            ];
+            for (option, value) in extras {
+                args.push((*option).to_owned());
+                args.push((*value).to_owned());
+            }
+            build_storage_operation("raid", &args, true).expect("operación RAID válida")
+        };
+
+        let detail = build("detail", &[]);
+        assert_eq!(detail.args, ["--detail", "/dev/md0"]);
+        assert!(!detail.destructive);
+
+        let examine = {
+            let args = vec![
+                "operate".into(),
+                "raid".into(),
+                "--operation".into(),
+                "examine".into(),
+                "--device".into(),
+                "/dev/sda1".into(),
+            ];
+            build_storage_operation("raid", &args, true).expect("examine de miembro")
+        };
+        assert_eq!(examine.args, ["--examine", "/dev/sda1"]);
+        assert!(!examine.destructive);
+
+        let assemble = build("assemble", &[("--members", "/dev/sda,/dev/sdb")]);
+        assert_eq!(
+            assemble.args,
+            ["--assemble", "/dev/md0", "/dev/sda", "/dev/sdb"]
+        );
+
+        let replace = build(
+            "replace",
+            &[("--member", "/dev/sda"), ("--replacement", "/dev/sdc")],
+        );
+        assert_eq!(
+            replace.args,
+            ["/dev/md0", "--replace", "/dev/sda", "--with", "/dev/sdc"]
+        );
+
+        let check = build("check", &[]);
+        assert_eq!(check.args, ["--action=check", "/dev/md0"]);
+        let repair = build("repair", &[]);
+        assert_eq!(repair.args, ["--action=repair", "/dev/md0"]);
+    }
+
+    #[test]
+    fn raid_rejects_invalid_levels_members_and_counts_before_execution() {
+        let build = |operation: &str, device: &str, extras: &[(&str, &str)]| {
+            let mut args = vec![
+                "operate".to_owned(),
+                "raid".to_owned(),
+                "--operation".to_owned(),
+                operation.to_owned(),
+                "--device".to_owned(),
+                device.to_owned(),
+            ];
+            for (option, value) in extras {
+                args.extend([(*option).to_owned(), (*value).to_owned()]);
+            }
+            build_storage_operation("raid", &args, true)
+        };
+
+        assert!(build("detail", "/dev/sda", &[]).is_err());
+        assert!(build("add", "/dev/md0", &[("--member", "--help")]).is_err());
+        assert!(build(
+            "replace",
+            "/dev/md0",
+            &[("--member", "/dev/sda"), ("--replacement", "--force")]
+        )
+        .is_err());
+        assert!(build(
+            "create",
+            "/dev/md0",
+            &[("--level", "--run"), ("--members", "/dev/sda,/dev/sdb")]
+        )
+        .is_err());
+        assert!(build(
+            "create",
+            "/dev/md0",
+            &[("--level", "5"), ("--members", "/dev/sda,/dev/sdb")]
+        )
+        .is_err());
+        assert!(build(
+            "create",
+            "/dev/md0",
+            &[("--level", "1"), ("--members", "/dev/sda,/dev/sda")]
+        )
+        .is_err());
+        assert!(build(
+            "create",
+            "/dev/md0",
+            &[("--level", "1"), ("--members", "/dev/sda,")]
+        )
+        .is_err());
+        assert!(build("grow", "/dev/md0", &[("--count", "0")]).is_err());
+        assert!(validate_device_list("/dev/a,/dev/ltools-missing-device", false).is_err());
     }
 }

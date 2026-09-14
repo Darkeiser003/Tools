@@ -5,8 +5,14 @@
 
 use crate::common::Context;
 
+#[cfg(windows)]
 pub fn help() -> &'static str {
-    "guide [cli|gui] [all|audit|packages|software|git|gh|automation|clean|storage|system|services|accounts|native|network|boot|registry|diagnostics|wine|defaults|containers|kubernetes|ssh|adb|utilities|actions]"
+    "guide [cli|gui] [all|audit|packages|software|installable|git|gh|aliases|automation|automation-register|clean|storage|storage-partitions|storage-filesystems|storage-volumes|system|services|accounts|native|network|connectivity|boot|registry|diagnostics|wine|defaults|settings|containers|containers-lifecycle|containers-images|containers-volumes|containers-compose|kubernetes|ssh|adb|utilities|actions|privileges|winslim]"
+}
+
+#[cfg(not(windows))]
+pub fn help() -> &'static str {
+    "guide [cli|gui] [all|audit|packages|software|installable|git|gh|aliases|automation|automation-register|clean|storage|storage-partitions|storage-filesystems|storage-volumes|system|services|accounts|native|network|connectivity|boot|registry|diagnostics|wine|defaults|settings|containers|containers-lifecycle|containers-images|containers-volumes|containers-compose|kubernetes|ssh|adb|utilities|actions|privileges]"
 }
 
 const INDEX: &str = r#"GUÍAS DE USO DE LTOOLS
@@ -25,35 +31,47 @@ Familias disponibles:
   audit       auditoría e inventarios
   packages    paquetes, almacenes y limpieza
   software    búsqueda e instalación contextual
+  installable herramientas instalables y sus submenús
   git / gh    Git avanzado y GitHub CLI
+  aliases     gestión CLI de alias por usuario; no tiene pantalla gráfica
   automation  automatizaciones y acciones declarativas
+  automation-register  registro de scripts con campos separados
   clean       limpieza con selección segura
   storage     discos, particiones, formatos y volúmenes
+  storage-partitions / storage-filesystems / storage-volumes
+               menús especializados de almacenamiento
   system      estado del sistema y herramientas nativas
   services    servicios, scopes, origen y gestión
   accounts    usuarios, grupos, sesiones y permisos
   network     interfaces, NetworkManager, rutas, DNS y puertos
+  connectivity SSH, SCP, SFTP y Android/ADB
   boot        EFI, GRUB, systemd-boot y Secure Boot
   registry    configuración y registros por plataforma
   diagnostics salud, dependencias y capacidades
   wine        prefijos Wine/Proton y migraciones
   containers  Docker/Podman, imágenes, volúmenes y Compose
+  containers-lifecycle / containers-images / containers-volumes /
+  containers-compose  menús especializados de contenedores
   kubernetes  recursos, despliegues, rollouts y port-forward
   ssh / adb   acceso remoto y dispositivos Android
   utilities   utilidades detectadas e instalables
   defaults    rutas, configuración y valores efectivos
+  settings    preferencias visuales, visibilidad y elevación por defecto
   actions     catálogo de acciones y contratos para automatizar
+  privileges  política de elevación, sudo/UAC y acciones que nunca se elevan
 
-En la GUI, el botón «Guía de uso» de cada familia abre el mismo contenido
-que este comando, junto con sus botones de gestión.
+En la GUI, las categorías que tienen pantalla propia ofrecen una guía
+contextual con las opciones de esa pantalla. El gestor de alias es una función
+CLI y no se presenta como un menú gráfico inexistente.
 "#;
 
 const GIT: &str = r#"GUÍA: GIT Y GITHUB (git + gh)
 
 Requisitos:
-  git para repositorios locales y remotos. gh (GitHub CLI) solo para login,
-  repositorios, pull requests y releases de GitHub. Comprueba disponibilidad
-  con `ltools doctor` o `ltools native tools status`.
+  git para repositorios locales y remotos. `gh` (GitHub CLI) es opcional y su
+  catálogo cambia según la versión; consulta la ayuda del ejecutable instalado
+  y usa el passthrough seguro para cualquier comando/extensión no integrada.
+  Comprueba disponibilidad con `ltools doctor` o `ltools native tools status`.
 
 Flujo recomendado:
   1. `ltools git status --repo RUTA` revisa rama y cambios.
@@ -65,7 +83,9 @@ Flujo recomendado:
   7. `ltools git push --repo RUTA --remote origin --branch main` publica.
 
 Opciones cubiertas por la GUI y la CLI:
-  status, log, clone, fetch, pull, add, commit, push, branch, tag y release.
+  status, log, clone, fetch, pull, add, commit, push, branch, tag, release,
+  diagnose y repair del índice. `diagnose` informa del estado y `repair` solo
+  reconstruye un índice ausente/ilegible desde un HEAD íntegro.
   `branch` permite listar/crear/cambiar/eliminar; `tag` permite crear y
   publicar etiquetas; `release` prepara una release con tag, título y notas.
   Las acciones destructivas o remotas piden confirmación y admiten `--yes`
@@ -77,9 +97,46 @@ GitHub CLI (`gh`):
   `ltools git gh repo --repo OWNER/REPO` consulta el repositorio.
   `ltools git gh prs --repo OWNER/REPO` lista pull requests.
   `ltools git gh releases --repo OWNER/REPO` lista releases.
-  El login requiere navegador/credenciales y red; LTools no guarda ni
-  imprime secretos. Si `gh` no está instalado, se informa y no se sustituye
-  silenciosamente por una descarga.
+  `ltools git gh version` y `ltools git gh help` muestran la versión y ayuda
+  de la instalación detectada. Para cubrir subcomandos y extensiones que
+  cambian según la versión, usa `ltools git gh native <comando> [argumentos]`;
+  por ejemplo, `native issue list`, `native pr view 123`, `native run list`,
+  `native workflow list` o `native extension list`. La ayuda exacta instalada
+  se obtiene con `ltools git gh native help`. El passthrough no fija una lista
+  de comandos: recibe las opciones que acepte la versión actual de `gh`, así
+  que también cubre `project`, `ruleset`, `attestation`, `codespace`, `api` y
+  futuras extensiones/comandos. En GUI, «Comando nativo de gh…» pide un
+  comando raíz y argumentos en una sola línea; admite comillas simples/dobles, no
+  expande variables ni ejecuta una shell. Usa el campo Repositorio o incluye
+  `--repo OWNER/REPO`/`-R OWNER/REPO` en los argumentos, no ambos. El campo no
+  se aplica a `auth`, `help`, `version` ni `api`; para API indica el endpoint
+  completo y deja vacío el campo.
+  Las consultas conocidas no piden confirmación; los comandos nativos no
+  clasificados como consulta la piden siempre. `--dry-run` muestra el grupo
+  del subcomando sin ejecutarlo. `--ltools-confirmed` confirma el efecto de
+  LTools en automatizaciones revisadas; `--yes` se conserva como argumento
+  nativo para la versión instalada de `gh`.
+  La salida y argumentos completos no se guardan en el plan. Se bloquean
+  `gh auth token` y `--insecure-storage` para proteger credenciales. `gh api`
+  puede consultar o modificar GitHub: revisa método, endpoint, scopes y datos
+  antes de confirmarlo. Las extensiones ejecutan código de terceros; instala
+  solo las que confíes. El login requiere navegador/credenciales y red; LTools
+  no guarda ni imprime secretos.
+
+Reparación de `.git`:
+  `ltools git diagnose --repo RUTA` comprueba raíz, HEAD, índice y objetos.
+  `ltools git repair --repo RUTA --dry-run` previsualiza la única reparación
+  automática: respaldar y reconstruir un índice ilegible desde un HEAD íntegro.
+  La reconstrucción no toca los archivos de trabajo, pero los cambios staged
+  dejan de estar activos; la copia previa queda junto al índice para rescate.
+  Si falta `.git`, puedes indicar el remoto correcto con
+  `ltools git repair --repo RUTA --remote URL [--branch RAMA] --dry-run`.
+  Solo tras revisar el plan, repite sin `--dry-run`: LTools clona sin checkout
+  a un temporal, valida HEAD/objetos e instala únicamente la metadata; no
+  sobrescribe los archivos locales. Compara después el estado con la rama
+  remota. Si `.git` existe como archivo/enlace dañado, o faltan objetos, no
+  ejecutes `git init` ni lo reemplaces: usa una copia de seguridad o recupera
+  en otra ruta; no hay una reparación genérica segura para esos casos.
 
 Seguridad y automatización:
   Nunca se concatena la entrada en una shell. URL, repositorio, rama y rutas
@@ -97,16 +154,36 @@ const GH: &str = r#"GUÍA: GITHUB CLI (gh)
 la herramienta desde Dependencias si tu plataforma ofrece un paquete fiable.
 Después comprueba `ltools git gh auth-status`.
 
-Acciones: login, auth-status, repo, prs y releases. El login es interactivo;
+Acciones integradas: login, auth-status, repo, prs y releases; `version` y
+`help` identifican la versión instalada. El login es interactivo;
 repo/prs/releases son consultas. Proporciona `OWNER/REPO` cuando no estés
-dentro del repositorio. Las operaciones remotas dependen de red, permisos y
-el token configurado por `gh`; LTools nunca solicita el token como argumento.
+dentro del repositorio.
+
+Para usar el catálogo completo que ofrezca tu versión, incluidos issues,
+projects, Actions, API y extensiones, ejecuta `ltools git gh native help` o
+`ltools git gh native issue list`. El passthrough llama a `gh` con argumentos
+separados, nunca a una shell. Acepta comandos de versiones nuevas sin cambiar
+LTools, por ejemplo `gh project`, `gh ruleset`, `gh attestation`, `gh codespace`,
+`gh api` y extensiones. Consulta siempre `gh help` para conocer la sintaxis
+exacta y `gh extension list` para revisar complementos instalados. Los comandos que LTools no reconoce como
+consulta requieren confirmación; `--dry-run` permite previsualizarlos y
+`--ltools-confirmed` sirve para una automatización revisada; `--yes` sigue
+siendo un argumento nativo de gh. `gh api` admite lectura y
+escritura: examina método y endpoint. Las extensiones son código de terceros.
+
+Las operaciones remotas dependen de red, permisos y la sesión de `gh`; LTools
+nunca solicita ni registra tokens. No uses `gh auth token` desde LTools y no
+actives el almacenamiento de credenciales en texto plano.
 
 Ejemplo seguro:
   ltools git gh auth-status
   ltools git gh repo --repo OWNER/REPO
   ltools git gh prs --repo OWNER/REPO
   ltools git gh releases --repo OWNER/REPO
+  ltools git gh native issue list --repo OWNER/REPO
+  ltools git gh native run list --repo OWNER/REPO
+  ltools git gh native project list --owner OWNER
+  ltools git gh native api repos/OWNER/REPO
 "#;
 
 const NETWORK: &str = r#"GUÍA: RED
@@ -163,8 +240,10 @@ sudo. En Windows se informa de la compatibilidad nativa equivalente.
 const STORAGE: &str = r#"GUÍA: ALMACENAMIENTO
 
 Consultas: status, partitions, mounts y tools. Las pantallas avanzadas cubren
-parted (GPT/MBR, crear/borrar/redimensionar), mkfs/fsck/mount/swap, LUKS,
-LVM, Btrfs, ZFS y RAID mdadm.
+parted (GPT/MBR, probe, espacio libre, crear/borrar/redimensionar, nombres,
+flags, alineación y rescate), mkfs/fsck/mount/swap, LUKS, LVM, Btrfs, ZFS y
+RAID mdadm. En las guías gráficas, las operaciones se enumeran por botón y
+campo; la CLI conserva los nombres de operaciones y argumentos nativos.
 
 Flujo seguro: identifica el dispositivo con `lsblk`, consulta la tabla, haz
 copia de seguridad, ejecuta `--dry-run` y revisa el plan. Formatear, borrar,
@@ -203,7 +282,12 @@ const ACCOUNTS: &str = r#"GUÍA: CUENTAS, GRUPOS Y SESIONES
 
 Consulta cuentas, grupos, identidad, sesiones e inspección de una cuenta.
 Gestiona crear/editar/eliminar, contraseña, bloqueo/desbloqueo, caducidad,
-crear/eliminar grupos, membresías y grupo principal.
+crear/eliminar grupos, membresías, grupo principal y el grupo administrativo
+local. Linux detecta `sudo`, `wheel` o `admin` solo si existen; comprueba las
+reglas sudoers antes de añadir a alguien. Windows usa el grupo integrado
+Administradores identificado por su SID estable, aunque el nombre visible
+cambie según el idioma. `TrustedInstaller` es una identidad de servicio y no
+un grupo de usuarios al que se deba añadir una cuenta.
 
 Usa nombres explícitos y revisa la identidad antes de cambiarla. Eliminar,
 cambiar contraseña o permisos puede cortar acceso; requiere confirmación y
@@ -299,6 +383,48 @@ operaciones de escritura/importación exigen fichero explícito, copia previa,
 confirmación y plan. No se intenta usar Registro Windows en Linux.
 "#;
 
+const PRIVILEGES: &str = r#"GUÍA: ELEVACIÓN Y PERMISOS
+
+La política se aplica por acción, no como un sudo ciego para toda la
+aplicación. `ltools privileges` muestra el catálogo resumido; `--elevate`
+solicita elevación para una acción compatible y `--no-elevate` la desactiva
+para esa ejecución. En Ajustes puedes activar «Elevar acciones modificadoras
+por defecto».
+
+Solo lectura: mapas, inventarios, estado, diagnósticos y guías no necesitan
+elevación. Opcional: copiar, mover, comprimir, exportar y limpiar pueden
+elevarse cuando el objetivo está protegido; se conserva el plan y se informa
+del diálogo de sudo/pkexec o UAC/NSudo según la plataforma.
+
+Obligatoria: particionar, formatear, montar, LUKS/LVM/RAID, gestionar
+servicios, cuentas, firewall, red modificadora, EFI/NVRAM y cambios del
+sistema. LTools solicita la contraseña o autorización y aborta si no se
+concede; nunca la guarda ni la imprime.
+
+La instalación de software es una excepción deliberada al relanzamiento global:
+la búsqueda, selección del paquete y confirmación permanecen en tu sesión; tras
+confirmar, solo se eleva el gestor nativo si el ámbito de instalación lo
+requiere. En Linux los gestores del sistema solicitan sudo/pkexec; AUR, Pamac,
+Flatpak de usuario, Brew, Nix y Guix mantienen su contexto y su mecanismo de
+autorización nativo. En Windows, `--elevate` o
+la preferencia de Ajustes permite elevar winget/Chocolatey; Scoop permanece siempre en el perfil
+del usuario.
+
+Nunca se eleva globalmente: Git/GitHub, Wine/Proton, automatizaciones,
+aliases, SSH/SCP/SFTP, ADB, Kubernetes y operaciones de Docker/Podman que
+deben conservar el contexto elegido. Esto evita cambiar de daemon, dispositivo,
+configuración o credenciales, y crear archivos root en el perfil personal.
+La papelera del usuario tampoco se eleva; las eliminaciones se envían al
+contenedor de papelera con la identidad del usuario.
+La elevación no convierte una ruta inválida en válida ni salta las
+confirmaciones, objetivos explícitos, planes o bloqueos de seguridad.
+
+La GUI muestra la política en Ajustes y la aplica al pulsar una acción; la CLI
+acepta las mismas opciones globales. Las opciones, nombres de rutas y
+autorizadores son nativos de cada sistema: sudo/pkexec y systemd en Linux,
+UAC/NSudo, PowerShell y servicios Windows en Windows.
+"#;
+
 const DIAGNOSTICS: &str = r#"GUÍA: DIAGNÓSTICO Y DEPENDENCIAS
 
 `doctor` verifica herramientas, versiones, permisos y alternativas. `diagnostics
@@ -382,7 +508,8 @@ Modos:
 
 Familias: audit, packages, software, git, gh, aliases, automation, clean,
 storage, system, services, accounts, network, boot, registry, diagnostics,
-wine, defaults, containers, kubernetes, ssh, adb, utilities y actions.
+wine, defaults, containers, kubernetes, ssh, adb, utilities, actions y
+privileges.
 "#;
 
 fn cli_guide(topic: &str) -> String {
@@ -392,12 +519,12 @@ fn cli_guide(topic: &str) -> String {
     let (title, queries, management, arguments, result) = match topic {
         "git" | "gh" => (
             "GIT Y GITHUB",
-            "status, log, clone, fetch, pull, branch, tag, gh auth-status, repo, prs y releases",
-            "add, commit, push y release, siempre con repositorio, remoto y rama explícitos",
-            "--repo, --url, --destination, --remote, --branch, --path, --message, --limit y notas",
-            "estado, referencias, historial, cambios preparados o información remota",
+            "status, diagnose, log, clone, fetch, pull, branch, tag; gh version/help, auth-status, repo, prs, releases y native help",
+            "add, commit, push, repair de índice y comandos GitHub CLI nativos clasificados por versión",
+            "--repo, --url, --destination, --remote, --branch, --path, --message, --limit, --yes y argumentos nativos separados",
+            "estado, diagnóstico, copia recuperable del índice, historial, cambios preparados o respuesta de gh instalado",
         ),
-        "network" => (
+        "network" | "connectivity" => (
             "RED",
             "status, interfaces, routes, dns, listening y connections",
             "set-interface, connection-up, connection-down y flush-dns",
@@ -418,7 +545,7 @@ fn cli_guide(topic: &str) -> String {
             "--scope system|user|both, --filter, --unit, --operation, --limit y formato",
             "estado, origen, unidad, dependencias, eventos e informe exportable",
         ),
-        "storage" => (
+        "storage" | "storage-partitions" | "storage-filesystems" | "storage-volumes" => (
             "ALMACENAMIENTO",
             "status, partitions, mounts, map/tree, usage, filesystems y tools",
             "mapa desplegable de discos y rutas; copiar, mover, borrar a papelera, zip, tar y abrir con el gestor nativo; además de particiones, sistemas de archivos, montajes, swap, cifrado, LVM, Btrfs, ZFS y RAID",
@@ -435,11 +562,12 @@ fn cli_guide(topic: &str) -> String {
         "accounts" => (
             "CUENTAS Y GRUPOS",
             "list, identity, sessions, groups e inspect",
-            "create, edit, password, lock, unlock, expire, membership y primary-group",
-            "--user, --group, --member, --scope y objetivo explícito",
-            "identidad, sesiones, membresías y cambios protegidos",
+            "create, edit, password, lock, unlock, expire, membership, primary-group, admin-groups y admin-add",
+            "--user, --group y objetivo explícito; Linux detecta sudo/wheel/admin existentes y Windows usa el SID Administradores",
+            "identidad, sesiones, membresías, grupo administrativo detectado y cambios protegidos",
         ),
-        "containers" => (
+        "containers" | "containers-lifecycle" | "containers-images" | "containers-volumes"
+        | "containers-compose" => (
             "CONTENEDORES",
             "status, inspect, stats, top, logs, images, volumes, networks y compose",
             "run, start, stop, restart, exec, pause, unpause, kill, rename, cp, prune y remove",
@@ -457,15 +585,22 @@ fn cli_guide(topic: &str) -> String {
             "LIMPIEZA",
             "preview de paquetes, huérfanos, cachés, Flatpak y rutas",
             "remove solo después de revisar candidatos y exclusiones",
-            "--automatic, --preview, --include-personal, --all-known, --ask-each y las opciones clásicas de paquetes",
+            "--automatic, --preview, --include-personal, --all-known, --ask-each; limpieza clásica: --package, --manager, --scope user|system|INSTALACIÓN (Flatpak), --path y --cascade (solo Pacman)",
             "candidatos, rutas protegidas, plan y elementos retirados",
         ),
-        "automation" | "actions" => (
+        "automation" | "automation-register" | "actions" => (
             "AUTOMATIZACIÓN Y ACCIONES",
             "list del registro y del catálogo declarativo",
             "add, modify, run, remove y ejecución por identificador estable",
             "--name, --program, --args, --cwd, --id, --target, --format y --dry-run",
             "acción, compatibilidad, requisitos, plan y salida registrada",
+        ),
+        "privileges" => (
+            "ELEVACIÓN Y PERMISOS",
+            "privileges para consultar el catálogo y saber si una acción es solo lectura",
+            "--elevate, --no-elevate y la preferencia de Ajustes para acciones compatibles",
+            "opciones globales antes o después de la acción; no cambian objetivos ni confirmaciones",
+            "clasificación ReadOnly, Optional, Required o Never y el autorizador nativo",
         ),
         "aliases" | "alias" => (
             "GESTOR DE ALIAS",
@@ -474,7 +609,7 @@ fn cli_guide(topic: &str) -> String {
             "add NOMBRE COMANDO [ARG...]; los argumentos se conservan separados y solo se permiten comandos LTools conocidos",
             "registro persistente, alias activos, lanzador gestionado y estado de PATH",
         ),
-        "diagnostics" | "utilities" | "defaults" | "audit" | "packages" | "software" | "system"
+        "diagnostics" | "utilities" | "defaults" | "settings" | "audit" | "packages" | "software" | "installable" | "system"
         | "registry" | "ssh" | "adb" => (
             "SISTEMA Y HERRAMIENTAS",
             "status, list, inspect, health, report, capabilities y export",
@@ -503,6 +638,7 @@ fn cli_guide(topic: &str) -> String {
     )
 }
 
+#[cfg(not(windows))]
 const GUI_INDEX: &str = r#"GUÍA GRÁFICA COMPLETA DE LTOOLS
 
 Esta guía es el mapa de la ventana. Cada categoría abre un menú propio y cada
@@ -519,6 +655,22 @@ Panel principal:
   • Herramientas instalables: Git/GitHub, paquetes, conectividad, Docker,
     Kubernetes y utilidades.
   • Automatización: scripts registrados y registrar nuevo script.
+  • Ajustes: incluye la casilla «Elevar acciones modificadoras por defecto».
+    Las operaciones que requieren permisos informan y piden autenticación;
+    consultas, Git/Wine, automatizaciones y papelera conservan el usuario.
+
+Gestor de alias (solo CLI): `ltools aliases` permite list, ensure, doctor,
+add, enable, disable, remove, path y shell-init. No hay un menú gráfico para
+estas operaciones.
+
+Menú completo «Auditar / Inventariar»:
+  • «Volver».
+  • «Auditar discos y aplicaciones».
+  • «Inventariar juegos y lanzadores».
+  • «Inventario de paquetes».
+  • «Prefijos Wine/Proton».
+  • «Gestionar paquetes y almacenes».
+  • «Guía general de uso».
 
 Cada pantalla conserva «Volver» y las acciones mutables abren confirmación.
 Para una pantalla concreta, abre su botón «Guía»; allí deben aparecer todos
@@ -530,13 +682,13 @@ La CLI tiene una guía separada con sus propias opciones: guide cli <familia>.
 fn gui_storage_guide() -> String {
     r#"GUÍA GRÁFICA: ALMACENAMIENTO Y PARTICIONES (LINUX)
 
-Esta es la referencia completa del menú. La guía no sustituye botones por
-comandos: indica dónde entrar, qué botón pulsar, qué campos aparecen y cómo
-verificar el resultado. Las consultas no modifican el equipo. Las acciones
+Esta es la referencia completa del menú. La guía indica dónde entrar, qué
+botón pulsar, qué campos aparecen y cómo verificar el resultado. Las consultas
+no modifican el equipo. Las acciones
 que pueden borrar, formatear, desmontar o cambiar volúmenes muestran una
 confirmación antes de ejecutarse.
 
-1. PANTALLA PRINCIPAL: «Herramientas nativas»
+1. Menú completo «Almacenamiento y particiones» (dentro de «Herramientas nativas»)
 
   • «Resumen de espacio y montajes»: consulta espacio, dispositivos,
     sistemas de archivos y montajes activos.
@@ -544,20 +696,41 @@ confirmación antes de ejecutarse.
   • «Montajes activos»: muestra qué está montado y dónde.
   • «Mapa desplegable de discos y rutas»: abre el árbol de carpetas y
     archivos con tamaño acumulado, permisos observados, errores de acceso y
-    explicación de rutas estándar. La profundidad se puede ampliar desde la
-    CLI con `--depth` y el inventario se puede exportar a JSON/TSV.
+    explicación de rutas estándar. En cada raíz muestra capacidad total,
+    espacio ocupado, espacio libre total y espacio disponible para la cuenta;
+    el tamaño calculado del árbol es una medida separada. Mientras se calcula
+    muestra el contador de rutas y una barra de actividad. Al terminar,
+    «Expandir todo» y «Colapsar todo» controlan el árbol; si quedan rutas
+    bloqueadas, «Reintentar como administrador» solicita autorización al
+    sistema y repite el análisis con los permisos concedidos. «Cerrar» finaliza
+    la vista. Al seleccionar una fila aparecen «Copiar seleccionada», «Mover
+    seleccionada» y «Enviar seleccionada a la papelera»: copiar y mover piden
+    el destino, y las tres acciones reutilizan el gestor seguro de archivos,
+    su confirmación, su plan y sus bloqueos de rutas críticas.
   • «Particionado y tablas»: abre todas las operaciones de tabla y
     partición descritas en la sección 2.
   • «Sistemas de archivos»: abre formato, etiquetas, comprobación, montaje
     y swap descritos en la sección 3.
-  • «Cifrado y volúmenes»: abre LUKS, LVM, Btrfs, ZFS y RAID mdadm.
-  • «Herramientas de almacenamiento detectadas»: comprueba qué capacidades
+  • «Cifrado y volúmenes»: abre las funciones de cifrado, volúmenes y RAID.
+  • «Herramientas detectadas»: comprueba qué capacidades
     están realmente disponibles en este equipo.
-  • «Abrir el gestor nativo de particiones»: abre el gestor gráfico externo
+  • «Explicar ruta y permisos»: explica el propósito, propietario, permisos
+    y protección de la ruta seleccionada antes de modificarla.
+  • «Borrar a la papelera»: mueve un archivo o carpeta a la papelera del
+    usuario; no elimina silenciosamente ni eleva la acción.
+  • «Copiar archivo o carpeta» y «Mover archivo o carpeta»: piden origen y
+    destino explícitos, muestran el plan y conservan la protección de rutas.
+  • «Crear archivo ZIP» y «Crear archivo TAR»: empaquetan la selección en un
+    destino indicado y verifican el archivo resultante.
+  • «Abrir con el gestor nativo»: abre el explorador/gestor de archivos del
+    sistema para revisar la ruta con sus propias garantías.
+  • «Abrir gestor nativo de particiones»: abre el gestor gráfico externo
     disponible para una revisión visual adicional; sus cambios siguen siendo
     cambios reales y deben verificarse después en LTools.
   • «Revisar limpieza»: solo prepara una revisión de candidatos; no borra
     discos ni datos por sí solo.
+  • «Limpiador automático guiado»: calcula cachés, temporales y rutas
+    conocidas, permite seleccionar categorías y pregunta antes de borrar.
   • «Guía de particionado y protecciones»: vuelve a esta explicación.
   • «Volver»: regresa al menú anterior; aparece también en cada submenú.
 
@@ -568,10 +741,11 @@ Consultas y diagnóstico:
     Muestra tabla, particiones, tamaños, tipos y flags.
   • «Consultar espacio libre»: mismo campo; localiza huecos sin asignar antes
     de crear o ampliar una partición.
-  • «Inspeccionar dispositivo (probe)»: mismo campo; verifica que el objetivo
+  • «Inspeccionar dispositivo»: mismo campo; verifica que el objetivo
     sea el disco esperado antes de tocarlo.
   • «Comprobar alineación»: «Disco completo /dev/...», «Número de partición»
-    y «Alineación: minimal u optimal». Es una comprobación, no una reparación.
+    y «Alineación: minimal u optimal». Es solo lectura y no requiere
+    confirmación destructiva.
 
 Crear y modificar la tabla:
   • «Crear tabla GPT» o «Crear tabla MBR / msdos»: campo «Dispositivo
@@ -595,7 +769,7 @@ Crear y modificar la tabla:
     flag pertenece al disco y no a una partición individual.
   • «Buscar y rescatar partición»: disco, «Inicio de búsqueda» y «Fin de
     búsqueda». Es una operación de recuperación: nunca elijas rangos a ciegas.
-  • «Borrar firmas (wipefs)»: campo «Dispositivo /dev/...». Retira firmas que
+  • «Retirar firmas de almacenamiento»: campo «Dispositivo /dev/...». Retira firmas que
     identifican sistemas de archivos o volúmenes y puede destruir metadatos.
   • «Descartar bloques»: campo «Dispositivo /dev/...». Solicita al medio que
     descarte bloques; no lo uses como limpieza genérica ni en un objetivo
@@ -646,6 +820,16 @@ Flujo para preparar y montar una partición:
   6. Si el resultado es correcto, documenta la etiqueta y el punto de
      montaje; si no, desmonta y corrige el objetivo antes de repetir.
 
+Flujo avanzado — recuperación de particiones:
+  1. Identifica primero el disco completo y su tabla; conserva una copia
+     externa. No confundas el disco completo con una de sus particiones.
+  2. Para rescatar, usa «Buscar y rescatar partición» con límites medidos;
+     no escribas una tabla nueva ni formatees antes de verificar resultados.
+  3. Antes de cambiar un flag de partición/disco, comprueba el firmware y el
+     propósito del flag: uno incorrecto puede impedir el arranque.
+  4. Revisa la confirmación completa y vuelve a consultar la tabla. La búsqueda
+     no convierte el hallazgo en restauración automática.
+
 4. «Cifrado y volúmenes»
 
 LUKS:
@@ -660,22 +844,32 @@ LUKS:
     de cabecera». Guarda la copia en un medio seguro; restaurar una cabecera
     equivocada puede inutilizar el volumen.
 
-LVM, Btrfs, ZFS y RAID:
-  • «Operación LVM»: «Operación: pvcreate, pvremove, vgcreate, vgremove,
-    lvcreate, lvremove, lvextend, lvreduce»; opcionalmente PV/dispositivo,
-    grupo de volúmenes, nombre VG/LV y tamaño (ej. 20G). Revisa dependencias
-    antes de eliminar o reducir.
-  • «Operación Btrfs»: operación, «Montaje o subvolumen absoluto», destino de
-    snapshot, dispositivo secundario y nuevo tamaño cuando corresponda.
-    Úsalo para subvolúmenes, snapshots, balanceo o ampliación solo con el
-    montaje y destino identificados.
-  • «Operación ZFS»: operación, «Pool, dataset o snapshot» y, al crear un
-    pool, «Dispositivos separados por coma». Un pool incorrecto puede destruir
-    metadatos de los dispositivos seleccionados.
-  • «Operación RAID mdadm»: operación create/add/remove/fail/stop/grow,
-    dispositivo md, nivel RAID, miembros separados por coma, miembro
-    individual o número y cantidad para grow. Comprueba nivel, miembros y
-    estado de sincronización antes de confirmar.
+Capas de volumen:
+  • «Gestionar volúmenes LVM». «Acción» ofrece: «Preparar dispositivo para
+    volúmenes», «Retirar dispositivo de volúmenes», «Crear grupo de volúmenes»,
+    «Eliminar grupo de volúmenes», «Crear volumen lógico», «Eliminar volumen
+    lógico», «Ampliar volumen lógico» y «Reducir volumen lógico». Los demás
+    campos piden dispositivo, grupo, nombre y tamaño según la acción.
+  • «Gestionar volúmenes Btrfs». «Acción» ofrece: «Crear subvolumen», «Eliminar
+    subvolumen», «Crear instantánea», «Cambiar tamaño del sistema de archivos»,
+    «Reequilibrar datos», «Agregar dispositivo», «Retirar dispositivo»,
+    «Reemplazar dispositivo» y «Comprobar sin modificar». Los campos restantes
+    describen el montaje, destino, dispositivo secundario y tamaño.
+  • «Gestionar volúmenes ZFS». «Acción» ofrece: «Crear conjunto de
+    almacenamiento», «Eliminar conjunto de almacenamiento», «Exportar
+    conjunto», «Importar conjunto», «Crear conjunto de datos», «Eliminar
+    conjunto de datos», «Crear instantánea», «Comprobar conjunto», «Cambiar
+    propiedad», «Renombrar conjunto de datos» y «Volver a una instantánea».
+    El formulario incluye nombre, dispositivos, propiedad, valor y nuevo nombre.
+  • «Gestionar conjuntos RAID». «Acción» ofrece: «Consultar estado del
+    conjunto», «Inspeccionar dispositivo miembro», «Reunir un conjunto
+    existente», «Crear conjunto nuevo», «Agregar dispositivo miembro»,
+    «Reemplazar dispositivo miembro», «Retirar dispositivo miembro», «Marcar
+    miembro como fallido», «Volver a agregar miembro», «Detener conjunto»,
+    «Comprobar consistencia», «Reparar conjunto» y «Cambiar cantidad de
+    miembros». Completa solo los campos pertinentes: conjunto, miembros, nivel,
+    sustituto o cantidad. Crear un conjunto puede sobrescribir los datos de los
+    dispositivos seleccionados.
 
 Proceso simple — revisar discos:
   1. Pulsa «Resumen de espacio y montajes», «Discos y particiones» y
@@ -720,9 +914,9 @@ En «Herramientas nativas»:
   • «Resumen de espacio y montajes» revisa espacio y volúmenes.
   • «Discos y particiones» lista discos, particiones, volúmenes y letras.
   • «Montajes activos» revisa las rutas y letras actualmente disponibles.
-  • «Mapa desplegable de discos y rutas» muestra el árbol de cada volumen,
-    tamaños acumulados, atributos de solo lectura, errores de acceso y la
-    explicación de Windows, Program Files, ProgramData, Users y AppData.
+  • El mapa desplegable de archivos y rutas todavía no está integrado en la
+    GUI Windows. No se presenta como un botón disponible; esta pantalla ofrece
+    las consultas de volúmenes y particiones enumeradas arriba.
   • «Abrir el gestor nativo de particiones» abre Administración de discos; si
     se ofrece «DiskPart», úsalo solo con una selección y confirmación exactas.
   • «Guía de particionado y protecciones» vuelve a esta explicación.
@@ -750,17 +944,264 @@ verificarse desde LTools.
     .to_owned()
 }
 
+fn gui_settings_guide() -> String {
+    let mut options = Vec::new();
+    let fields: String;
+
+    #[cfg(windows)]
+    {
+        fields = format!(
+            "Campo «Tema»: valor admitido entre {}. Campo «Idioma»: auto o uno de {}. La página usa casillas para la visibilidad y la elevación; «Aplicar ajustes» guarda los cambios.",
+            crate::theme::SUPPORTED.join(", "),
+            std::iter::once("auto")
+                .chain(crate::i18n::SUPPORTED.iter().copied())
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        options.push("Campo «Tema»".to_owned());
+        options.push("Campo «Idioma»".to_owned());
+        options.push(crate::i18n::gui_text("elevation_default").to_owned());
+        for category in crate::i18n::SETTINGS_CATEGORY_KEYS {
+            options.push(crate::i18n::category_text(category).to_owned());
+        }
+        options.push(crate::i18n::gui_text("settings_apply").to_owned());
+        options.push(crate::i18n::text("menu.back").to_owned());
+    }
+
+    #[cfg(not(windows))]
+    {
+        fields = format!(
+            "No hay campos de texto. Temas: {}. Idiomas: {}. Las categorías y la elevación son casillas; «{}» abre esta guía.",
+            crate::theme::SUPPORTED
+                .iter()
+                .map(|id| crate::theme::label(id))
+                .collect::<Vec<_>>()
+                .join(", "),
+            std::iter::once("auto")
+                .chain(crate::i18n::SUPPORTED.iter().copied())
+                .map(crate::i18n::language_label)
+                .collect::<Vec<_>>()
+                .join(", "),
+            crate::i18n::gui_text("settings_guide"),
+        );
+        options.push(crate::i18n::text("menu.back").to_owned());
+        options.extend(
+            crate::theme::SUPPORTED
+                .iter()
+                .map(|id| crate::theme::label(id).to_owned()),
+        );
+        options.extend(
+            std::iter::once("auto")
+                .chain(crate::i18n::SUPPORTED.iter().copied())
+                .map(crate::i18n::language_label)
+                .map(str::to_owned),
+        );
+        options.extend(
+            crate::i18n::SETTINGS_CATEGORY_KEYS
+                .iter()
+                .map(|category| crate::i18n::category_text(category).to_owned()),
+        );
+        options.push(crate::i18n::gui_text("elevation_default").to_owned());
+        options.push(crate::i18n::gui_text("settings_guide").to_owned());
+    }
+
+    let listed = options
+        .iter()
+        .enumerate()
+        .map(|(index, option)| format!("  {}. «{}»", index + 1, option))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "GUÍA GRÁFICA: AJUSTES\n\nMenú completo «{}»:\n{}\n\nCampos y argumentos de la GUI:\n  {}\n\nProceso simple:\n  Cambia una preferencia cada vez, aplica o guarda los ajustes y comprueba que el valor elegido siga disponible.\n\nProceso complejo:\n  Configura tema e idioma, decide qué categorías mostrar y revisa la política de elevación antes de guardar. La elevación solo se aplica a acciones compatibles; no cambia consultas ni operaciones que deben conservar la identidad del usuario. Para instalar software, búsqueda y selección siguen en tu sesión; tras confirmar, solo se eleva el gestor nativo si hace falta.\n\nLas opciones enumeradas corresponden al formulario de esta plataforma; «{}» regresa a la pantalla anterior.",
+        crate::i18n::gui_text("settings_title"), listed, fields, crate::i18n::text("menu.back")
+    )
+}
+
+#[cfg(windows)]
+fn windows_gui_topic_page(topic: &str) -> Option<(usize, &'static str, &'static str)> {
+    match topic {
+        "audit" | "packages" => Some((0, "audit_inventory", "AUDITORÍA E INVENTARIO")),
+        "native" | "system" | "network" | "boot" | "registry" => {
+            Some((1, "native_tools", "HERRAMIENTAS NATIVAS"))
+        }
+        "diagnostics" => Some((2, "dependencies", "DEPENDENCIAS")),
+        "defaults" => Some((3, "defaults", "RUTAS PREDETERMINADAS")),
+        "installable" | "software" | "git" | "containers" | "kubernetes" | "adb" => {
+            Some((4, "installable_tools", "HERRAMIENTAS INSTALABLES"))
+        }
+        "automation" | "automation-register" => Some((5, "automation", "AUTOMATIZACIÓN")),
+        "accounts" => Some((8, "accounts", "USUARIOS, GRUPOS Y SESIONES")),
+        "winslim" => Some((7, "winslim", "WINSLIM")),
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+fn windows_gui_unavailable(topic: &str) -> String {
+    let detail = match topic {
+        "clean" => "La limpieza guiada no tiene un panel propio en esta GUI Windows.",
+        "services" => "La gestión detallada de servicios no tiene botones en esta GUI Windows.",
+        "containers-lifecycle" | "containers-images" | "containers-volumes"
+        | "containers-compose" => "La GUI Windows solo ofrece una consulta del estado Docker/Podman. El ciclo de vida, imágenes, volúmenes, redes y Compose no tienen acciones gráficas en este ejecutable.",
+        "ssh" | "connectivity" => "SSH/SCP/SFTP no tienen acciones gráficas en este ejecutable. El menú de Herramientas instalables solo ofrece el estado de ADB; no anuncia transferencias SSH inexistentes.",
+        "utilities" => "El catálogo de utilidades instalables no tiene una pantalla propia en esta GUI Windows.",
+        "aliases" => "El gestor de alias se administra desde la CLI y no tiene una pantalla gráfica Windows.",
+        "winslim" => "Este anfitrión no tiene disponible la pantalla WinSlim/NSudo; solo aparece en Windows cuando existe C:\\WSCore o se detecta un lanzador NSudo compatible.",
+        "wine" | "prefix" => "Wine y Proton no aplican al ejecutable Windows nativo y no tienen pantalla gráfica aquí.",
+        "storage-partitions" | "storage-filesystems" | "storage-volumes" => "Las operaciones Linux de parted, sistemas de archivos POSIX, LUKS, LVM, Btrfs, ZFS y RAID no se implementan en la GUI Windows.",
+        _ => "Este tema no tiene una pantalla propia en la GUI Windows.",
+    };
+    format!(
+        "GUÍA GRÁFICA WINDOWS: {topic}\n\n{detail}\n\nNo se inventan botones ni se muestran pasos de la GUI Linux. Para opciones gráficas reales, abre «Herramientas nativas», «Dependencias», «Rutas predeterminadas», «Herramientas instalables», «Automatización» o «Ajustes» según el objetivo; el índice `guide gui all` enumera sus botones reales."
+    )
+}
+
+#[cfg(windows)]
+fn windows_gui_page_guide(topic: &str) -> Option<String> {
+    if topic == "settings" {
+        return Some(gui_settings_guide());
+    }
+    if topic == "winslim" && !crate::platform::winslim_available() {
+        return None;
+    }
+    let (page, category, title) = windows_gui_topic_page(topic)?;
+    let menu = if page == 8 {
+        crate::i18n::gui_text("accounts")
+    } else {
+        crate::i18n::category_text(category)
+    };
+    let mut options = crate::gui::windows_menu_labels(page);
+    options.push(crate::i18n::text("menu.back").to_owned());
+    let listed = options
+        .iter()
+        .enumerate()
+        .map(|(index, option)| format!("  {}. «{}»", index + 1, option))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (fields, simple, complex) = match page {
+        1 => (
+            "Las consultas no piden campos. «Abrir gestor nativo de particiones» solicita confirmación; «Usuarios, grupos y sesiones» abre el formulario especializado.",
+            "Consulta espacio, volúmenes y estado antes de elegir una acción; vuelve a la consulta correspondiente para comprobar el resultado.",
+            "Para cuentas, abre su submenú, identifica exactamente el usuario o grupo, revisa la confirmación y vuelve a listar. Las acciones de Disco/Registro solo se realizan en su gestor nativo tras revisar el objetivo.",
+        ),
+        5 => (
+            "Registrar/editar solicita nombre, ejecutable, directorio de trabajo y argumentos separados; no se evalúa una cadena de shell.",
+            "Abre «Scripts registrados» y revisa el nombre, el programa y el estado antes de ejecutar.",
+            "Registra un ejecutable Windows con cada argumento separado, inspecciona el registro, prueba el flujo y retira únicamente la entrada seleccionada.",
+        ),
+        8 => (
+            "Los campos dependen de la acción: usuario, grupo, descripción, contraseña o fechas; se validan antes de ejecutar. «Conceder permisos de administrador» toma una cuenta opcional (vacío = actual) y usa el grupo integrado Administradores por SID `S-1-5-32-544`.",
+            "Consulta cuentas, grupos, identidad y sesiones antes de editar.",
+            "Selecciona la acción, completa el objetivo exacto, revisa la confirmación UAC cuando proceda y vuelve a consultar el estado. TrustedInstaller es una identidad de servicio, no un grupo de usuarios: no se añade una cuenta a ella.",
+        ),
+        7 => (
+            if crate::platform::nsudo_path().is_some() {
+                "No hay campos para las consultas. «Abrir el asistente de lanzamiento NSudo» abre una consola guiada; allí eliges identidad, ejecutable y argumentos por separado."
+            } else {
+                "No hay campos. NSudo no está detectado, así que el botón de lanzamiento no se muestra; la elevación normal sigue usando UAC."
+            },
+            "Consulta la detección de WSCore y NSudo antes de abrir el asistente.",
+            "Si NSudo está disponible, abre el asistente, selecciona usuario actual/elevado, SYSTEM, TrustedInstaller, token actual o reducción de privilegios; introduce el programa y cada argumento, revisa la confirmación y repite la consulta de estado. Para automatizarlo, registra el comando `winslim launch` con argumentos separados y `--yes` únicamente tras validar el efecto.",
+        ),
+        _ => (
+            "Este menú no pide campos; sus consultas se ejecutan con valores nativos de Windows.",
+            "Abre una consulta y comprueba que la salida corresponde al anfitrión Windows.",
+            "Revisa la familia, confirma la operación si es modificadora y repite una consulta equivalente para verificar el resultado.",
+        ),
+    };
+    Some(format!(
+        "GUÍA GRÁFICA: {title}\n\nMenú completo «{menu}» (opciones obtenidas del catálogo real de botones Windows):\n{listed}\n\nCampos y argumentos de la GUI:\n  {fields}\n\nProceso simple:\n  {simple}\n\nProceso complejo:\n  {complex}\n\nLas opciones enumeradas corresponden a esta ventana Windows; «{}» vuelve a la pantalla anterior. No se muestran acciones Linux ni se gestionan prefijos Wine/Proton desde el ejecutable Windows.",
+        crate::i18n::text("menu.back")
+    ))
+}
+
+#[cfg(windows)]
+fn windows_gui_index() -> String {
+    let mut pages = vec![
+        ("audit", 0),
+        ("native", 1),
+        ("diagnostics", 2),
+        ("defaults", 3),
+        ("installable", 4),
+        ("automation", 5),
+        ("accounts", 8),
+    ];
+    if crate::platform::winslim_available() {
+        pages.push(("winslim", 7));
+    }
+    let mut result = String::from(
+        "GUÍA GRÁFICA COMPLETA DE WINSLIM-TOOLS\n\nCada categoría abre un menú propio. Las guías contextuales enumeran las opciones de la interfaz Windows y no sustituyen sus botones por comandos.\n\nPanel principal:\n",
+    );
+    for (topic, page) in pages {
+        let Some((_, category, _)) = windows_gui_topic_page(topic) else {
+            continue;
+        };
+        let title = if page == 8 {
+            crate::i18n::gui_text("accounts")
+        } else {
+            crate::i18n::category_text(category)
+        };
+        let options = crate::gui::windows_menu_labels(page)
+            .into_iter()
+            .chain(std::iter::once(crate::i18n::text("menu.back").to_owned()))
+            .collect::<Vec<_>>();
+        result.push_str(&format!("\n{}:\n", title));
+        for option in options {
+            result.push_str(&format!("  • «{}»\n", option));
+        }
+        if page == 1 {
+            result.push_str(
+                "  • «Usuarios, grupos y sesiones» abre el submenú de gestión de cuentas.\n",
+            );
+        }
+    }
+    result.push_str(&format!(
+        "\n{}:\n  Tema, idioma, elevación por defecto, visibilidad de estas categorías, aplicar ajustes y volver.\n  WinSlim solo aparece cuando el anfitrión ofrece WSCore.\n\nEl gestor de alias está disponible únicamente por CLI; no se anuncia como botón gráfico. El ejecutable Windows nativo tampoco ofrece el gestor de prefijos Wine/Proton ni opciones Linux. La guía de cada categoría vuelve a enumerar sus botones, argumentos y flujos.",
+        crate::i18n::gui_text("settings_button")
+    ));
+    result.push_str("\n\n");
+    result.push_str(&gui_settings_guide());
+    result
+}
+
 fn gui_catalog_guide(topic: &str) -> String {
+    if topic == "settings" {
+        return gui_settings_guide();
+    }
     let (title, menu, options, fields, process) = match topic {
+        "storage-partitions" => (
+            "PARTICIONADO Y TABLAS", "Particionado y tablas",
+            &["Consultar tabla de un disco", "Consultar espacio libre", "Inspeccionar dispositivo", "Crear tabla GPT", "Crear tabla MBR / msdos", "Crear partición", "Borrar partición", "Redimensionar partición", "Nombrar partición GPT", "Activar / desactivar flag", "Buscar y rescatar partición", "Comprobar alineación", "Cambiar flag del disco", "Alternar flag del disco", "Retirar firmas de almacenamiento", "Descartar bloques", "Guía de particionado", "Volver"][..],
+            "Disco o dispositivo; las operaciones avanzadas añaden número de partición, tipo, inicio/fin, etiqueta, flag o rango de rescate.",
+            "Consulta tabla, espacio libre e inspección del dispositivo; confirma el objetivo y conserva una copia antes de crear, borrar, redimensionar, cambiar marcas o retirar firmas.",
+        ),
+        "storage-filesystems" => (
+            "SISTEMAS DE ARCHIVOS", "Sistemas de archivos",
+            &["Crear / formatear sistema de archivos", "Cambiar etiqueta", "Comprobar sin reparar", "Comprobar y reparar automáticamente", "Redimensionar sistema de archivos", "Montar partición", "Desmontar dispositivo o ruta", "Activar swap", "Desactivar swap", "Guía de sistemas de archivos", "Volver"][..],
+            "Partición/dispositivo, tipo de sistema de archivos, etiqueta, montaje, tamaño y ruta según la operación.",
+            "Comprueba el dispositivo, decide si la operación es destructiva, confirma el tipo y verifica después el montaje, tamaño o estado.",
+        ),
+        "storage-volumes" => (
+            "CIFRADO Y VOLÚMENES", "Cifrado y volúmenes",
+            &["Crear contenedor LUKS", "Abrir contenedor LUKS", "Cerrar contenedor LUKS", "Copiar cabecera LUKS", "Restaurar cabecera LUKS", "Gestionar volúmenes LVM", "Gestionar volúmenes Btrfs", "Gestionar volúmenes ZFS", "Gestionar conjuntos RAID", "Guía de cifrado y volúmenes", "Volver"][..],
+            concat!(
+                "Campos: dispositivo, nombre del mapeo, archivo de cabecera, conjunto/grupo, volumen, tamaño, miembros, sustituto, propiedad, valor y nombre nuevo. Selector LVM: ",
+                "«Preparar dispositivo para volúmenes», «Retirar dispositivo de volúmenes», «Crear grupo de volúmenes», «Eliminar grupo de volúmenes», «Crear volumen lógico», «Eliminar volumen lógico», «Ampliar volumen lógico» y «Reducir volumen lógico». Selector Btrfs: ",
+                "«Crear subvolumen», «Eliminar subvolumen», «Crear instantánea», «Cambiar tamaño del sistema de archivos», «Reequilibrar datos», «Agregar dispositivo», «Retirar dispositivo», «Reemplazar dispositivo» y «Comprobar sin modificar». Selector ZFS: ",
+                "«Crear conjunto de almacenamiento», «Eliminar conjunto de almacenamiento», «Exportar conjunto», «Importar conjunto», «Crear conjunto de datos», «Eliminar conjunto de datos», «Crear instantánea», «Comprobar conjunto», «Cambiar propiedad», «Renombrar conjunto de datos» y «Volver a una instantánea». Selector RAID: ",
+                "«Consultar estado del conjunto», «Inspeccionar dispositivo miembro», «Reunir un conjunto existente», «Crear conjunto nuevo», «Agregar dispositivo miembro», «Reemplazar dispositivo miembro», «Retirar dispositivo miembro», «Marcar miembro como fallido», «Volver a agregar miembro», «Detener conjunto», «Comprobar consistencia», «Reparar conjunto» y «Cambiar cantidad de miembros»."
+            ),
+            "Identifica la capa y sus dependencias, conserva una copia de cabecera, revisa dispositivos y confirma solo con un plan de recuperación.",
+        ),
         "accounts" => (
             "CUENTAS Y PERMISOS", "Usuarios, grupos y sesiones",
-            &["Listar cuentas locales", "Listar grupos y miembros", "Ver mi identidad y grupos", "Ver sesiones abiertas", "Inspeccionar una cuenta", "Crear cuenta", "Editar cuenta y grupos", "Cambiar contraseña", "Bloquear cuenta", "Desbloquear cuenta", "Eliminar cuenta", "Configurar caducidad", "Crear grupo", "Eliminar grupo", "Añadir usuario a grupo", "Retirar usuario de grupo", "Cambiar grupo principal", "Guía de cuentas y permisos", "Volver"][..],
-            "Inspeccionar: usuario. Crear: usuario, descripción, shell, grupos y opciones. Editar: usuario, descripción, shell y grupos. Contraseña: usuario y confirmación. Bloquear, desbloquear y eliminar: usuario. Caducidad: usuario y fechas. Grupos: nombre. Membresías: usuario y grupo.",
-            "Consulta identidad, cuentas, grupos y sesiones. Para gestionar, identifica usuario/grupo, revisa el alcance, confirma y vuelve a listar.",
+            &["Listar cuentas locales", "Listar grupos y miembros", "Ver mi identidad y grupos", "Ver sesiones abiertas", "Inspeccionar una cuenta", "Crear cuenta", "Editar cuenta y grupos", "Cambiar contraseña", "Bloquear cuenta", "Desbloquear cuenta", "Eliminar cuenta", "Configurar caducidad", "Crear grupo", "Eliminar grupo", "Añadir usuario a grupo", "Retirar usuario de grupo", "Cambiar grupo principal", "Conceder permisos de administrador", "Ver grupo y miembros administradores", "Guía de cuentas y permisos", "Volver"][..],
+            "Inspeccionar: usuario. Crear: usuario, descripción, shell, grupos y opciones. Editar: usuario, descripción, shell y grupos. Contraseña: usuario y confirmación. Bloquear, desbloquear y eliminar: usuario. Caducidad: usuario y fechas. Grupos: nombre. Membresías: usuario y grupo. Administración: cuenta opcional (vacío significa cuenta actual).",
+            "Consulta identidad, cuentas, grupos y sesiones. Para gestionar, identifica usuario/grupo, revisa el alcance, confirma y vuelve a listar. Linux solo añade la cuenta a un grupo sudo/wheel/admin existente; Windows usa el grupo integrado Administradores por SID. TrustedInstaller es una identidad de servicio, no un grupo normal para añadir usuarios.",
         ),
         "system" => (
             "SISTEMA, RED Y SEGURIDAD", "Sistema",
-            &["Estado del sistema", "Usuarios, grupos y sesiones", "Red, rutas, DNS y puertos escuchando", "Arranque, EFI y cargador del sistema", "Registro", "Diagnóstico", "Servicios del sistema", "Guía del sistema", "Volver"][..],
+            &["Estado del sistema", "Usuarios, grupos y sesiones", "Red, rutas, DNS y puertos escuchando", "Arranque, EFI y cargador del sistema", crate::i18n::registry_label(), crate::i18n::diagnostics_label(), "Servicios del sistema", "Guía del sistema", "Volver"][..],
             "Los submenús tienen sus campos: servicios (ámbito, unidad, operación), red (interfaz/estado o conexión), arranque (entrada GRUB), cuentas (usuario/grupo) y Registro (clave/acción).",
             "Abre Estado del sistema y Diagnóstico; entra en el submenú de gestión, completa el objetivo exacto y verifica con una consulta posterior.",
         ),
@@ -771,14 +1212,20 @@ fn gui_catalog_guide(topic: &str) -> String {
             "Elige un objetivo y continúa al submenú correspondiente; no mezcles almacenamiento, red, servicios y arranque.",
         ),
         "diagnostics" => (
-            "DEPENDENCIAS Y DIAGNÓSTICO", "Dependencias",
-            &["Doctor", "Estado de herramientas detectadas", "Elegir e instalar un paquete", "Instalar herramienta nativa", "Diagnóstico", "Guía de dependencias", "Volver"][..],
+            "DEPENDENCIAS Y DIAGNÓSTICO", "Dependencias y diagnóstico",
+            &[crate::i18n::gui_text("doctor"), crate::i18n::native_action_text("tools_status"), crate::i18n::tools_text("install"), crate::i18n::native_action_text("tools_install"), crate::i18n::diagnostics_label(), "Guía de dependencias", "Volver"][..],
             "«Instalar herramienta nativa» pide el identificador de herramienta.",
             "Ejecuta Doctor y Estado antes de instalar. Selecciona una herramienta, revisa disponibilidad y confirma solo la instalación explícita.",
         ),
+        "connectivity" => (
+            "CONECTIVIDAD", "SSH, SCP, SFTP y Android",
+            &["SSH / SCP / SFTP", "Android (ADB)", "Guía de conectividad", "Volver"][..],
+            "Esta pantalla no pide campos; cada submenú documenta sus propios campos.",
+            "Elige SSH/SCP/SFTP o Android/ADB y continúa en el menú especializado; no mezcles sus destinos ni sus dispositivos.",
+        ),
         "ssh" => (
-            "CONECTIVIDAD Y SSH", "Conectividad / SSH, SCP y SFTP",
-            &["SSH, SCP, SFTP y Android", "SSH, SCP y SFTP", "Conectar por SSH", "Copiar con SCP", "Abrir SFTP", "Guía de conectividad", "Guía de SSH, SCP y SFTP", "Volver"][..],
+            "SSH Y TRANSFERENCIAS", "SSH, SCP y SFTP",
+            &["Conectar por SSH", "Copiar con SCP", "Abrir SFTP", "Guía de SSH, SCP y SFTP", "Volver"][..],
             "SSH: host, puerto, usuario, ruta/clave y destino según la acción. SCP: origen, destino y dirección. SFTP: host, puerto, usuario y ruta.",
             "Comprueba host e identidad. Ejecuta una conexión mínima, confirma transferencias y verifica el fichero de destino.",
         ),
@@ -790,15 +1237,39 @@ fn gui_catalog_guide(topic: &str) -> String {
         ),
         "utilities" => (
             "UTILIDADES", "Utilidades instalables",
-            &["Estado de utilidades", "Instalar utilidad", "Guía de utilidades", "Volver"][..],
+            &[crate::i18n::native_action_text("tools_status"), crate::i18n::native_action_text("tools_install"), "Guía de utilidades", "Volver"][..],
             "«Instalar utilidad» pide el identificador de la utilidad.",
             "Consulta disponibilidad, selecciona el identificador exacto, revisa el gestor y confirma la instalación.",
         ),
         "containers" => (
-            "DOCKER Y PODMAN", "Docker/Podman y sus pantallas",
-            &["Contenedores", "Imágenes", "Volúmenes y redes", "Compose y diagnósticos", "Guía de Docker y Podman", "Descargar imagen", "Crear y ejecutar contenedor", "Iniciar contenedor", "Detener contenedor", "Reiniciar contenedor", "Eliminar contenedor", "Ver logs del contenedor", "Ejecutar comando en contenedor", "Inspeccionar contenedor", "Estadísticas de contenedor", "Procesos del contenedor", "Puertos publicados", "Cambios del contenedor", "Pausar contenedor", "Reanudar contenedor", "Terminar contenedor", "Renombrar contenedor", "Copiar archivos", "Limpiar contenedores detenidos", "Inspeccionar imagen", "Historial de imagen", "Construir imagen", "Etiquetar imagen", "Eliminar imagen", "Limpiar imágenes no usadas", "Listar volúmenes", "Inspeccionar volumen", "Crear volumen", "Eliminar volumen", "Limpiar volúmenes no usados", "Listar redes", "Inspeccionar red", "Crear red", "Eliminar red", "Limpiar redes no usadas", "Operación Compose guiada", "Información del motor", "Uso de espacio del motor", "Limpieza global del motor", "Volver"][..],
-            "Contenedor: motor y nombre; ejecutar: imagen, nombre, puertos, volúmenes y comando; copiar: contenedor, origen y destino. Imagen: objetivo, ruta y etiqueta. Volumen/red: nombre y motor. Compose: operación, fichero, servicio y comando.",
-            "Consulta motor, imagen, contenedor, volumen o red antes de modificar. Revisa nombre, imagen, rutas y puertos; confirma y repite la inspección.",
+            "DOCKER Y PODMAN", "Docker/Podman",
+            &["Contenedores", "Imágenes", "Volúmenes y redes", "Compose y diagnóstico", "Guía de Docker y Podman", "Volver"][..],
+            "Esta pantalla no pide campos; cada submenú documenta sus propios campos.",
+            "Abre el submenú adecuado y consulta primero el motor; las operaciones de ciclo de vida, imágenes, recursos y Compose tienen guías propias.",
+        ),
+        "containers-lifecycle" => (
+            "CICLO DE VIDA DE CONTENEDORES", "Contenedores",
+            &["Descargar imagen", "Crear y ejecutar contenedor", "Iniciar contenedor", "Detener contenedor", "Reiniciar contenedor", "Eliminar contenedor", "Ver logs del contenedor", "Ejecutar comando en contenedor", "Inspeccionar contenedor", "Estadísticas de contenedor", "Procesos del contenedor", "Puertos publicados", "Cambios del contenedor", "Pausar contenedor", "Reanudar contenedor", "Terminar contenedor", "Renombrar contenedor", "Copiar archivos", "Limpiar contenedores detenidos", "Guía del ciclo de vida de contenedores", "Volver"][..],
+            "Motor y nombre; crear: imagen, nombre, puertos, volúmenes y comando; ejecutar: comando; copiar: origen y destino.",
+            "Consulta el motor y el contenedor, revisa imagen, puertos y rutas, confirma la acción y vuelve a inspeccionar el estado.",
+        ),
+        "containers-images" => (
+            "IMÁGENES", "Imágenes",
+            &["Inspeccionar imagen", "Historial de imagen", "Construir imagen", "Etiquetar imagen", "Eliminar imagen", "Limpiar imágenes no usadas", "Guía de imágenes", "Volver"][..],
+            "Inspeccionar/historial: imagen; construir: ruta y etiqueta; etiquetar: imagen y etiqueta; limpiar: motor.",
+            "Inspecciona antes de construir, etiquetar o borrar; confirma la imagen exacta y conserva las etiquetas necesarias.",
+        ),
+        "containers-volumes" => (
+            "VOLÚMENES Y REDES", "Volúmenes y redes",
+            &["Listar volúmenes", "Inspeccionar volumen", "Crear volumen", "Eliminar volumen", "Limpiar volúmenes no usados", "Listar redes", "Inspeccionar red", "Crear red", "Eliminar red", "Limpiar redes no usadas", "Guía de volúmenes y redes", "Volver"][..],
+            "Volumen/red: nombre y motor; las limpiezas usan solo el motor seleccionado.",
+            "Lista e inspecciona recursos, confirma nombres y dependencias, y solo después crea, elimina o limpia.",
+        ),
+        "containers-compose" => (
+            "COMPOSE Y DIAGNÓSTICOS", "Compose y diagnósticos",
+            &["Operación Compose guiada", "Información del motor", "Uso de espacio del motor", "Limpieza global del motor", "Guía de Compose y diagnósticos", "Volver"][..],
+            "Compose: operación, fichero, servicio y comando; diagnósticos: motor.",
+            "Consulta información y uso, revisa el fichero Compose y el servicio, confirma la operación y verifica el motor.",
         ),
         "kubernetes" => (
             "KUBERNETES", "Kubernetes",
@@ -807,22 +1278,40 @@ fn gui_catalog_guide(topic: &str) -> String {
             "Comprueba contexto, namespace y recurso. Usa inspección/diff antes de aplicar, eliminar, escalar o reiniciar y verifica el estado después.",
         ),
         "defaults" => (
-            "VALORES PREDETERMINADOS Y AJUSTES", "Valores predeterminados / Ajustes",
-            &["Valores predeterminados", "Registro", "Tema visual", "Idioma", "Visibilidad de categorías", "Guía de ajustes y visibilidad", "Guía de valores predeterminados", "Volver"][..],
-            "Ajustes contiene todos los temas, todos los idiomas y un interruptor de visibilidad por categoría; cada preferencia se aplica al pulsarla.",
-            "Cambia una preferencia, comprueba la vista y revisa la nota de reinicio cuando la visibilidad lo requiera.",
+            "VALORES PREDETERMINADOS", "Rutas predeterminadas",
+            &[crate::i18n::gui_text("defaults"), crate::i18n::registry_label(), "Guía de valores predeterminados", "Volver"][..],
+            "Esta pantalla no pide argumentos; abre valores o Registro y conserva la navegación.",
+            "Consulta rutas y configuración efectiva, revisa la plataforma y vuelve a la guía antes de cambiar preferencias.",
+        ),
+        "installable" => (
+            "HERRAMIENTAS INSTALABLES", "Herramientas instalables",
+            &["Git / GitHub", "Software, paquetes y almacenes", "SSH, SCP, SFTP y Android", "Docker / Podman / Compose", "Kubernetes", "Utilidades del sistema", "Guía de herramientas instalables", "Volver"][..],
+            "Esta pantalla solo contiene submenús; cada familia documenta sus argumentos y operaciones.",
+            "Elige una familia, comprueba herramientas disponibles y abre su guía contextual antes de ejecutar una acción.",
         ),
         "packages" | "software" => (
-            "PAQUETES Y SOFTWARE", "Herramientas instalables / Paquetes y software",
-            &["Git / GitHub", "Paquetes y software", "SSH, SCP, SFTP y Android", "Docker y Podman", "Kubernetes", "Utilidades instalables", "Buscar paquete", "Instalar paquete", "Tiendas y gestores", "Guía de herramientas instalables", "Guía de paquetes y software", "Volver"][..],
-            "Buscar paquete pide nombre; Instalar paquete pide el número del candidato mostrado. Cada familia tiene sus propios campos.",
+            "SOFTWARE, PAQUETES Y ALMACENES", "Software, paquetes y almacenes",
+            &["Buscar un paquete en las stores disponibles", "Elegir e instalar un paquete", "Almacenes de paquetes", "Guía de paquetes y software", "Volver"][..],
+            "Buscar e instalar usan el nombre o candidato del campo de paquete; Tiendas y gestores no pide una ruta.",
             "Busca primero, selecciona un candidato concreto, revisa gestor y versión, confirma y verifica la instalación.",
         ),
         "automation" => (
             "AUTOMATIZACIÓN", "Automatización, scripts registrados y registro",
-            &["Scripts registrados", "Registrar nuevo script", "Recargar listado", "Ejecutar script", "Editar script", "Retirar script", "Registrar script", "Guía de automatización", "Guía para registrar scripts", "Volver"][..],
-            "Registrar script pide nombre, programa, directorio de trabajo y argumentos. Cada script registrado ofrece ejecutar, editar y retirar.",
-            "Registra ejecutables y argumentos separados, recarga y revisa el listado; ejecuta por identificador y retira solo después de confirmar.",
+            &[
+                "Scripts registrados",
+                "Registrar nuevo script",
+                "Guía de automatización",
+                "Guía de scripts y automatización",
+                "Volver",
+            ][..],
+            "Esta pantalla no pide campos; sus submenús contienen el registro y los scripts existentes.",
+            "Abre Scripts registrados para ejecutar/editar/retirar o Registrar nuevo script para completar sus campos.",
+        ),
+        "automation-register" => (
+            "REGISTRAR AUTOMATIZACIÓN", "Registrar nuevo script",
+            &["Registrar script", "Guía para registrar scripts", "Volver"][..],
+            "Nombre, programa, directorio de trabajo y argumentos separados.",
+            "Rellena nombre y ejecutable, añade argumentos separados, registra, recarga el listado y prueba la acción sin ocultar errores.",
         ),
         _ => return format!("GUÍA GRÁFICA: {topic}\n\nEsta categoría no tiene un catálogo contextual registrado."),
     };
@@ -837,10 +1326,50 @@ fn gui_catalog_guide(topic: &str) -> String {
 
 fn gui_guide(topic: &str) -> String {
     if topic == "all" {
+        #[cfg(windows)]
+        return windows_gui_index();
+        #[cfg(not(windows))]
         return GUI_INDEX.to_owned();
     }
+    #[cfg(not(windows))]
+    if matches!(topic, "git" | "gh") {
+        return linux_git_gui_guide();
+    }
+    #[cfg(windows)]
+    {
+        if matches!(
+            topic,
+            "storage-partitions" | "storage-filesystems" | "storage-volumes"
+        ) {
+            return format!(
+                "GUÍA GRÁFICA WINDOWS: {topic}\n\n{}\n\nEstas operaciones específicas de Linux no existen en esta GUI; la guía anterior solo describe almacenamiento nativo Windows.",
+                gui_storage_guide()
+            );
+        }
+        if matches!(topic, "settings" | "privileges") {
+            return gui_settings_guide();
+        }
+        if let Some(guide) = windows_gui_page_guide(topic) {
+            return guide;
+        }
+        if topic == "storage" {
+            return gui_storage_guide();
+        }
+        windows_gui_unavailable(topic)
+    }
+    #[cfg(not(windows))]
     match topic {
         "storage" => gui_storage_guide(),
+        "aliases" => r#"GUÍA GRÁFICA: GESTOR DE ALIAS
+
+Esta categoría no tiene un catálogo contextual registrado: el gestor de alias
+no dispone de menú en la GUI. Se administra desde la CLI con `ltools aliases
+ensure`, `list`, `doctor`, `add NOMBRE COMANDO [ARG...]`, `enable NOMBRE`,
+`disable NOMBRE`, `remove NOMBRE`, `path` y `shell-init`. El registro se limita
+a comandos conocidos de LTools y conserva sus argumentos por separado. Usa
+`ltools guide aliases` para el flujo, las rutas y la compatibilidad por sistema.
+"#
+        .to_owned(),
         "network" => r#"GUÍA GRÁFICA: RED
 
 Menú completo «Red, rutas, DNS y puertos escuchando»:
@@ -886,6 +1415,38 @@ usar cualquier acción de cambio.
 
 Proceso complejo: pulsa 7, escribe el título exacto, revisa la confirmación y
 verifica con 1–3. Para deshacerlo usa 8 y vuelve a consultar el estado.
+"#
+        .to_owned(),
+        "privileges" => r#"GUÍA GRÁFICA: ELEVACIÓN Y PERMISOS
+
+Menú completo «Ajustes»:
+  1. «Tema visual»: cambia la apariencia.
+  2. «Idioma»: cambia el idioma disponible.
+  3. «Visibilidad de categorías»: muestra u oculta familias de la ventana.
+  4. «Elevar acciones modificadoras por defecto»: activa o desactiva la
+     solicitud automática de sudo/pkexec en Linux o UAC/NSudo en Windows.
+  5. «Guía de ajustes y visibilidad»: abre la explicación de esta pantalla.
+  6. «Volver»: regresa al menú anterior.
+
+Proceso simple: deja la casilla desactivada para que las consultas y las
+acciones de usuario se ejecuten con tu identidad; las acciones obligatorias
+seguirán pidiendo autorización cuando el sistema la exija.
+
+Al instalar software, búsqueda, selección y confirmación permanecen en esta
+sesión. Después solo el gestor nativo recibe elevación si su operación la
+necesita; los gestores de usuario no se fuerzan como administrador.
+
+Proceso complejo: activa la casilla, abre almacenamiento, servicios, red,
+cuentas o arranque, revisa el objetivo exacto y confirma. La política eleva
+solo acciones Optional/Required; Git/GitHub, Wine/Proton, automatizaciones,
+aliases, limpieza guiada, exportaciones al perfil y papelera se mantienen sin
+elevar el proceso completo para conservar la identidad, los permisos y el
+destino de los datos. Los gestores de paquetes autorizan solo la operación
+concreta que requiere permisos del sistema.
+
+La GUI informa qué clasificación aplica antes de ejecutar. «Cancelar» o
+rechazar la contraseña deja el sistema sin cambios; `--no-elevate` permite
+desactivar la elevación opcional en una ejecución concreta.
 "#
         .to_owned(),
         "services" => r#"GUÍA GRÁFICA: SERVICIOS
@@ -935,14 +1496,30 @@ Menú completo «Git / GitHub»:
  15. «Pull requests de GitHub».
  16. «Releases de GitHub».
  17. «Estado de autenticación GitHub».
- 18. «Volver»: regresa al menú anterior.
+ 18. «Versión de GitHub CLI».
+ 19. «Ayuda nativa de GitHub CLI».
+ 20. «Comando nativo de gh…»: solicita comando, subcomando/identificador,
+     elemento opcional y repositorio; ejecuta argumentos separados con la
+     versión de gh instalada. Para flags avanzados usa la CLI guiada por
+     `ltools guide gh`.
+ 21. «Diagnosticar repositorio»: comprueba raíz, índice, HEAD y objetos.
+ 22. «Reconstruir índice .git…»: conserva una copia del índice y solo lo
+     reconstruye si HEAD está íntegro; no recupera objetos perdidos.
+ 23. «Recuperar .git desde remoto…»: solicita URL HTTPS/SSH y rama opcional;
+     clona sin checkout y restaura solo la metadata, sin sobrescribir archivos
+     locales. Después revisa los cambios frente al remoto y conserva el estado.
+ 24. «Volver»: regresa al menú anterior.
 
-Proceso simple: empieza por Estado, Historial, identidad o autenticación.
-Para Clonar completa URL y destino. Para GitHub usa repositorio, pull request
-o release y revisa el remoto antes de confirmar.
+Proceso simple: empieza por Estado, Diagnosticar, Historial, identidad o
+autenticación. Para Clonar completa URL y destino. «Ayuda nativa» muestra las
+opciones que ofrece tu versión real de gh; no todas las versiones incluyen los
+mismos comandos ni extensiones.
 
 Proceso complejo: Estado → Preparar cambios → Commit → rama/tag → Push o
-Release. Revisa el diff y remoto; nunca pegues tokens en los campos.
+Release. Revisa el diff y remoto; nunca pegues tokens en los campos. Antes de
+reparar, diagnostica; conserva la copia del índice hasta comprobar el estado.
+Si falta .git, aporta el remoto correcto, valida la comparación del árbol local
+y no repitas el proceso sobre una ruta distinta sin revisar la primera copia.
 "#
         .to_owned(),
         "wine" => r#"GUÍA GRÁFICA: WINE Y PROTON
@@ -967,6 +1544,50 @@ cualquier fuente.
         .to_owned(),
         _ => gui_catalog_guide(topic),
     }
+}
+
+#[cfg(not(windows))]
+fn linux_git_gui_guide() -> String {
+    let labels = [
+        crate::i18n::git_action_text("guide"),
+        crate::i18n::tools_text("git_status"),
+        crate::i18n::tools_text("git_clone"),
+        crate::i18n::tools_text("git_fetch"),
+        crate::i18n::tools_text("git_pull"),
+        crate::i18n::tools_text("git_log"),
+        crate::i18n::tools_text("git_add"),
+        crate::i18n::tools_text("git_commit"),
+        crate::i18n::tools_text("git_push"),
+        crate::i18n::tools_text("git_branch"),
+        crate::i18n::tools_text("git_tag"),
+        crate::i18n::tools_text("git_release"),
+        crate::i18n::tools_text("git_login"),
+        crate::i18n::tools_text("gh_repo"),
+        crate::i18n::tools_text("gh_prs"),
+        crate::i18n::tools_text("gh_releases"),
+        crate::i18n::tools_text("gh_auth_status"),
+        crate::i18n::git_action_text("version"),
+        crate::i18n::git_action_text("help"),
+        crate::i18n::git_action_text("native"),
+        crate::i18n::git_action_text("diagnose"),
+        crate::i18n::git_action_text("repair_index"),
+        crate::i18n::git_action_text("repair_remote"),
+        crate::i18n::text("menu.back"),
+    ];
+    let options = labels
+        .iter()
+        .enumerate()
+        .map(|(index, label)| format!("{:>2}. «{label}»", index + 1))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "GUÍA GRÁFICA: GIT Y GITHUB\n\nMenú completo «{}»:\n{}\n\nCampos del menú: para Git, Repositorio es una ruta local; para acciones GitHub pide OWNER/REPO (o HOST/OWNER/REPO). También hay campos URL, destino de clonación, remoto, rama, mensaje, notas y límite. La acción «{}» abre un formulario con dos campos: comando raíz de gh (una palabra) y argumentos en una sola línea. Las comillas simples/dobles agrupan espacios; no se expande ni ejecuta una shell. El campo Repositorio añade --repo al final de los argumentos, salvo para auth/help/version/api, donde no se aplica. Si ya incluyes --repo o -R en Argumentos, deja vacío el campo Repositorio; si los duplicas, la acción se detiene y explica el conflicto. Para gh api indica el endpoint completo en Argumentos.\n\nProceso simple: consulta estado, historial, identidad o autenticación. Usa «{}» para consultar la ayuda exacta de la versión instalada; la lista de comandos y sus argumentos puede variar según versiones y extensiones.\n\nProceso complejo: revisa el repositorio, prepara cambios, crea el commit y confirma la rama antes de publicar o crear una release. Para el índice, diagnostica primero: la reconstrucción solo está disponible si HEAD y los objetos están íntegros. Si falta .git, aporta un remoto exacto; la recuperación valida el remoto, clona sin checkout y nunca sobrescribe los archivos locales. Tras recuperar, revisa cada diferencia antes de continuar.\n\n«{}» vuelve a la pantalla anterior.",
+        crate::i18n::tools_text("git_menu"),
+        options,
+        crate::i18n::git_action_text("native"),
+        crate::i18n::git_action_text("help"),
+        crate::i18n::text("menu.back"),
+    )
 }
 
 #[cfg(windows)]
@@ -1060,18 +1681,26 @@ o rutas relativas de PowerShell. Ejemplos:
   `ltools git clone https://github.com/ORG/REPO.git C:\\src\\REPO --dry-run`
   `ltools git push --repo C:\\src\\REPO --remote origin --branch main --dry-run`
 
-GitHub CLI es `gh.exe`: `gh auth status`, `gh repo view ORG/REPO`,
-`gh pr list --repo ORG/REPO` y `gh release list --repo ORG/REPO`. No se usa
-`sudo`; la red y las credenciales las gestiona Git for Windows/Windows.
+GitHub CLI es `gh.exe`. `ltools git gh native help` muestra la ayuda de la
+versión instalada y `ltools git gh native issue list --repo ORG/REPO` pasa
+argumentos por separado. `gh native` admite comandos nuevos y extensiones que
+ofrezca esa versión; no convierte rutas Linux a Windows. El diagnóstico y la
+reparación del índice usan rutas Windows; si falta `.git`, la recuperación
+requiere URL HTTPS/SSH explícita, clona sin checkout y no sobrescribe archivos.
+No se usa `sudo`; la red y las credenciales las gestiona Git for Windows/
+Windows.
 "#
         }
         "gh" => {
             r#"WINDOWS: GH.EXE
 
 La dependencia es `gh.exe` en PATH. Usa `ltools git gh auth-status`,
-`ltools git gh repo --repo ORG/REPO`, `prs` y `releases`; el login abre el
-flujo oficial de `gh.exe`. Los paths de trabajo son Windows y la autenticación
-queda en el almacén/configuración de gh, nunca en argumentos de LTools.
+`ltools git gh repo --repo ORG/REPO`, `prs` y `releases`; `ltools git gh
+native help` consulta la ayuda y `native <comando> <argumentos...>` aprovecha
+la versión instalada, incluidas funciones nuevas y extensiones compatibles.
+El login abre el flujo oficial de `gh.exe`. Los paths de trabajo son Windows y
+la autenticación queda en el almacén/configuración de gh, nunca en argumentos
+de LTools.
 "#
         }
         "network" => {
@@ -1280,21 +1909,28 @@ fn common_guide(topic: &str) -> Result<&'static str, String> {
         "all" => Ok(INDEX),
         "audit" => Ok(AUDIT),
         "packages" => Ok(PACKAGES),
+        "installable" => Ok(PACKAGES),
         "git" => Ok(GIT),
         "gh" => Ok(GH),
         "automation" => Ok(AUTOMATION),
+        "automation-register" => Ok(AUTOMATION),
         "clean" => Ok(CLEAN),
-        "storage" => Ok(STORAGE),
+        "storage" | "storage-partitions" | "storage-filesystems" | "storage-volumes" => Ok(STORAGE),
         "system" => Ok(SYSTEM),
         "services" => Ok(SERVICES),
         "accounts" => Ok(ACCOUNTS),
-        "network" => Ok(NETWORK),
+        "network" | "connectivity" => Ok(NETWORK),
         "boot" => Ok(BOOT),
         "registry" => Ok(REGISTRY),
+        "privileges" => Ok(PRIVILEGES),
         "diagnostics" => Ok(DIAGNOSTICS),
         "wine" => Ok(WINE),
-        "defaults" => Ok(DEFAULTS),
-        "containers" => Ok(CONTAINERS),
+        "defaults" | "settings" => Ok(DEFAULTS),
+        "containers"
+        | "containers-lifecycle"
+        | "containers-images"
+        | "containers-volumes"
+        | "containers-compose" => Ok(CONTAINERS),
         "kubernetes" => Ok(KUBERNETES),
         "ssh" => Ok(SSH),
         "adb" => Ok(ADB),
@@ -1319,21 +1955,41 @@ pub fn run(_ctx: &Context, args: &[String]) -> Result<(), String> {
         "all" | "list" | "help" => "all",
         "audit" | "inventory" | "games" => "audit",
         "packages" | "software" | "package" => "packages",
+        "installable" | "installable-tools" => "installable",
         "git" => "git",
         "gh" | "github" => "gh",
+        #[cfg(windows)]
+        "winslim" if mode == "gui" => "winslim",
+        "aliases" | "alias" => "aliases",
         "automation" | "automations" => "automation",
+        "automation-register" | "register-script" => "automation-register",
         "clean" | "cleanup" => "clean",
         "storage" | "disks" | "partitions" => "storage",
-        "system" | "native" => "system",
+        "storage-partitions" | "partition-guide" => "storage-partitions",
+        "storage-filesystems" | "filesystem-guide" => "storage-filesystems",
+        "storage-volumes" | "volume-guide" => "storage-volumes",
+        // «native» es el índice contextual de la página «Herramientas
+        // nativas» en la GUI. En CLI conserva la guía general de sistema
+        // para no romper el alias histórico `guide native`.
+        "system" => "system",
+        "native" if mode == "gui" => "native",
+        "native" => "system",
         "services" | "service" => "services",
         "accounts" | "users" => "accounts",
         "network" | "red" => "network",
+        "connectivity" | "connect" => "connectivity",
         "boot" | "efi" | "grub" => "boot",
         "registry" | "records" => "registry",
+        "privileges" | "elevation" | "permissions" => "privileges",
         "diagnostics" | "doctor" => "diagnostics",
         "wine" | "proton" | "prefix" => "wine",
-        "defaults" | "settings" => "defaults",
+        "defaults" => "defaults",
+        "settings" => "settings",
         "containers" | "docker" | "podman" => "containers",
+        "containers-lifecycle" | "container-lifecycle" => "containers-lifecycle",
+        "containers-images" | "container-images" => "containers-images",
+        "containers-volumes" | "container-volumes" => "containers-volumes",
+        "containers-compose" | "container-compose" => "containers-compose",
         "kubernetes" | "k8s" => "kubernetes",
         "ssh" | "scp" | "sftp" => "ssh",
         "adb" | "android" => "adb",
@@ -1366,10 +2022,28 @@ mod tests {
 
     #[test]
     fn git_guide_covers_gh_and_safe_flow() {
-        let guide = cli_guide("git");
+        let _language_guard = crate::i18n::language_test_guard();
+        crate::i18n::set("es");
+        let guide = common_guide("git").unwrap();
         assert!(guide.contains("GIT Y GITHUB") && guide.contains("--dry-run"));
         assert!(guide.contains("clone") && guide.contains("push") && guide.contains("release"));
-        assert!(!guide.contains("git status") && !guide.contains("gh auth status"));
+        assert!(guide.contains("gh native <comando> [argumentos]"));
+        assert!(guide.contains("project") && guide.contains("codespace"));
+        assert!(guide.contains("--ltools-confirmed") && guide.contains("--yes` se conserva"));
+        assert!(guide.contains("--remote URL") && guide.contains("clona sin checkout"));
+        assert!(guide.contains("ltools git status --repo"));
+        assert!(guide.contains("ltools git gh auth-status"));
+    }
+
+    #[test]
+    fn privilege_guide_documents_manager_scoped_software_elevation() {
+        let _language_guard = crate::i18n::language_test_guard();
+        crate::i18n::set("es");
+        let guide = common_guide("privileges").unwrap();
+        assert!(guide.contains("búsqueda, selección del paquete y confirmación"));
+        assert!(guide.contains("solo se eleva el gestor nativo"));
+        assert!(guide.contains("Scoop permanece siempre en el perfil"));
+        assert!(gui_settings_guide().contains("solo se eleva el gestor nativo"));
     }
 
     #[test]
@@ -1378,12 +2052,33 @@ mod tests {
         assert!(guide.contains("GUÍA GRÁFICA"));
         assert!(guide.contains("Proceso simple") && guide.contains("Proceso complejo"));
         assert!(guide.contains("Crear tabla GPT"));
-        assert!(guide.contains("Operación LVM") && guide.contains("Operación RAID mdadm"));
+        assert!(
+            guide.contains("Gestionar volúmenes LVM") && guide.contains("Gestionar conjuntos RAID")
+        );
         assert!(!guide.contains("lsblk"));
+        for internal in ["parted", "wipefs", "mdadm", "--depth", "pkexec"] {
+            assert!(
+                !guide.contains(internal),
+                "la guía gráfica expone {internal}"
+            );
+        }
+        for option in [
+            "Consultar tabla de un disco",
+            "Inspeccionar dispositivo",
+            "Retirar firmas de almacenamiento",
+            "Gestionar volúmenes Btrfs",
+            "Gestionar volúmenes ZFS",
+            "Gestionar conjuntos RAID",
+            "Restaurar cabecera LUKS",
+        ] {
+            assert!(guide.contains(option), "falta la acción GUI {option}");
+        }
     }
 
     #[test]
     fn every_contextual_gui_guide_lists_its_menu_options() {
+        let _language_guard = crate::i18n::language_test_guard();
+        crate::i18n::set("es");
         for topic in [
             "accounts",
             "system",
@@ -1393,10 +2088,20 @@ mod tests {
             "adb",
             "utilities",
             "containers",
+            "containers-lifecycle",
+            "containers-images",
+            "containers-volumes",
+            "containers-compose",
             "kubernetes",
             "defaults",
+            "settings",
             "packages",
             "automation",
+            "automation-register",
+            "connectivity",
+            "storage-partitions",
+            "storage-filesystems",
+            "storage-volumes",
         ] {
             let guide = gui_guide(topic);
             assert!(
@@ -1450,6 +2155,34 @@ mod tests {
                     "Guía de Wine y Proton",
                 ],
             ),
+            (
+                "storage-partitions",
+                [
+                    "Consultar tabla de un disco",
+                    "Retirar firmas de almacenamiento",
+                    "Guía de particionado",
+                ],
+            ),
+            (
+                "storage-filesystems",
+                [
+                    "Crear / formatear sistema de archivos",
+                    "Montar partición",
+                    "Guía de sistemas de archivos",
+                ],
+            ),
+            (
+                "storage-volumes",
+                [
+                    "Crear contenedor LUKS",
+                    "Gestionar volúmenes Btrfs",
+                    "Guía de cifrado y volúmenes",
+                ],
+            ),
+            (
+                "connectivity",
+                ["SSH / SCP / SFTP", "Android (ADB)", "Guía de conectividad"],
+            ),
         ] {
             let guide = gui_guide(topic);
             for option in options {
@@ -1458,12 +2191,203 @@ mod tests {
         }
     }
 
+    #[cfg(not(windows))]
+    #[test]
+    fn git_gui_guide_matches_every_menu_label_in_all_supported_languages() {
+        let _language_guard = crate::i18n::language_test_guard();
+        for language in crate::i18n::SUPPORTED {
+            crate::i18n::set(language);
+            let guide = gui_guide("git");
+            let expected = [
+                crate::i18n::git_action_text("guide"),
+                crate::i18n::tools_text("git_status"),
+                crate::i18n::tools_text("git_clone"),
+                crate::i18n::tools_text("git_fetch"),
+                crate::i18n::tools_text("git_pull"),
+                crate::i18n::tools_text("git_log"),
+                crate::i18n::tools_text("git_add"),
+                crate::i18n::tools_text("git_commit"),
+                crate::i18n::tools_text("git_push"),
+                crate::i18n::tools_text("git_branch"),
+                crate::i18n::tools_text("git_tag"),
+                crate::i18n::tools_text("git_release"),
+                crate::i18n::tools_text("git_login"),
+                crate::i18n::tools_text("gh_repo"),
+                crate::i18n::tools_text("gh_prs"),
+                crate::i18n::tools_text("gh_releases"),
+                crate::i18n::tools_text("gh_auth_status"),
+                crate::i18n::git_action_text("version"),
+                crate::i18n::git_action_text("help"),
+                crate::i18n::git_action_text("native"),
+                crate::i18n::git_action_text("diagnose"),
+                crate::i18n::git_action_text("repair_index"),
+                crate::i18n::git_action_text("repair_remote"),
+                crate::i18n::text("menu.back"),
+            ];
+            for (index, label) in expected.iter().enumerate() {
+                assert!(
+                    guide.contains(&format!("{:>2}. «{label}»", index + 1)),
+                    "guide git lacks menu entry {} for {language}: {label}",
+                    index + 1
+                );
+            }
+            assert!(guide.contains("argumentos en una sola línea"));
+            assert!(guide.contains("no se expande ni ejecuta una shell"));
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn linux_settings_guide_is_generated_from_the_preferences_catalog() {
+        let _language_guard = crate::i18n::language_test_guard();
+        crate::i18n::set("es");
+        let guide = gui_guide("settings");
+        assert!(guide.contains("Menú completo"));
+        assert!(guide.contains("Campos y argumentos de la GUI"));
+        assert!(guide.contains("No hay campos de texto"));
+        for theme in crate::theme::SUPPORTED {
+            assert!(
+                guide.contains(crate::theme::label(theme)),
+                "la guía Ajustes no enumera el tema {theme}"
+            );
+        }
+        for language in std::iter::once("auto").chain(crate::i18n::SUPPORTED.iter().copied()) {
+            assert!(
+                guide.contains(crate::i18n::language_label(language)),
+                "la guía Ajustes no enumera el idioma {language}"
+            );
+        }
+        for category in crate::i18n::SETTINGS_CATEGORY_KEYS {
+            assert!(
+                guide.contains(crate::i18n::category_text(category)),
+                "la guía Ajustes no enumera la categoría {category}"
+            );
+        }
+        assert!(guide.contains(crate::i18n::gui_text("elevation_default")));
+        assert!(guide.contains(crate::i18n::gui_text("settings_guide")));
+        assert!(!guide.contains("Aplicar ajustes»"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_settings_guide_documents_the_native_form_not_linux_buttons() {
+        let guide = gui_guide("settings");
+        assert!(guide.contains("Campo «Tema»"));
+        assert!(guide.contains("Campo «Idioma»"));
+        assert!(guide.contains("«Aplicar ajustes»"));
+        assert!(guide.contains("auto"));
+        assert!(!guide.contains("Guía de ajustes y visibilidad»"));
+    }
+
     #[cfg(windows)]
     #[test]
     fn windows_guides_use_native_options_and_reject_linux_assumptions() {
         assert!(cli_platform_summary("network").contains("adaptadores"));
         assert!(cli_platform_summary("boot").contains("BCD/UEFI"));
         assert!(cli_platform_summary("wine").contains("NO APLICA"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_gui_guides_never_fall_back_to_linux_menus() {
+        let ssh = gui_guide("ssh");
+        assert!(ssh.contains("GUÍA GRÁFICA WINDOWS"));
+        assert!(ssh.contains("no tienen acciones gráficas"));
+        assert!(!ssh.contains("Copiar con SCP"));
+
+        let storage = gui_guide("storage-partitions");
+        assert!(storage.contains("no se implementan en la GUI Windows"));
+        assert!(!storage.contains("Crear tabla GPT"));
+
+        let automation = gui_guide("automation");
+        for option in [
+            "Listar scripts registrados",
+            "Registrar un script",
+            "Ejecutar un script registrado",
+            "Editar un script registrado",
+            "Eliminar un registro",
+        ] {
+            assert!(automation.contains(option), "falta la acción GUI {option}");
+        }
+        assert!(!automation.contains("«»"));
+
+        let containers = gui_guide("containers-lifecycle");
+        assert!(containers.contains("no tienen acciones gráficas"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_accounts_guide_documents_admin_sid_and_trustedinstaller_boundary() {
+        let guide = gui_guide("accounts");
+        assert!(guide.contains("Conceder permisos de administrador"));
+        assert!(guide.contains("Ver grupo y miembros administradores"));
+        assert!(guide.contains("S-1-5-32-544"));
+        assert!(guide.contains("TrustedInstaller es una identidad de servicio"));
+        assert!(!guide.contains("sudo/wheel"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_gui_guides_match_every_visible_menu_label_in_all_languages() {
+        let _language_guard = crate::i18n::language_test_guard();
+        let pages = [
+            ("audit", 0),
+            ("native", 1),
+            ("diagnostics", 2),
+            ("defaults", 3),
+            ("installable", 4),
+            ("automation", 5),
+            ("accounts", 8),
+        ];
+        for language in crate::i18n::SUPPORTED {
+            crate::i18n::set(language);
+            for (topic, page) in pages {
+                let guide = gui_guide(topic);
+                let options = crate::gui::windows_menu_labels(page)
+                    .into_iter()
+                    .chain(std::iter::once(crate::i18n::text("menu.back").to_owned()));
+                for option in options {
+                    assert!(
+                        guide.contains(&option),
+                        "guía Windows/{topic} ({language}) no enumera el botón «{option}»"
+                    );
+                }
+            }
+            if crate::platform::winslim_available() {
+                let guide = gui_guide("winslim");
+                for option in crate::gui::windows_menu_labels(7)
+                    .into_iter()
+                    .chain(std::iter::once(crate::i18n::text("menu.back").to_owned()))
+                {
+                    assert!(
+                        !option.trim().is_empty(),
+                        "guía Windows/winslim ({language}) contiene una etiqueta vacía"
+                    );
+                    assert!(
+                        guide.contains(&option),
+                        "guía Windows/winslim ({language}) no enumera el botón «{option}»"
+                    );
+                }
+            }
+        }
+        crate::i18n::set("es");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn winslim_guide_reflects_conditional_host_availability() {
+        let guide = gui_guide("winslim");
+        if crate::platform::winslim_available() {
+            assert!(guide.contains("Estado de WSCore y NSudo"));
+            assert!(guide.contains("Guía de uso y seguridad NSudo"));
+            if crate::platform::nsudo_path().is_some() {
+                assert!(guide.contains("Abrir el asistente de lanzamiento NSudo"));
+            } else {
+                assert!(!guide.contains("Abrir el asistente de lanzamiento NSudo"));
+            }
+        } else {
+            assert!(guide.contains("C:\\WSCore o se detecta un lanzador NSudo"));
+        }
     }
 
     #[cfg(not(windows))]

@@ -1,6 +1,6 @@
 use crate::common::{
-    ask, command_exists, command_output, ensure_tool, human_bytes, move_to_trash, run_command,
-    run_with_sudo, Context,
+    ask, command_exists, command_output, command_output_owned, ensure_tool, human_bytes,
+    move_to_trash, run_command, run_with_sudo, Context,
 };
 use crate::i18n;
 use std::fs::{self, File};
@@ -31,6 +31,26 @@ fn normalize_manager(value: &str) -> &str {
     }
 }
 
+fn manager_requires_process_elevation(manager: &str) -> bool {
+    // Brew is per-user; Flatpak and Pamac use their own authorization paths;
+    // AUR helpers must build as the user and elevate only their package step.
+    // Do not switch HOME or the desktop session.
+    !matches!(manager, "brew" | "flatpak" | "pamac" | "paru" | "yay")
+}
+
+fn run_package_manager(
+    manager: &str,
+    program: &str,
+    args: &[String],
+    dry_run: bool,
+) -> std::io::Result<bool> {
+    if manager_requires_process_elevation(manager) {
+        run_with_sudo(program, args, dry_run)
+    } else {
+        run_command(program, args, dry_run)
+    }
+}
+
 fn removal_command(manager: &str) -> Option<(&'static str, Vec<String>)> {
     Some(match manager {
         "pacman" => ("pacman", vec!["-Rns".into()]),
@@ -46,6 +66,195 @@ fn removal_command(manager: &str) -> Option<(&'static str, Vec<String>)> {
         "pamac" => ("pamac", vec!["remove".into()]),
         _ => return None,
     })
+}
+
+const REMOVAL_MANAGERS: &[&str] = &[
+    "pacman",
+    "apt-get",
+    "dnf",
+    "yum",
+    "zypper",
+    "apk",
+    "xbps-remove",
+    "pamac",
+    "brew",
+    "snap",
+    "flatpak",
+];
+
+fn available_removal_managers() -> Vec<&'static str> {
+    REMOVAL_MANAGERS
+        .iter()
+        .copied()
+        .filter(|manager| command_exists(manager))
+        .collect()
+}
+
+fn resolve_removal_manager(requested: Option<&str>, available: &[&str]) -> Result<String, String> {
+    if let Some(requested) = requested {
+        let normalized = normalize_manager(requested);
+        return available
+            .contains(&normalized)
+            .then(|| normalized.to_owned())
+            .ok_or_else(|| format!("el gestor no está disponible: {requested}"));
+    }
+    match available {
+        [] => Err("no se encontró un gestor de paquetes compatible".into()),
+        [manager] => Ok((*manager).to_owned()),
+        managers => Err(format!(
+            "hay varios gestores disponibles ({}); especifica --manager para evitar usar el incorrecto",
+            managers.join(", ")
+        )),
+    }
+}
+
+fn parse_flatpak_installations(contents: &str) -> Vec<String> {
+    let mut installations = Vec::new();
+    for line in contents.lines().map(str::trim) {
+        let Some(name) = line
+            .strip_prefix("[Installation \"")
+            .and_then(|value| value.strip_suffix("\"]"))
+        else {
+            continue;
+        };
+        if !name.is_empty() && name != "default" && !installations.iter().any(|found| found == name)
+        {
+            installations.push(name.to_owned());
+        }
+    }
+    installations
+}
+
+fn custom_flatpak_installations() -> Vec<String> {
+    custom_flatpak_installations_from(Path::new("/etc/flatpak/installations.d"))
+}
+
+fn custom_flatpak_installations_from(directory: &Path) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return Vec::new();
+    };
+    let mut installations = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "conf")
+        {
+            if let Ok(contents) = fs::read_to_string(path) {
+                installations.extend(parse_flatpak_installations(&contents));
+            }
+        }
+    }
+    installations.sort();
+    installations.dedup();
+    installations
+}
+
+fn flatpak_query_args(scope: &str) -> Vec<String> {
+    match scope {
+        "user" => vec![
+            "list".into(),
+            "--user".into(),
+            "--columns=application".into(),
+        ],
+        "system" => vec![
+            "list".into(),
+            "--system".into(),
+            "--columns=application".into(),
+        ],
+        installation => vec![
+            format!("--installation={installation}"),
+            "list".into(),
+            "--columns=application".into(),
+        ],
+    }
+}
+
+fn flatpak_unused_args(scope: &str) -> Vec<String> {
+    match scope {
+        "user" | "system" => vec!["uninstall".into(), "--unused".into(), format!("--{scope}")],
+        installation => vec![
+            format!("--installation={installation}"),
+            "uninstall".into(),
+            "--unused".into(),
+        ],
+    }
+}
+
+fn flatpak_scoped_removal_args(scope: &str, mut args: Vec<String>) -> Vec<String> {
+    if matches!(scope, "user" | "system") {
+        args.push(format!("--{scope}"));
+    } else {
+        args.insert(0, format!("--installation={scope}"));
+    }
+    args
+}
+
+fn resolve_flatpak_scope(requested: Option<&str>, installed: &[String]) -> Result<String, String> {
+    if let Some(requested) = requested {
+        return installed
+            .iter()
+            .find(|scope| scope.as_str() == requested)
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "el paquete no aparece en el ámbito Flatpak «{requested}»; opciones: {}",
+                    installed.join(", ")
+                )
+            });
+    }
+    match installed {
+        [] => Err("el paquete no aparece en ninguna instalación Flatpak consultada".into()),
+        [scope] => Ok(scope.clone()),
+        scopes => Err(format!(
+            "el paquete está instalado en varios ámbitos Flatpak ({}); especifica --scope",
+            scopes.join(", ")
+        )),
+    }
+}
+
+fn validate_cascade_manager(manager: &str, cascade: bool) -> Result<(), String> {
+    if cascade && manager != "pacman" {
+        return Err("--cascade solo se admite con --manager pacman".into());
+    }
+    Ok(())
+}
+
+fn flatpak_scope_for_package(package: &str, requested: Option<&str>) -> Result<String, String> {
+    let custom_installations = custom_flatpak_installations();
+    if requested.is_some_and(|scope| {
+        !matches!(scope, "user" | "system")
+            && !custom_installations.iter().any(|name| name == scope)
+    }) {
+        return Err(format!(
+            "--scope Flatpak debe ser user, system o una instalación personalizada disponible; opciones: user, system{}",
+            if custom_installations.is_empty() { String::new() } else { format!(", {}", custom_installations.join(", ")) }
+        ));
+    }
+    let mut installed_scopes = Vec::new();
+    for scope in ["user", "system"] {
+        if requested.is_some_and(|selected| selected != scope) {
+            continue;
+        }
+        let args = flatpak_query_args(scope);
+        let output = command_output_owned("flatpak", &args)
+            .ok_or_else(|| format!("no se pudo consultar Flatpak {scope}"))?;
+        if output.lines().any(|line| line.trim() == package) {
+            installed_scopes.push(scope.to_owned());
+        }
+    }
+    for installation in custom_installations {
+        if requested.is_some_and(|selected| selected != installation) {
+            continue;
+        }
+        let args = flatpak_query_args(&installation);
+        let output = command_output_owned("flatpak", &args)
+            .ok_or_else(|| format!("no se pudo consultar Flatpak {installation}"))?;
+        if output.lines().any(|line| line.trim() == package) {
+            installed_scopes.push(installation);
+        }
+    }
+    resolve_flatpak_scope(requested, &installed_scopes)
 }
 
 pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
@@ -406,6 +615,7 @@ pub fn clean(ctx: &Context, args: &[String]) -> Result<(), String> {
     let mut force = false;
     let mut cascade = false;
     let mut manager = None;
+    let mut scope = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -429,6 +639,14 @@ pub fn clean(ctx: &Context, args: &[String]) -> Result<(), String> {
                 i += 1;
                 manager = Some(args.get(i).ok_or("--manager requiere un gestor")?.clone());
             }
+            "--scope" => {
+                i += 1;
+                scope = Some(
+                    args.get(i)
+                        .ok_or("--scope requiere user, system o una instalación personalizada")?
+                        .clone(),
+                );
+            }
             "--dry-run" | "--plan" => {
                 if args[i] == "--plan" {
                     i += 1;
@@ -442,11 +660,36 @@ pub fn clean(ctx: &Context, args: &[String]) -> Result<(), String> {
     if preview {
         return preview_clean(ctx);
     }
-    if orphans && command_exists("pacman") {
-        packages.extend(query("pacman", &["-Qdtq"]).lines().map(str::to_string));
+    if orphans
+        && manager
+            .as_deref()
+            .is_some_and(|selected| normalize_manager(selected) != "pacman")
+    {
+        return Err(
+            "--orphans corresponde a pacman; no combines esa opción con otro --manager".into(),
+        );
+    }
+    if scope.is_some() && packages.is_empty() {
+        return Err("--scope solo se puede usar con --package".into());
+    }
+    if manager.is_some() && packages.is_empty() && !orphans {
+        return Err("--manager solo se puede usar con --package o --orphans".into());
+    }
+    if cascade && packages.is_empty() && !orphans {
+        return Err("--cascade solo se puede usar con --package o --orphans".into());
     }
     for package in packages {
-        remove_package(ctx, &package, cascade, manager.as_deref())?;
+        remove_package(ctx, &package, cascade, manager.as_deref(), scope.as_deref())?;
+    }
+    if orphans {
+        if command_exists("pacman") {
+            let orphan_packages = query("pacman", &["-Qdtq"]);
+            for package in orphan_packages.lines() {
+                remove_package(ctx, package, cascade, Some("pacman"), None)?;
+            }
+        } else {
+            eprintln!("--orphans solo está disponible cuando pacman está instalado.");
+        }
     }
     for path in paths {
         if !force && referenced(&path, &ctx.home) {
@@ -508,6 +751,7 @@ fn preview_clean(ctx: &Context) -> Result<(), String> {
         ("apk", "/var/cache/apk"),
         ("xbps-remove", "/var/cache/xbps"),
         ("brew", "brew-cache"),
+        ("pamac", "caché Pamac (conserva las tres últimas versiones)"),
         ("flatpak", "runtimes sin uso"),
     ];
     let mut found = false;
@@ -572,7 +816,55 @@ fn menu(ctx: &Context) -> Result<(), String> {
             }
             "5" => {
                 if let Some(package) = crate::common::prompt_path("Paquete: ") {
-                    clean(ctx, &["--package".into(), package.display().to_string()])?;
+                    let managers = available_removal_managers();
+                    let manager = match managers.as_slice() {
+                        [manager] => Some((*manager).to_owned()),
+                        [] => None,
+                        _ => {
+                            println!("Gestores disponibles: {}", managers.join(", "));
+                            print!("Gestor exacto (Enter para cancelar): ");
+                            let _ = std::io::stdout().flush();
+                            let mut selected = String::new();
+                            std::io::stdin()
+                                .read_line(&mut selected)
+                                .map_err(|error| error.to_string())?;
+                            let selected = selected.trim();
+                            if selected.is_empty() {
+                                println!("Operación cancelada.");
+                                continue;
+                            }
+                            Some(selected.to_owned())
+                        }
+                    };
+                    let mut remove_args = vec!["--package".into(), package.display().to_string()];
+                    if manager.as_deref() == Some("flatpak") {
+                        let installations = custom_flatpak_installations();
+                        print!(
+                            "Ámbito Flatpak [auto/user/system{}] (Enter para cancelar): ",
+                            if installations.is_empty() {
+                                String::new()
+                            } else {
+                                format!("/{}", installations.join("/"))
+                            }
+                        );
+                        let _ = std::io::stdout().flush();
+                        let mut selected_scope = String::new();
+                        std::io::stdin()
+                            .read_line(&mut selected_scope)
+                            .map_err(|error| error.to_string())?;
+                        let selected_scope = selected_scope.trim();
+                        if selected_scope.is_empty() {
+                            println!("Operación cancelada.");
+                            continue;
+                        }
+                        if selected_scope != "auto" {
+                            remove_args.extend(["--scope".into(), selected_scope.to_owned()]);
+                        }
+                    }
+                    if let Some(manager) = manager {
+                        remove_args.extend(["--manager".into(), manager]);
+                    }
+                    clean(ctx, &remove_args)?;
                 }
             }
             "6" => clean(ctx, &["--automatic".into()])?,
@@ -588,32 +880,11 @@ fn remove_package(
     package: &str,
     cascade: bool,
     requested_manager: Option<&str>,
+    requested_scope: Option<&str>,
 ) -> Result<(), String> {
-    let manager = requested_manager
-        .map(normalize_manager)
-        .map(str::to_string)
-        .or_else(|| {
-            [
-                "pacman",
-                "apt-get",
-                "dnf",
-                "yum",
-                "zypper",
-                "apk",
-                "xbps-remove",
-                "pamac",
-                "brew",
-                "snap",
-                "flatpak",
-            ]
-            .iter()
-            .find(|name| command_exists(name))
-            .map(|name| (*name).to_string())
-        })
-        .ok_or("no se encontró un gestor de paquetes compatible")?;
-    if !command_exists(&manager) {
-        return Err(format!("el gestor no está disponible: {manager}"));
-    }
+    let available = available_removal_managers();
+    let manager = resolve_removal_manager(requested_manager, &available)?;
+    validate_cascade_manager(&manager, cascade)?;
     let mut has_dependents = false;
     let dependency_note: String;
     if manager == "pacman" {
@@ -641,6 +912,17 @@ fn remove_package(
     }
     let (program, mut args) = removal_command(&manager)
         .ok_or_else(|| format!("gestor no soportado para eliminar: {manager}"))?;
+    let flatpak_scope = if manager == "flatpak" {
+        Some(flatpak_scope_for_package(package, requested_scope)?)
+    } else {
+        if requested_scope.is_some() {
+            return Err("--scope solo se admite al eliminar un paquete Flatpak".into());
+        }
+        None
+    };
+    if let Some(scope) = flatpak_scope.as_deref() {
+        args = flatpak_scoped_removal_args(scope, args);
+    }
     let display = format!("{program} {}", args.join(" "));
     if !ask(&format!(
         "¿Eliminar {package} con {display}? Dependencias: {dependency_note}"
@@ -652,28 +934,52 @@ fn remove_package(
     }
     args.push("--".into());
     args.push(package.into());
-    let ok = run_with_sudo(program, &args, ctx.dry_run).map_err(|e| e.to_string())?;
-    if ok {
-        if let Some(plan) = &ctx.plan {
-            plan.record(
-                "package-remove",
-                Path::new(package),
-                if ctx.dry_run { "planned" } else { "executed" },
-                false,
-                &manager,
-                if has_dependents {
-                    "cascade"
-                } else {
-                    &dependency_note
-                },
-            )
-            .map_err(|e| e.to_string())?;
+    let result = run_package_manager(&manager, program, &args, ctx.dry_run);
+    let ok = result.as_ref().is_ok_and(|executed| *executed);
+    let plan_detail = if let Some(scope) = flatpak_scope.as_deref() {
+        format!("{dependency_note}; Flatpak {scope}")
+    } else if has_dependents {
+        "cascade".to_owned()
+    } else {
+        dependency_note.clone()
+    };
+    if let Some(plan) = &ctx.plan {
+        plan.record(
+            "package-remove",
+            Path::new(package),
+            if ctx.dry_run {
+                "planned"
+            } else if ok {
+                "executed"
+            } else {
+                "failed"
+            },
+            false,
+            &manager,
+            &plan_detail,
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    if !ctx.dry_run {
+        match result {
+            Err(error) => {
+                return Err(format!(
+                    "no se pudo iniciar la eliminación de {package} con {manager}: {error}"
+                ));
+            }
+            Ok(false) => {
+                return Err(format!(
+                    "no se completó la eliminación de {package} con {manager}; revisa los permisos y la salida del gestor"
+                ));
+            }
+            Ok(true) => {}
         }
     }
     Ok(())
 }
 
 fn clean_caches(ctx: &Context) -> Result<(), String> {
+    let mut failures = Vec::new();
     if command_exists("pacman") && !command_exists("paccache") && !ensure_tool(ctx, "paccache")? {
         eprintln!("No se podrá limpiar la caché de pacman sin paccache.");
     }
@@ -681,18 +987,34 @@ fn clean_caches(ctx: &Context) -> Result<(), String> {
         && ask("¿Limpiar la caché de pacman conservando las dos últimas versiones?")
     {
         let args = vec!["-rk2".into()];
-        if run_with_sudo("paccache", &args, ctx.dry_run).map_err(|e| e.to_string())? {
-            if let Some(p) = &ctx.plan {
-                p.record(
-                    "package-cache-clean",
-                    Path::new("/var/cache/pacman/pkg"),
-                    if ctx.dry_run { "planned" } else { "executed" },
-                    false,
-                    "paccache",
-                    "",
-                )
-                .map_err(|e| e.to_string())?;
+        let result = run_with_sudo("paccache", &args, ctx.dry_run);
+        let executed = result.as_ref().is_ok_and(|success| *success);
+        if !executed && !ctx.dry_run {
+            failures.push("pacman (paccache)".to_owned());
+            match &result {
+                Err(error) => eprintln!("No se pudo iniciar paccache: {error}"),
+                Ok(false) => eprintln!(
+                    "No se completó la limpieza de pacman: paccache terminó con error o la elevación fue rechazada."
+                ),
+                Ok(true) => {}
             }
+        }
+        if let Some(p) = &ctx.plan {
+            p.record(
+                "package-cache-clean",
+                Path::new("/var/cache/pacman/pkg"),
+                if ctx.dry_run {
+                    "planned"
+                } else if executed {
+                    "executed"
+                } else {
+                    "failed"
+                },
+                false,
+                "paccache",
+                "",
+            )
+            .map_err(|e| e.to_string())?;
         }
     }
     for (manager, command, args, path) in [
@@ -722,14 +1044,42 @@ fn clean_caches(ctx: &Context) -> Result<(), String> {
         ),
         ("xbps", "xbps-remove", vec!["-O".into()], "/var/cache/xbps"),
         ("brew", "brew", vec!["cleanup".into()], "brew-cache"),
+        (
+            "pamac",
+            "pamac",
+            vec!["clean".into(), "--keep".into(), "3".into()],
+            "pamac-cache",
+        ),
     ] {
+        // Pamac and paccache manage the same pacman cache; avoid offering a
+        // second cleaner that could remove the same packages twice.
+        if manager == "pamac" && command_exists("paccache") {
+            continue;
+        }
         if command_exists(command) && ask(&format!("¿Ejecutar limpieza de {manager}?")) {
-            let _ = run_with_sudo(command, &args, ctx.dry_run).map_err(|e| e.to_string())?;
+            let result = run_package_manager(manager, command, &args, ctx.dry_run);
+            let executed = result.as_ref().is_ok_and(|success| *success);
+            if !executed && !ctx.dry_run {
+                failures.push(manager.to_owned());
+                match &result {
+                    Err(error) => eprintln!("No se pudo iniciar la limpieza de {manager}: {error}"),
+                    Ok(false) => eprintln!(
+                        "No se completó la limpieza de {manager}: el comando terminó con error o la elevación fue rechazada."
+                    ),
+                    Ok(true) => {}
+                }
+            }
             if let Some(p) = &ctx.plan {
                 p.record(
                     "package-cache-clean",
                     Path::new(path),
-                    if ctx.dry_run { "planned" } else { "executed" },
+                    if ctx.dry_run {
+                        "planned"
+                    } else if executed {
+                        "executed"
+                    } else {
+                        "failed"
+                    },
                     false,
                     command,
                     "",
@@ -757,6 +1107,12 @@ fn clean_caches(ctx: &Context) -> Result<(), String> {
             }
         }
     }
+    if !failures.is_empty() {
+        return Err(format!(
+            "no se completaron las limpiezas de caché: {}",
+            failures.join(", ")
+        ));
+    }
     Ok(())
 }
 
@@ -771,19 +1127,50 @@ fn run_flatpak_unused(ctx: &Context) -> Result<(), String> {
             return Ok(());
         }
     }
-    if ask("¿Eliminar runtimes Flatpak sin uso?") {
-        let args = vec!["uninstall".into(), "--unused".into()];
-        let _ = run_command("flatpak", &args, ctx.dry_run).map_err(|e| e.to_string())?;
-        if let Some(p) = &ctx.plan {
-            p.record(
-                "flatpak-unused",
-                Path::new("flatpak"),
-                if ctx.dry_run { "planned" } else { "executed" },
-                false,
-                "flatpak uninstall --unused",
-                "",
-            )
-            .map_err(|e| e.to_string())?;
+    let mut scopes = vec!["user".to_owned(), "system".to_owned()];
+    scopes.extend(custom_flatpak_installations());
+    if ask(&format!(
+        "¿Eliminar runtimes Flatpak sin uso en las instalaciones {}?",
+        scopes.join(", ")
+    )) {
+        let mut failures = Vec::new();
+        for scope in scopes {
+            let args = flatpak_unused_args(&scope);
+            let result = run_command("flatpak", &args, ctx.dry_run);
+            let executed = result.as_ref().is_ok_and(|success| *success);
+            if !executed && !ctx.dry_run {
+                failures.push(scope.clone());
+                match &result {
+                    Err(error) => eprintln!("No se pudo iniciar Flatpak para {scope}: {error}"),
+                    Ok(false) => {
+                        eprintln!("Flatpak no completó la limpieza de runtimes sin uso en {scope}.")
+                    }
+                    Ok(true) => {}
+                }
+            }
+            if let Some(p) = &ctx.plan {
+                p.record(
+                    "flatpak-unused",
+                    Path::new(&format!("flatpak:{scope}")),
+                    if ctx.dry_run {
+                        "planned"
+                    } else if executed {
+                        "executed"
+                    } else {
+                        "failed"
+                    },
+                    false,
+                    "flatpak uninstall --unused",
+                    &scope,
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+        if !failures.is_empty() {
+            return Err(format!(
+                "Flatpak no completó la limpieza de runtimes sin uso en: {}",
+                failures.join(", ")
+            ));
         }
     }
     Ok(())
@@ -810,7 +1197,154 @@ fn referenced(path: &Path, home: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_manager, removal_command};
+    use super::{
+        custom_flatpak_installations_from, flatpak_query_args, flatpak_scoped_removal_args,
+        flatpak_unused_args, manager_requires_process_elevation, normalize_manager,
+        parse_flatpak_installations, removal_command, resolve_flatpak_scope,
+        resolve_removal_manager, validate_cascade_manager,
+    };
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn package_removal_never_guesses_between_multiple_managers() {
+        assert_eq!(resolve_removal_manager(None, &["brew"]).unwrap(), "brew");
+        assert!(resolve_removal_manager(None, &["brew", "flatpak"]).is_err());
+        assert_eq!(
+            resolve_removal_manager(Some("flatpak"), &["brew", "flatpak"]).unwrap(),
+            "flatpak"
+        );
+        assert_eq!(
+            resolve_removal_manager(Some("xbps"), &["xbps-remove"]).unwrap(),
+            "xbps-remove"
+        );
+        assert!(resolve_removal_manager(None, &[]).is_err());
+    }
+
+    #[test]
+    fn flatpak_removal_scope_is_explicit_when_ref_is_ambiguous() {
+        let user = vec!["user".to_owned()];
+        let system = vec!["system".to_owned()];
+        let both = vec!["user".to_owned(), "system".to_owned()];
+        let custom = vec!["user".to_owned(), "extra".to_owned()];
+        assert_eq!(resolve_flatpak_scope(None, &user).unwrap(), "user");
+        assert_eq!(resolve_flatpak_scope(None, &system).unwrap(), "system");
+        assert!(resolve_flatpak_scope(None, &both).is_err());
+        assert_eq!(
+            resolve_flatpak_scope(Some("system"), &both).unwrap(),
+            "system"
+        );
+        assert!(resolve_flatpak_scope(Some("user"), &system).is_err());
+        assert_eq!(
+            resolve_flatpak_scope(Some("extra"), &custom).unwrap(),
+            "extra"
+        );
+        assert!(resolve_flatpak_scope(Some("invalid"), &user).is_err());
+    }
+
+    #[test]
+    fn flatpak_custom_installation_config_names_are_parsed() {
+        let parsed = parse_flatpak_installations(
+            "[Installation \"extra\"]\nPath=/mnt/flatpak\n\n[Installation \"default\"]\nPath=/var/lib/flatpak\n[Installation \"extra\"]\n",
+        );
+        assert_eq!(parsed, vec!["extra"]);
+    }
+
+    #[test]
+    fn flatpak_custom_installations_are_discovered_only_from_conf_files() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before Unix epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ltools-flatpak-installations-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).expect("create isolated test directory");
+        fs::write(
+            directory.join("extra.conf"),
+            "[Installation \"extra\"]\nPath=/mnt/flatpak\n[Installation \"default\"]\n",
+        )
+        .expect("write valid Flatpak installation config");
+        fs::write(
+            directory.join("ignored.txt"),
+            "[Installation \"must-not-appear\"]\n",
+        )
+        .expect("write ignored non-config file");
+        fs::write(
+            directory.join("duplicate.conf"),
+            "[Installation \"extra\"]\nPath=/other/flatpak\n",
+        )
+        .expect("write duplicate Flatpak installation config");
+
+        assert_eq!(custom_flatpak_installations_from(&directory), vec!["extra"]);
+        fs::remove_dir_all(&directory).expect("remove isolated test directory");
+    }
+
+    #[test]
+    fn flatpak_scope_is_passed_as_native_arguments_for_each_operation() {
+        assert_eq!(
+            flatpak_query_args("user"),
+            vec!["list", "--user", "--columns=application"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            flatpak_query_args("extra"),
+            vec!["--installation=extra", "list", "--columns=application"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            flatpak_unused_args("system"),
+            vec!["uninstall", "--unused", "--system"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            flatpak_unused_args("extra"),
+            vec!["--installation=extra", "uninstall", "--unused"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            flatpak_scoped_removal_args("user", vec!["uninstall".into()]),
+            vec!["uninstall", "--user"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            flatpak_scoped_removal_args("extra", vec!["uninstall".into()]),
+            vec!["--installation=extra", "uninstall"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn user_scoped_package_managers_keep_the_callers_identity() {
+        assert!(!manager_requires_process_elevation("brew"));
+        assert!(!manager_requires_process_elevation("flatpak"));
+        assert!(!manager_requires_process_elevation("pamac"));
+        assert!(!manager_requires_process_elevation("paru"));
+        assert!(!manager_requires_process_elevation("yay"));
+        assert!(manager_requires_process_elevation("apt-get"));
+        assert!(manager_requires_process_elevation("pacman"));
+    }
+
+    #[test]
+    fn cascade_removal_is_pacman_only_instead_of_being_silently_ignored() {
+        assert!(validate_cascade_manager("pacman", true).is_ok());
+        assert!(validate_cascade_manager("brew", true).is_err());
+        assert!(validate_cascade_manager("flatpak", true).is_err());
+        assert!(validate_cascade_manager("brew", false).is_ok());
+    }
 
     #[test]
     fn normalizes_manager_aliases_without_changing_real_commands() {

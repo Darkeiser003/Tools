@@ -1,5 +1,5 @@
 use super::Probe;
-use crate::common::{command_exists, command_output};
+use crate::common::{command_exists, command_output_detailed};
 use std::fs;
 
 pub(super) fn collect(action: &str) -> Vec<Probe> {
@@ -43,12 +43,27 @@ pub(super) fn collect(action: &str) -> Vec<Probe> {
 }
 
 fn probe(key: &'static str, command: &'static str, args: &[&str]) -> Probe {
-    let result = command_output(command, args);
+    let result = command_output_detailed(command, args);
+    let installed = command_exists(command);
+    let (available, output, error, status_code, timed_out) = match result {
+        Ok(value) => (
+            installed && value.success(),
+            value.stdout.trim_end().to_owned(),
+            value.stderr.trim_end().to_owned(),
+            value.status_code,
+            value.timed_out,
+        ),
+        Err(error) => (false, String::new(), error.to_string(), None, false),
+    };
     Probe {
         key,
         command,
-        available: command_exists(command) && result.is_some(),
-        output: result.unwrap_or_default(),
+        installed,
+        available,
+        output,
+        error,
+        status_code,
+        timed_out,
     }
 }
 
@@ -58,6 +73,10 @@ fn probe_file(key: &'static str, path: &'static str) -> Probe {
         key,
         command: path,
         available: fs::metadata(path).is_ok(),
+        installed: fs::metadata(path).is_ok(),
         output,
+        error: String::new(),
+        status_code: None,
+        timed_out: false,
     }
 }

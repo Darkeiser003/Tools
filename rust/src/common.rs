@@ -1,14 +1,36 @@
-use std::fs::{self, File};
-#[cfg(not(windows))]
+use std::fs::{self, File, OpenOptions};
 use std::io::Read;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
+
+#[cfg(not(test))]
+const NATIVE_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(test)]
+const NATIVE_COMMAND_TIMEOUT: Duration = Duration::from_millis(250);
+
+#[derive(Debug, Clone)]
+pub struct CommandOutput {
+    pub status_code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+    pub timed_out: bool,
+}
+
+impl CommandOutput {
+    pub fn success(&self) -> bool {
+        !self.timed_out && self.status_code == Some(0)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Context {
     pub home: PathBuf,
     pub dry_run: bool,
+    pub elevate_by_default: bool,
+    pub privileged_child: bool,
     pub plan_path: Option<PathBuf>,
     pub plan: Option<Plan>,
 }
@@ -31,21 +53,57 @@ impl Plan {
         });
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
+            #[cfg(unix)]
+            if !explicit {
+                ensure_private_plan_directory(parent)?;
+            }
         }
-        let reusable_explicit_plan = explicit
-            && path.is_file()
-            && File::open(&path)
-                .ok()
-                .and_then(|file| BufReader::new(file).lines().next())
-                .and_then(Result::ok)
-                .is_some_and(|line| line == "# ltools-plan-v1");
-        if !reusable_explicit_plan {
-            let mut file = File::create(&path)?;
-            writeln!(file, "# ltools-plan-v1")?;
-            writeln!(file, "# module={module}")?;
-            writeln!(file, "# created={}", timestamp())?;
-            writeln!(file, "operation\ttarget\tstatus\treversible\tdata1\tdata2")?;
+        let existing = match fs::symlink_metadata(&path) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() || !metadata.is_file() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "la ruta del plan debe ser un archivo regular, no un enlace",
+                    ));
+                }
+                true
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+            Err(error) => return Err(error),
+        };
+        let existing_plan = existing && is_ltools_plan(&path)?;
+        if existing && !existing_plan {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "el archivo de destino ya existe y no es un plan LTools; no se sobrescribió",
+            ));
         }
+        #[cfg(unix)]
+        if existing_plan {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+        }
+        if explicit && existing_plan {
+            return Ok(Self { path, explicit });
+        }
+
+        let mut options = OpenOptions::new();
+        options.write(true);
+        if existing_plan {
+            options.truncate(true);
+        } else {
+            options.create_new(true);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        }
+        let mut file = options.open(&path)?;
+        writeln!(file, "# ltools-plan-v1")?;
+        writeln!(file, "# module={module}")?;
+        writeln!(file, "# created={}", timestamp())?;
+        writeln!(file, "operation\ttarget\tstatus\treversible\tdata1\tdata2")?;
         Ok(Self { path, explicit })
     }
 
@@ -99,8 +157,210 @@ impl Plan {
     }
 }
 
+fn is_ltools_plan(path: &Path) -> io::Result<bool> {
+    let file = File::open(path)?;
+    let mut lines = BufReader::new(file).lines();
+    let Some(header) = lines.next().transpose()? else {
+        return Ok(false);
+    };
+    let Some(module) = lines.next().transpose()? else {
+        return Ok(false);
+    };
+    let Some(created) = lines.next().transpose()? else {
+        return Ok(false);
+    };
+    let Some(columns) = lines.next().transpose()? else {
+        return Ok(false);
+    };
+    let valid_header = header == "# ltools-plan-v1"
+        && module
+            .strip_prefix("# module=")
+            .is_some_and(|value| !value.is_empty())
+        && created
+            .strip_prefix("# created=")
+            .is_some_and(|value| !value.is_empty())
+        && columns == "operation\ttarget\tstatus\treversible\tdata1\tdata2";
+    if !valid_header {
+        return Ok(false);
+    }
+    for row in lines {
+        let row = row?;
+        let fields = row.split('\t').collect::<Vec<_>>();
+        if fields.len() != 6
+            || fields[0].is_empty()
+            || fields[2].is_empty()
+            || !matches!(fields[3], "yes" | "no")
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+#[cfg(unix)]
+fn ensure_private_plan_directory(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "el directorio automático de planes debe ser un directorio real",
+        ));
+    }
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+}
+
+#[cfg(test)]
+mod plan_tests {
+    use super::{stable_plan_name, Plan};
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static NEXT_TEMP_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
+
+    #[test]
+    fn automatic_plan_name_matches_the_documented_module_format() {
+        assert_eq!(stable_plan_name("rust-clean"), "plan-rust-clean");
+        assert_eq!(stable_plan_name("rust-storage"), "plan-rust-storage");
+    }
+
+    fn temporary_directory(label: &str) -> PathBuf {
+        for _ in 0..1024 {
+            let sequence = NEXT_TEMP_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+            let directory = std::env::temp_dir().join(format!(
+                "ltools-plan-{label}-{}-{sequence}",
+                std::process::id()
+            ));
+            match fs::create_dir(&directory) {
+                Ok(()) => return directory,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("no se pudo crear el directorio de prueba: {error}"),
+            }
+        }
+        panic!("no se encontró un nombre temporal libre para la prueba")
+    }
+
+    #[test]
+    fn plan_creation_never_truncates_an_unrecognized_existing_file() {
+        let directory = temporary_directory("preserve");
+        let path = directory.join("notes.tsv");
+        fs::write(&path, "user data that must survive\n").unwrap();
+
+        let result = Plan::create(Some(path.clone()), "test");
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "user data that must survive\n"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn plan_creation_preserves_a_file_with_only_the_plan_marker() {
+        let directory = temporary_directory("partial-header");
+        let path = directory.join("plan.tsv");
+        let contents = "# ltools-plan-v1\nthis is not a complete plan\n";
+        fs::write(&path, contents).unwrap();
+
+        assert!(Plan::create(Some(path.clone()), "test").is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), contents);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn plan_creation_preserves_a_plan_with_a_malformed_record() {
+        let directory = temporary_directory("partial-record");
+        let path = directory.join("plan.tsv");
+        let contents = concat!(
+            "# ltools-plan-v1\n",
+            "# module=rust-test\n",
+            "# created=2026-09-13T00:00:00Z\n",
+            "operation\ttarget\tstatus\treversible\tdata1\tdata2\n",
+            "truncated\trow\n",
+        );
+        fs::write(&path, contents).unwrap();
+
+        assert!(Plan::create(Some(path.clone()), "test").is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), contents);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn explicit_valid_plan_is_reused_without_losing_its_records() {
+        let directory = temporary_directory("reuse");
+        let path = directory.join("plan.tsv");
+        let plan = Plan::create(Some(path.clone()), "test").unwrap();
+        plan.record(
+            "copy",
+            std::path::Path::new("/source"),
+            "planned",
+            false,
+            "/destination",
+            "",
+        )
+        .unwrap();
+        let before = fs::read_to_string(&path).unwrap();
+        drop(plan);
+
+        let _reused = Plan::create(Some(path.clone()), "test").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn plan_files_and_automatic_plan_directories_are_private() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = temporary_directory("permissions");
+        let path = directory.join("plan.tsv");
+        {
+            let _plan = Plan::create(Some(path.clone()), "test").unwrap();
+        }
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        {
+            let _plan = Plan::create(Some(path.clone()), "test").unwrap();
+        }
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+
+        let automatic = directory.join("automatic-plans");
+        fs::create_dir(&automatic).unwrap();
+        fs::set_permissions(&automatic, fs::Permissions::from_mode(0o755)).unwrap();
+        super::ensure_private_plan_directory(&automatic).unwrap();
+        assert_eq!(
+            fs::metadata(&automatic).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn plan_creation_rejects_symbolic_links_without_touching_the_target() {
+        let directory = temporary_directory("symlink");
+        let target = directory.join("important.txt");
+        let link = directory.join("plan.tsv");
+        fs::write(&target, "keep this file\n").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        assert!(Plan::create(Some(link), "test").is_err());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "keep this file\n");
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
 fn stable_plan_name(module: &str) -> String {
-    let mut name = String::from("plan");
+    let mut name = String::from("plan-");
     for character in module.chars() {
         if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
             name.push(character.to_ascii_lowercase());
@@ -251,35 +511,72 @@ pub fn ensure_tool(ctx: &Context, id: &str) -> Result<bool, String> {
 }
 
 pub fn command_output(program: &str, args: &[&str]) -> Option<String> {
-    let output = Command::new(program)
-        .args(args)
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    Some(
-        String::from_utf8_lossy(&output.stdout)
-            .trim_end()
-            .to_string(),
-    )
+    command_output_detailed(program, args)
+        .ok()
+        .filter(CommandOutput::success)
+        .map(|output| output.stdout.trim_end().to_owned())
 }
 
 pub fn command_output_owned(program: &str, args: &[String]) -> Option<String> {
-    let output = Command::new(program)
+    command_output_detailed_owned(program, args)
+        .ok()
+        .filter(CommandOutput::success)
+        .map(|output| output.stdout.trim_end().to_owned())
+}
+
+pub fn command_output_detailed(program: &str, args: &[&str]) -> io::Result<CommandOutput> {
+    let args = args
+        .iter()
+        .map(|value| (*value).to_owned())
+        .collect::<Vec<_>>();
+    command_output_detailed_owned(program, &args)
+}
+
+pub fn command_output_detailed_owned(program: &str, args: &[String]) -> io::Result<CommandOutput> {
+    let mut child = Command::new(program)
         .args(args)
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    Some(
-        String::from_utf8_lossy(&output.stdout)
-            .trim_end()
-            .to_string(),
-    )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let stdout = child.stdout.take().map(|mut reader| {
+        thread::spawn(move || {
+            let mut data = Vec::new();
+            let _ = reader.read_to_end(&mut data);
+            data
+        })
+    });
+    let stderr = child.stderr.take().map(|mut reader| {
+        thread::spawn(move || {
+            let mut data = Vec::new();
+            let _ = reader.read_to_end(&mut data);
+            data
+        })
+    });
+    let deadline = Instant::now() + NATIVE_COMMAND_TIMEOUT;
+    let mut timed_out = false;
+    let status = loop {
+        match child.try_wait()? {
+            Some(status) => break status,
+            None if Instant::now() >= deadline => {
+                timed_out = true;
+                let _ = child.kill();
+                break child.wait()?;
+            }
+            None => thread::sleep(Duration::from_millis(25)),
+        }
+    };
+    let stdout = stdout
+        .and_then(|reader| reader.join().ok())
+        .unwrap_or_default();
+    let stderr = stderr
+        .and_then(|reader| reader.join().ok())
+        .unwrap_or_default();
+    Ok(CommandOutput {
+        status_code: status.code(),
+        stdout: String::from_utf8_lossy(&stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&stderr).into_owned(),
+        timed_out,
+    })
 }
 
 pub fn run_command(program: &str, args: &[String], dry_run: bool) -> io::Result<bool> {
@@ -294,6 +591,11 @@ pub fn run_command(program: &str, args: &[String], dry_run: bool) -> io::Result<
     if dry_run {
         return Ok(true);
     }
+    // Las acciones modificadoras deben conservar stdin/stdout/stderr de la
+    // terminal: los gestores pueden pedir confirmaciones y las elevaciones
+    // necesitan mostrar su prompt. Tampoco se les aplica el timeout de las
+    // consultas de detección; una instalación o reparación legítima puede
+    // tardar más de 30 segundos.
     Ok(Command::new(program).args(args).status()?.success())
 }
 
@@ -323,6 +625,39 @@ pub fn shell_display(value: &str) -> String {
     } else {
         format!("'{}'", value.replace('\'', "'\\''"))
     }
+}
+
+#[cfg(any(windows, test))]
+pub(crate) fn powershell_single_quoted(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+/// Cita un argumento individual para CommandLineToArgvW y las aplicaciones
+/// Windows basadas en el runtime C. Se comparte con las pruebas Linux para
+/// que los límites de argumentos de la elevación UAC sean verificables sin
+/// depender de un diálogo interactivo de Windows.
+#[cfg(any(windows, test))]
+pub(crate) fn windows_command_line_argument(value: &str) -> String {
+    let mut quoted = String::from("\"");
+    let mut backslashes = 0_usize;
+    for character in value.chars() {
+        match character {
+            '\\' => backslashes += 1,
+            '"' => {
+                quoted.extend(std::iter::repeat_n('\\', backslashes * 2 + 1));
+                quoted.push('"');
+                backslashes = 0;
+            }
+            _ => {
+                quoted.extend(std::iter::repeat_n('\\', backslashes));
+                quoted.push(character);
+                backslashes = 0;
+            }
+        }
+    }
+    quoted.extend(std::iter::repeat_n('\\', backslashes * 2));
+    quoted.push('"');
+    quoted
 }
 
 pub fn human_bytes(mut bytes: u64) -> String {
@@ -370,6 +705,17 @@ pub fn same_device(path: &Path, expected: u64) -> bool {
 }
 
 pub fn directory_size(path: &Path, dev: Option<u64>) -> u64 {
+    directory_size_with_cancel(path, dev, None)
+}
+
+pub fn directory_size_with_cancel(
+    path: &Path,
+    dev: Option<u64>,
+    cancelled: Option<&std::sync::atomic::AtomicBool>,
+) -> u64 {
+    if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed)) {
+        return 0;
+    }
     let metadata = match fs::symlink_metadata(path) {
         Ok(m) => m,
         Err(_) => return 0,
@@ -383,14 +729,17 @@ pub fn directory_size(path: &Path, dev: Option<u64>) -> u64 {
     if !metadata.is_dir() {
         return 0;
     }
-    fs::read_dir(path)
-        .map(|entries| {
-            entries
-                .flatten()
-                .map(|e| directory_size(&e.path(), dev))
-                .sum()
-        })
-        .unwrap_or(0)
+    let Ok(entries) = fs::read_dir(path) else {
+        return 0;
+    };
+    let mut total = 0_u64;
+    for entry in entries.flatten() {
+        if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed)) {
+            break;
+        }
+        total = total.saturating_add(directory_size_with_cancel(&entry.path(), dev, cancelled));
+    }
+    total
 }
 
 #[cfg(not(windows))]
@@ -594,6 +943,35 @@ pub fn restore_plan(path: &Path, dry_run: bool) -> io::Result<()> {
                     skipped += 1;
                 }
             }
+            "path-move" if target.exists() && !data1.exists() => {
+                if dry_run {
+                    println!(
+                        "Simulación: devolvería {} a su ubicación original {}.",
+                        target.display(),
+                        data1.display()
+                    );
+                    restored += 1;
+                    continue;
+                }
+                if let Some(parent) = data1.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                match fs::rename(&target, &data1) {
+                    Ok(()) => {
+                        println!("Movimiento restaurado: {}", data1.display());
+                        restored += 1;
+                    }
+                    Err(error) => {
+                        eprintln!(
+                            "No se pudo restaurar el movimiento {} -> {}: {error}",
+                            target.display(),
+                            data1.display()
+                        );
+                        skipped += 1;
+                    }
+                }
+            }
+            "path-move" => skipped += 1,
             "remove-created" if dry_run && target.exists() => {
                 println!(
                     "Simulación: retiraría el destino creado a la papelera: {}",
@@ -617,4 +995,48 @@ pub fn restore_plan(path: &Path, dry_run: bool) -> io::Result<()> {
         println!("Rollback terminado: {restored} restauradas, {skipped} omitidas/no reversibles.");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod process_tests {
+    use super::{command_output_detailed, command_output_detailed_owned, run_command};
+
+    #[cfg(unix)]
+    #[test]
+    fn conserva_stderr_y_codigo_de_salida() {
+        let output = command_output_detailed("sh", &["-c", "printf error >&2; exit 7"]).unwrap();
+        assert_eq!(output.status_code, Some(7));
+        assert!(!output.success());
+        assert_eq!(output.stderr, "error");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn corta_comandos_que_no_terminan() {
+        let output = command_output_detailed_owned("sleep", &["31".into()]).unwrap();
+        assert!(output.timed_out);
+        assert!(!output.success());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn las_acciones_reales_no_heredan_el_timeout_de_las_consultas() {
+        let started = std::time::Instant::now();
+        assert!(run_command("sleep", &["0.4".into()], false).unwrap());
+        assert!(started.elapsed() >= std::time::Duration::from_millis(350));
+    }
+
+    #[test]
+    fn argumentos_uac_conservan_espacios_comillas_y_barras_finales() {
+        assert_eq!(
+            super::windows_command_line_argument(r"C:\Program Files\LTools\ltools.exe"),
+            r#""C:\Program Files\LTools\ltools.exe""#
+        );
+        assert_eq!(super::windows_command_line_argument("a\"b"), r#""a\"b""#);
+        assert_eq!(
+            super::windows_command_line_argument("tail\\"),
+            r#""tail\\""#
+        );
+        assert_eq!(super::powershell_single_quoted("O'Brien"), "'O''Brien'");
+    }
 }

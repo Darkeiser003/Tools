@@ -10,6 +10,8 @@ REQUIRE_WINDOWS=0
 REQUIRE_WINDOWS_EXECUTABLES=0
 REQUIRE_APPIMAGE=1
 REQUIRE_PACKAGE=1
+LINUX_ARCH="$(uname -m)"
+WINDOWS_ARCH=x86_64
 SIGNATURE_PUBLIC_KEY_FILE=""
 SIGNATURE_VERIFIER=""
 
@@ -25,6 +27,8 @@ Uso: $0 [opciones]
   --require-windows   Exige EXE, EXE-CLI y ZIP Windows además de Linux.
   --require-windows-executables
                       Exige los dos EXE Windows; útil para validación GNU/Wine.
+  --linux-arch ARCH    Arquitectura Linux esperada (por defecto: uname -m).
+  --windows-arch ARCH  Arquitectura Windows del paquete esperado (por defecto: x86_64).
   --no-appimage       No exige los dos perfiles AppImage Linux.
   --no-package        No exige el tarball runtime Linux.
   --signature-public-key-file FICHERO
@@ -41,6 +45,8 @@ while (($#)); do
         --version) (($# >= 2)) || die '--version necesita un valor'; VERSION="$2"; shift ;;
         --require-windows) REQUIRE_WINDOWS=1 ;;
         --require-windows-executables) REQUIRE_WINDOWS_EXECUTABLES=1 ;;
+        --linux-arch) (($# >= 2)) || die '--linux-arch necesita una arquitectura'; LINUX_ARCH="$2"; shift ;;
+        --windows-arch) (($# >= 2)) || die '--windows-arch necesita una arquitectura'; WINDOWS_ARCH="$2"; shift ;;
         --no-appimage) REQUIRE_APPIMAGE=0 ;;
         --no-package) REQUIRE_PACKAGE=0 ;;
         --signature-public-key-file) (($# >= 2)) || die '--signature-public-key-file necesita una ruta'; SIGNATURE_PUBLIC_KEY_FILE="$2"; shift ;;
@@ -55,13 +61,15 @@ if [[ -z "$VERSION" ]]; then
     VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/rust/Cargo.toml" | head -n1)"
 fi
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || die "versión inválida: $VERSION"
-[[ -d "$RELEASE_DIR" ]] || die "no existe la carpeta release: $RELEASE_DIR"
+[[ "$LINUX_ARCH" =~ ^[A-Za-z0-9_]+$ ]] || die "arquitectura Linux no válida: $LINUX_ARCH"
+[[ "$WINDOWS_ARCH" =~ ^[A-Za-z0-9_]+$ ]] || die "arquitectura Windows no válida: $WINDOWS_ARCH"
+[[ -d "$RELEASE_DIR" && ! -L "$RELEASE_DIR" ]] || die "no existe o no es una carpeta release normal: $RELEASE_DIR"
 command -v jq >/dev/null 2>&1 || die 'jq es necesario para validar la release'
 command -v sha256sum >/dev/null 2>&1 || die 'sha256sum es necesario para validar la release'
 command -v stat >/dev/null 2>&1 || die 'stat es necesario para validar la release'
 
 manifest="$RELEASE_DIR/ltools-release.json"
-[[ -s "$manifest" ]] || die 'falta ltools-release.json'
+[[ -f "$manifest" && ! -L "$manifest" && -s "$manifest" ]] || die 'falta ltools-release.json regular'
 jq -e --arg version "$VERSION" \
     '.schema == "ltools-release-v1" and (.application == "LTools" or .application == "WinSlim-Tools") and
      .version == $version and .hash_algorithm == "sha256" and
@@ -72,17 +80,18 @@ for json in \
     ltools-capabilities.json \
     ltools-terminal.json \
     ltools-project.json; do
-    [[ -s "$RELEASE_DIR/$json" ]] || die "falta $json"
+    [[ -f "$RELEASE_DIR/$json" && ! -L "$RELEASE_DIR/$json" && -s "$RELEASE_DIR/$json" ]] || die "falta $json regular"
     jq empty "$RELEASE_DIR/$json" >/dev/null || die "$json no es JSON válido"
 done
 for json in ltools-capabilities-windows.json ltools-terminal-windows.json; do
-    if [[ -e "$RELEASE_DIR/$json" ]]; then
+    if [[ -e "$RELEASE_DIR/$json" || -L "$RELEASE_DIR/$json" ]]; then
+        [[ -f "$RELEASE_DIR/$json" && ! -L "$RELEASE_DIR/$json" ]] || die "$json no es un fichero regular"
         jq empty "$RELEASE_DIR/$json" >/dev/null || die "$json no es JSON válido"
     fi
 done
 if (( REQUIRE_WINDOWS_EXECUTABLES )); then
-    [[ -s "$RELEASE_DIR/ltools-capabilities-windows.json" ]] || die 'falta el descriptor de capacidades Windows'
-    [[ -s "$RELEASE_DIR/ltools-terminal-windows.json" ]] || die 'falta el descriptor de terminal Windows'
+    [[ -f "$RELEASE_DIR/ltools-capabilities-windows.json" && ! -L "$RELEASE_DIR/ltools-capabilities-windows.json" && -s "$RELEASE_DIR/ltools-capabilities-windows.json" ]] || die 'falta el descriptor regular de capacidades Windows'
+    [[ -f "$RELEASE_DIR/ltools-terminal-windows.json" && ! -L "$RELEASE_DIR/ltools-terminal-windows.json" && -s "$RELEASE_DIR/ltools-terminal-windows.json" ]] || die 'falta el descriptor regular de terminal Windows'
     jq -e '.platform == "windows" and .application == "WinSlim-Tools"' \
         "$RELEASE_DIR/ltools-capabilities-windows.json" >/dev/null \
         || die 'el descriptor de capacidades Windows no declara la plataforma correcta'
@@ -92,10 +101,11 @@ if (( REQUIRE_WINDOWS_EXECUTABLES )); then
     ok 'descriptores Windows separados presentes y coherentes'
 fi
 for schema in \
+    ltools-capabilities.schema.json \
     ltools-terminal.schema.json \
     ltools-project.schema.json \
     ltools-release.schema.json; do
-    [[ -s "$RELEASE_DIR/$schema" ]] || die "falta $schema"
+    [[ -f "$RELEASE_DIR/$schema" && ! -L "$RELEASE_DIR/$schema" && -s "$RELEASE_DIR/$schema" ]] || die "falta $schema regular"
     jq empty "$RELEASE_DIR/$schema" >/dev/null || die "$schema no es JSON válido"
 done
 ok 'JSON y esquemas publicables válidos'
@@ -103,15 +113,15 @@ ok 'JSON y esquemas publicables válidos'
 required_linux=()
 if (( REQUIRE_APPIMAGE )); then
     required_linux+=(
-        "ltools-$VERSION-linux-x86_64.AppImage"
-        "ltools-$VERSION-linux-x86_64-cli.AppImage"
+        "ltools-$VERSION-linux-$LINUX_ARCH.AppImage"
+        "ltools-$VERSION-linux-$LINUX_ARCH-cli.AppImage"
     )
 fi
 if (( REQUIRE_PACKAGE )); then
-    required_linux+=("ltools-$VERSION-linux-x86_64.tar.gz")
+    required_linux+=("ltools-$VERSION-linux-$LINUX_ARCH.tar.gz")
 fi
 for artifact in "${required_linux[@]}"; do
-    [[ -s "$RELEASE_DIR/$artifact" ]] || die "falta el artefacto Linux $artifact"
+    [[ -f "$RELEASE_DIR/$artifact" && ! -L "$RELEASE_DIR/$artifact" && -s "$RELEASE_DIR/$artifact" ]] || die "falta el artefacto Linux regular $artifact"
 done
 if (( ${#required_linux[@]} )); then
     ok 'artefactos Linux solicitados presentes'
@@ -121,24 +131,45 @@ fi
 
 if (( REQUIRE_WINDOWS )); then
     required_windows=(
-        "ltools-$VERSION-windows-x86_64.exe"
-        "ltools-$VERSION-windows-x86_64-cli.exe"
-        "ltools-$VERSION-windows-x86_64.zip"
+        "ltools-$VERSION-windows-$WINDOWS_ARCH.exe"
+        "ltools-$VERSION-windows-$WINDOWS_ARCH-cli.exe"
+        "ltools-$VERSION-windows-$WINDOWS_ARCH.zip"
     )
     for artifact in "${required_windows[@]}"; do
-        [[ -s "$RELEASE_DIR/$artifact" ]] || die "falta el artefacto Windows $artifact"
+        [[ -f "$RELEASE_DIR/$artifact" && ! -L "$RELEASE_DIR/$artifact" && -s "$RELEASE_DIR/$artifact" ]] || die "falta el artefacto Windows regular $artifact"
     done
     ok 'artefactos Windows principal, CLI y ZIP presentes'
 fi
 
 if (( REQUIRE_WINDOWS_EXECUTABLES )); then
     for artifact in \
-        "ltools-$VERSION-windows-x86_64.exe" \
-        "ltools-$VERSION-windows-x86_64-cli.exe"; do
-        [[ -s "$RELEASE_DIR/$artifact" ]] || die "falta el ejecutable Windows $artifact"
+        "ltools-$VERSION-windows-$WINDOWS_ARCH.exe" \
+        "ltools-$VERSION-windows-$WINDOWS_ARCH-cli.exe"; do
+        [[ -f "$RELEASE_DIR/$artifact" && ! -L "$RELEASE_DIR/$artifact" && -s "$RELEASE_DIR/$artifact" ]] || die "falta el ejecutable Windows regular $artifact"
     done
     ok 'ejecutables Windows principal y CLI presentes'
 fi
+
+required_manifest_artifacts=("${required_linux[@]}")
+if (( REQUIRE_WINDOWS )); then
+    required_manifest_artifacts+=("${required_windows[@]}")
+elif (( REQUIRE_WINDOWS_EXECUTABLES )); then
+    required_manifest_artifacts+=(
+        "ltools-$VERSION-windows-$WINDOWS_ARCH.exe"
+        "ltools-$VERSION-windows-$WINDOWS_ARCH-cli.exe"
+    )
+fi
+for artifact in "${required_manifest_artifacts[@]}"; do
+    jq -e --arg filename "$artifact" 'any(.artifacts[]; .filename == $filename)' "$manifest" >/dev/null \
+        || die "el manifiesto omite el artefacto requerido $artifact"
+done
+
+while IFS= read -r -d '' link; do
+    name="$(basename -- "$link")"
+    case "$name" in
+        "ltools-$VERSION-linux-"*|"ltools-$VERSION-windows-"*) die "un artefacto de release no puede ser enlace simbólico: $name" ;;
+    esac
+done < <(find "$RELEASE_DIR" -maxdepth 1 -type l -print0)
 
 while IFS= read -r -d '' file; do
     name="$(basename -- "$file")"
@@ -157,8 +188,8 @@ ok 'cada artefacto reconocido coincide con tamaño y SHA-256 del manifiesto'
 
 checksums="$RELEASE_DIR/SHA256SUMS.txt"
 signature="$RELEASE_DIR/SHA256SUMS.txt.sig"
-if [[ -e "$checksums" ]]; then
-    [[ -s "$checksums" ]] || die 'SHA256SUMS.txt está vacío'
+if [[ -e "$checksums" || -L "$checksums" ]]; then
+    [[ -f "$checksums" && ! -L "$checksums" && -s "$checksums" ]] || die 'SHA256SUMS.txt falta, está vacío o no es un fichero normal'
     declare -A listed=()
     checksum_count=0
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -166,19 +197,19 @@ if [[ -e "$checksums" ]]; then
             die "línea inválida en SHA256SUMS.txt"
         expected="${line:0:64}"
         name="${line:66}"
-        [[ -n "$name" && "$name" != */* && "$name" != .* && "$name" != *'..'* ]] || die "nombre inseguro en SHA256SUMS.txt: $name"
-        [[ -f "$RELEASE_DIR/$name" ]] || die "SHA256SUMS.txt referencia un fichero inexistente: $name"
+        [[ -n "$name" && "$name" != . && "$name" != .. && "$name" != */* && "$name" != *'\'* ]] || die "nombre inseguro en SHA256SUMS.txt: $name"
+        [[ -f "$RELEASE_DIR/$name" && ! -L "$RELEASE_DIR/$name" ]] || die "SHA256SUMS.txt referencia un fichero ausente o no regular: $name"
         [[ -z "${listed[$name]+yes}" ]] || die "SHA256SUMS.txt contiene el fichero duplicado: $name"
         listed[$name]=1
         actual="$(sha256sum -- "$RELEASE_DIR/$name" | awk '{print $1}')"
         [[ "${actual,,}" == "${expected,,}" ]] || die "SHA256SUMS.txt no coincide para $name"
         checksum_count=$((checksum_count + 1))
     done < "$checksums"
-    expected_count="$(find "$RELEASE_DIR" -maxdepth 1 -type f ! -name 'SHA256SUMS.txt' ! -name 'SHA256SUMS.txt.sig' -printf '%f\n' | wc -l)"
+    expected_count="$(find "$RELEASE_DIR" -maxdepth 1 -type f ! -name 'SHA256SUMS.txt' ! -name 'SHA256SUMS.txt.sig' ! -name '*.tmp' ! -name '*.bak' -printf '%f\n' | wc -l)"
     [[ "$checksum_count" == "$expected_count" ]] || die "SHA256SUMS.txt no cubre todos los ficheros publicables"
     ok 'SHA256SUMS.txt cubre todos los artefactos y sus hashes coinciden'
-    if [[ -e "$signature" ]]; then
-        [[ -s "$signature" ]] || die 'SHA256SUMS.txt.sig está vacío'
+    if [[ -e "$signature" || -L "$signature" ]]; then
+        [[ -f "$signature" && ! -L "$signature" && -s "$signature" ]] || die 'SHA256SUMS.txt.sig está vacío o no es un fichero normal'
         [[ -n "$SIGNATURE_PUBLIC_KEY_FILE" && -s "$SIGNATURE_PUBLIC_KEY_FILE" ]] || die 'hay firma, pero falta --signature-public-key-file para verificarla'
         [[ -x "$SIGNATURE_VERIFIER" ]] || die 'hay firma, pero falta --signature-verifier ejecutable'
         "$SIGNATURE_VERIFIER" release-signature \
