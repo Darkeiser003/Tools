@@ -28,7 +28,8 @@ done
 if (( REQUIRE_GUI )); then
     command -v timeout >/dev/null 2>&1 || die '--require-gui exige timeout'
     command -v xvfb-run >/dev/null 2>&1 || die '--require-gui exige xvfb-run'
-    timeout 10 xvfb-run -a true >/dev/null 2>&1 || die '--require-gui no pudo iniciar un display Xvfb'
+    command -v xdpyinfo >/dev/null 2>&1 || die '--require-gui exige xdpyinfo (x11-utils)'
+    timeout 10 xvfb-run -a xdpyinfo >/dev/null 2>&1 || die '--require-gui no pudo iniciar un display Xvfb'
 fi
 
 [[ -x "$BIN" ]] || die "no existe el binario ejecutable: $BIN"
@@ -100,6 +101,18 @@ run_bash() {
     env HOME="$HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" XDG_DATA_HOME="$XDG_DATA_HOME" \
         XDG_STATE_HOME="$XDG_STATE_HOME" LTOOLS_NO_MOUNTS=1 LTOOLS_NO_AUTO_TERMINAL=1 \
         "$ROOT_DIR/ltools.sh" "$@"
+}
+
+run_rust() {
+    if [[ -n "$APPIMAGE_PATH" ]]; then
+        env APPIMAGE_EXTRACT_AND_RUN=1 HOME="$HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" \
+            XDG_DATA_HOME="$XDG_DATA_HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
+            LTOOLS_NO_MOUNTS=1 LTOOLS_NO_AUTO_TERMINAL=1 "$APPIMAGE_PATH" --rust "$@"
+    else
+        env HOME="$HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" XDG_DATA_HOME="$XDG_DATA_HOME" \
+            XDG_STATE_HOME="$XDG_STATE_HOME" LTOOLS_NO_MOUNTS=1 LTOOLS_NO_AUTO_TERMINAL=1 \
+            "$BIN" "$@"
+    fi
 }
 
 run_menu() {
@@ -223,10 +236,38 @@ if [[ "$guide_status" -ne 0 ]]; then
     sed -n '1,100p' "$ALL_GUIDES_OUTPUT" >&2
     die "el índice de guías GUI terminó con código $guide_status"
 fi
-for index_marker in 'Panel principal:' 'Cada categoría abre un menú propio' 'Las guías contextuales'; do
+for index_marker in 'Panel principal:' 'Cada categoría abre un menú propio' 'Las guías contextuales' \
+    'ÍNDICE DETALLADO DE MENÚS Y SUBMENÚS' 'Vaciar caché DNS' 'Entradas EFI / NVRAM' \
+    'Gestionar servicio' 'Analizadores de código y CI' 'Crear tabla GPT' \
+    'Restaurar cabecera LUKS' 'Aplicar manifiesto'; do
     grep -Fq "$index_marker" "$ALL_GUIDES_OUTPUT" || die "el índice GUI no contiene: $index_marker"
 done
-ok 'todas las guías CLI/GUI tienen índice, opciones y navegación documentada'
+ok 'todas las guías CLI/GUI incluyen índices detallados, opciones y navegación documentada'
+
+CLI_ALL_OUTPUT="$TMP_DIR/guide-cli-all.out"
+if [[ -n "$APPIMAGE_PATH" ]]; then
+    if timeout 60 env APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_PATH" guide cli all >"$CLI_ALL_OUTPUT" 2>&1; then
+        guide_status=0
+    else
+        guide_status=$?
+    fi
+else
+    if timeout 60 "$BIN" guide cli all >"$CLI_ALL_OUTPUT" 2>&1; then
+        guide_status=0
+    else
+        guide_status=$?
+    fi
+fi
+if [[ "$guide_status" -ne 0 ]]; then
+    sed -n '1,100p' "$CLI_ALL_OUTPUT" >&2
+    die "el índice detallado de guías CLI terminó con código $guide_status"
+fi
+for cli_marker in 'ÍNDICE DETALLADO DE FAMILIAS CLI' 'GUÍA CLI: GIT Y GITHUB' \
+    'GUÍA CLI: ALMACENAMIENTO' 'GUÍA CLI: SERVICIOS' '--include-personal' \
+    '--scope system|user|both'; do
+    grep -Fq -- "$cli_marker" "$CLI_ALL_OUTPUT" || die "el índice CLI no contiene: $cli_marker"
+done
+ok 'guide cli all incluye opciones, argumentos y gestión de cada familia'
 
 printf 'E2E: comprobando la fachada, que siempre usa el backend Rust...\n'
 run_menu main-facade-quit $'q\n' 'LTools'
@@ -408,6 +449,38 @@ for settings_guide_label in "${SETTINGS_GUIDE_LABELS[@]}"; do
 done
 ok 'guía de Ajustes coincide con su control de ayuda en los 15 idiomas compatibles'
 
+ELEVATION_SETTINGS=(
+    'es:¿Elevar acciones modificadoras por defecto con sudo/UAC?:desactivada'
+    'en:Elevate modifying actions by default with sudo/UAC?:disabled'
+    'de:Ändernde Aktionen standardmäßig mit sudo/UAC erhöhen?:deaktiviert'
+    'fr:Élever les actions modificatrices par défaut avec sudo/UAC ?:désactivée'
+    'pt:Elevar ações modificadoras por predefinição com sudo/UAC?:desativada'
+    'it:Elevare per impostazione predefinita le azioni modificative con sudo/UAC?:disattivata'
+    'pl:Uruchamiać domyślnie działania modyfikujące z sudo/UAC?:wyłączona'
+    'ar:رفع صلاحيات الإجراءات المعدِّلة افتراضيًا باستخدام sudo/UAC؟:معطّلة'
+    'hi:संशोधन करने वाली कार्रवाइयों को sudo/UAC के साथ डिफ़ॉल्ट रूप से उन्नत करें?:निष्क्रिय'
+    'ja:変更操作を sudo/UAC で既定の昇格実行にしますか？:無効'
+    'ko:수정 작업을 기본적으로 sudo/UAC로 권한 상승하여 실행할까요?:비활성화됨'
+    'ro:Rulezi implicit acțiunile modificatoare cu sudo/UAC?:dezactivată'
+    'ru:Запускать изменяющие действия по умолчанию с sudo/UAC?:отключена'
+    'uk:Типово запускати дії зі зміною системи через sudo/UAC?:вимкнено'
+    'zh:是否默认使用 sudo/UAC 提升修改操作？:已禁用'
+)
+for elevation_setting in "${ELEVATION_SETTINGS[@]}"; do
+    language="${elevation_setting%%:*}"
+    remainder="${elevation_setting#*:}"
+    prompt_marker="${remainder%:*}"
+    disabled_marker="${remainder##*:}"
+    elevation_output="$TMP_DIR/elevation-${language}.out"
+    printf '7\n4\nn\n' | env LTOOLS_LANG="$language" HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
+        LTOOLS_NO_MOUNTS=1 "$BIN" menu >"$elevation_output" 2>&1
+    grep -Fq -- "$prompt_marker" "$elevation_output" ||
+        die "el prompt de elevación no se tradujo a $language"
+    grep -Fq -- "$disabled_marker" "$elevation_output" ||
+        die "el estado de elevación no se tradujo a $language"
+done
+ok 'menú CLI de elevación y estado guardado traducidos en los 15 idiomas compatibles'
+
 CLEAN_PATH="$HOME/cache-candidate"
 mkdir -p "$CLEAN_PATH"
 printf 'keep-me\n' > "$CLEAN_PATH/file.txt"
@@ -416,6 +489,24 @@ printf 'y\n' | run_bash clean --dry-run --path "$CLEAN_PATH" --plan "$CLEAN_PLAN
 [[ -d "$CLEAN_PATH" ]] || die 'clean --dry-run modificó una ruta'
 grep -Fq $'trash-move\t' "$CLEAN_PLAN" || die 'clean --dry-run no registró el plan'
 ok 'limpieza protegida en dry-run sin mutar datos'
+CLEAN_FAKE_RG="$TMP_DIR/clean-fake-rg"
+mkdir -p "$CLEAN_FAKE_RG"
+cat >"$CLEAN_FAKE_RG/rg" <<'EOF'
+#!/bin/sh
+printf 'synthetic unreadable configuration tree\n' >&2
+exit 2
+EOF
+chmod +x "$CLEAN_FAKE_RG/rg"
+CLEAN_UNVERIFIED_PATH="$TMP_DIR/clean-reference-scan-failure"
+printf 'must remain untouched\n' >"$CLEAN_UNVERIFIED_PATH"
+if output="$(PATH="$CLEAN_FAKE_RG:$PATH" run_bash clean --dry-run \
+    --path "$CLEAN_UNVERIFIED_PATH" --plan "$TMP_DIR/clean-failed-scan-plan.tsv" <<<y 2>&1)"; then
+    die 'clean trató una búsqueda rg fallida como ausencia de referencias'
+fi
+grep -Fq 'no se pudo completar la comprobación de referencias' <<<"$output" ||
+    die 'clean no explicó por qué bloqueó una búsqueda de referencias fallida'
+[[ -f "$CLEAN_UNVERIFIED_PATH" ]] || die 'la ruta no verificada dejó de existir'
+ok 'limpieza de rutas falla de forma segura si rg no puede completar la búsqueda'
 
 MAP_COPY_DEST="$TMP_DIR/map-copy.bin"
 MAP_MOVE_DEST="$TMP_DIR/map-move.bin"
@@ -454,8 +545,64 @@ MAP_DELETE_REAL="$TMP_DIR/map-delete-real.txt"
 printf 'copy fixture\n' >"$MAP_COPY_SOURCE"
 printf 'move fixture\n' >"$MAP_MOVE_SOURCE"
 printf 'trash fixture\n' >"$MAP_DELETE_REAL"
+MAP_FAKE_BIN="$TMP_DIR/fake-bin"
+MAP_TRASH_DIR="$TMP_DIR/fake-trash"
+mkdir -p "$MAP_FAKE_BIN" "$MAP_TRASH_DIR"
+cat >"$MAP_FAKE_BIN/gio" <<'EOF'
+#!/usr/bin/env bash
+set -eu
+[[ "$#" -eq 3 && "$1" == trash && "$2" == -- && -n "${LTOOLS_TEST_TRASH_DIR:-}" ]]
+mv -- "$3" "$LTOOLS_TEST_TRASH_DIR/"
+EOF
+chmod +x "$MAP_FAKE_BIN/gio"
+MAP_FAKE_PACKAGE_BIN="$TMP_DIR/fake-package-bin"
+mkdir -p "$MAP_FAKE_PACKAGE_BIN"
+cat >"$MAP_FAKE_PACKAGE_BIN/pacman" <<'EOF'
+#!/usr/bin/env bash
+set -eu
+printf '%s\n' "$*" >>"$LTOOLS_TEST_PACMAN_LOG"
+if [[ "$*" == '-Qdtq' ]]; then
+    exit 1
+fi
+printf 'synthetic package database failure\n' >&2
+exit 23
+EOF
+chmod +x "$MAP_FAKE_PACKAGE_BIN/pacman"
+MAP_PACKAGE_REPORT="$TMP_DIR/package-query-report"
+MAP_PACMAN_LOG="$TMP_DIR/pacman-queries.log"
+if PATH="$MAP_FAKE_PACKAGE_BIN:$PATH" LTOOLS_TEST_PACMAN_LOG="$MAP_PACMAN_LOG" \
+    run_rust packages --packages-only --full --out "$MAP_PACKAGE_REPORT" \
+    >"$TMP_DIR/package-query.out" 2>&1; then
+        die 'el inventario informó éxito pese a tener consultas de gestor fallidas'
+    fi
+[[ -s "$MAP_PACKAGE_REPORT/manager-errors.tsv" ]] ||
+    die 'el inventario de paquetes no conservó errores de consulta'
+grep -Fq 'synthetic package database failure' "$MAP_PACKAGE_REPORT/manager-errors.tsv" ||
+    die 'el informe de paquetes no incluyó stderr del gestor'
+if grep -Fq $'pacman\t-Qdtq\t' "$MAP_PACKAGE_REPORT/manager-errors.tsv"; then
+    die 'el informe trató la ausencia normal de paquetes huérfanos como error'
+fi
+for query_args in '-Q' '-Qm' '-Qdtq' '-Qqe'; do
+    [[ "$(grep -Fxc -- "$query_args" "$MAP_PACMAN_LOG")" -eq 1 ]] ||
+        die "la consulta pacman '$query_args' no se ejecutó exactamente una vez"
+done
+[[ -s "$MAP_PACKAGE_REPORT/packages-pacman.tsv" ]] ||
+    die 'el modo --full no conservó el TSV detallado de pacman'
+[[ "$(awk -F '\t' '$1 == "pacman" { count++ } END { print count+0 }' \
+    "$MAP_PACKAGE_REPORT/manager-errors.tsv")" -eq 3 ]] ||
+    die 'el informe no registró exactamente las tres consultas pacman fallidas'
+ok 'inventario Rust conserva stderr/código de error y reconoce pacman sin huérfanos'
 run_bash storage manage copy --source "$MAP_COPY_SOURCE" --destination "$MAP_COPY_REAL" --yes >/dev/null
 cmp -s "$MAP_COPY_SOURCE" "$MAP_COPY_REAL" || die 'storage manage copy no conservó el contenido'
+MAP_SPECIAL_MODE_SOURCE="$TMP_DIR/map-copy-special-mode-source"
+MAP_SPECIAL_MODE_COPY="$TMP_DIR/map-copy-special-mode-copy"
+printf 'unprivileged executable fixture\n' >"$MAP_SPECIAL_MODE_SOURCE"
+chmod 4755 "$MAP_SPECIAL_MODE_SOURCE"
+run_rust storage manage copy --source "$MAP_SPECIAL_MODE_SOURCE" \
+    --destination "$MAP_SPECIAL_MODE_COPY" --yes >/dev/null
+[[ "$(stat -c '%a' "$MAP_SPECIAL_MODE_COPY")" == 755 ]] ||
+    die 'storage manage copy propagó el bit SUID a un destino potencialmente propiedad de root'
+ok 'copias Rust conservan rwx y eliminan bits especiales SUID/SGID/sticky'
 MAP_EXISTING_DEST="$TMP_DIR/map-existing-destination.txt"
 printf 'must stay unchanged\n' >"$MAP_EXISTING_DEST"
 if run_bash storage manage copy --source "$MAP_COPY_SOURCE" --destination "$MAP_EXISTING_DEST" --yes >"$TMP_DIR/map-copy-collision.out" 2>&1; then
@@ -471,8 +618,62 @@ if run_bash storage manage copy --source "$MAP_SOURCE_DIR" --destination "$MAP_S
     die 'storage manage copy permitió crear el destino dentro de la fuente a través de un enlace'
 fi
 [[ ! -e "$MAP_SOURCE_DIR/nested-copy" ]] || die 'la copia mediante enlace comenzó a mutar la fuente'
+if run_rust storage manage copy --source "$MAP_SOURCE_ALIAS" --destination "$TMP_DIR/map-copy-link-target" --yes >"$TMP_DIR/map-copy-link.out" 2>&1; then
+    die 'storage manage copy siguió un enlace simbólico de origen'
+fi
+[[ ! -e "$TMP_DIR/map-copy-link-target" ]] || die 'copiar un enlace creó inesperadamente una copia de su destino'
 run_bash storage manage move --source "$MAP_MOVE_SOURCE" --destination "$MAP_MOVE_REAL" --yes >/dev/null
 [[ ! -e "$MAP_MOVE_SOURCE" && -f "$MAP_MOVE_REAL" ]] || die 'storage manage move no trasladó el fixture'
+MAP_MOVE_LINK="$TMP_DIR/map-move-link"
+MAP_MOVED_LINK="$TMP_DIR/map-moved-link"
+ln -s "$MAP_COPY_SOURCE" "$MAP_MOVE_LINK"
+run_rust storage manage move --source "$MAP_MOVE_LINK" --destination "$MAP_MOVED_LINK" --yes >/dev/null
+[[ ! -L "$MAP_MOVE_LINK" && -L "$MAP_MOVED_LINK" ]] || die 'mover en el mismo volumen no conservó el enlace simbólico'
+cmp -s "$MAP_COPY_SOURCE" "$MAP_COPY_REAL" || die 'mover un enlace alteró su destino'
+MAP_ARCHIVE_LINK="$TMP_DIR/map-archive-link"
+ln -s "$MAP_SOURCE_DIR" "$MAP_ARCHIVE_LINK"
+if run_rust storage manage tar --source "$MAP_ARCHIVE_LINK" --destination "$TMP_DIR/map-link.tar" --yes >"$TMP_DIR/map-archive-link.out" 2>&1; then
+    die 'storage manage tar siguió un enlace simbólico de origen'
+fi
+[[ ! -e "$TMP_DIR/map-link.tar" ]] || die 'archivar un enlace creó un archivo inesperadamente'
+MAP_ARCHIVE_TREE="$TMP_DIR/map-archive-tree"
+MAP_ARCHIVE_TARGET="$TMP_DIR/map-archive-outside"
+mkdir -p "$MAP_ARCHIVE_TREE" "$MAP_ARCHIVE_TARGET"
+printf 'must not enter archive\n' >"$MAP_ARCHIVE_TARGET/secret.txt"
+ln -s "$MAP_ARCHIVE_TARGET" "$MAP_ARCHIVE_TREE/redirect"
+if run_rust storage manage zip --source "$MAP_ARCHIVE_TREE" \
+    --destination "$TMP_DIR/map-nested-link.zip" --yes >"$TMP_DIR/map-archive-nested.out" 2>&1; then
+    die 'storage manage zip atravesó un enlace simbólico anidado'
+fi
+[[ ! -e "$TMP_DIR/map-nested-link.zip" && -f "$MAP_ARCHIVE_TARGET/secret.txt" ]] ||
+    die 'el archivo atravesó un enlace simbólico anidado o alteró su destino'
+MAP_ARCHIVE_SAFE_SOURCE="$TMP_DIR/map-archive-safe-source"
+mkdir -p "$MAP_ARCHIVE_SAFE_SOURCE"
+printf 'archive fixture\n' >"$MAP_ARCHIVE_SAFE_SOURCE/inside.txt"
+MAP_ARCHIVE_SAFE_TAR="$TMP_DIR/map-safe.tar"
+run_rust storage manage tar --source "$MAP_ARCHIVE_SAFE_SOURCE" \
+    --destination "$MAP_ARCHIVE_SAFE_TAR" --yes >"$TMP_DIR/map-archive-tar.out" 2>&1
+tar -tf "$MAP_ARCHIVE_SAFE_TAR" | grep -Fq 'inside.txt' || die 'el TAR seguro no incluye el contenido esperado'
+[[ -f "$MAP_ARCHIVE_SAFE_SOURCE/inside.txt" ]] || die 'crear un TAR modificó la fuente'
+MAP_ARCHIVE_EXISTING="$TMP_DIR/map-existing.tar"
+printf 'preserve existing archive\n' >"$MAP_ARCHIVE_EXISTING"
+if run_rust storage manage tar --source "$MAP_ARCHIVE_SAFE_SOURCE" \
+    --destination "$MAP_ARCHIVE_EXISTING" --yes >"$TMP_DIR/map-archive-existing.out" 2>&1; then
+    die 'el archivador aceptó un destino preexistente'
+fi
+grep -Fxq 'preserve existing archive' "$MAP_ARCHIVE_EXISTING" || die 'el archivador sobrescribió un destino preexistente'
+if command -v zip >/dev/null 2>&1; then
+    MAP_ARCHIVE_SAFE_ZIP="$TMP_DIR/map-safe.zip"
+    run_rust storage manage zip --source "$MAP_ARCHIVE_SAFE_SOURCE" \
+        --destination "$MAP_ARCHIVE_SAFE_ZIP" --yes >"$TMP_DIR/map-archive-zip.out" 2>&1
+    zip -T "$MAP_ARCHIVE_SAFE_ZIP" >/dev/null || die 'el ZIP seguro no es un archivo válido'
+    ok 'TAR/ZIP se publican completos, conservan la fuente y no sustituyen destinos existentes'
+else
+    ok 'TAR validado; ZIP omitido porque no está instalado'
+fi
+if find "$TMP_DIR" -mindepth 1 -maxdepth 1 -type d -name '.ltools-stage-*' -print -quit | grep -q .; then
+    die 'el gestor de archivos dejó directorios de staging tras completar las operaciones'
+fi
 MAP_ROLLBACK_SOURCE="$TMP_DIR/map-rollback-source.txt"
 MAP_ROLLBACK_DEST="$TMP_DIR/map-rollback-destination.txt"
 MAP_ROLLBACK_PLAN="$TMP_DIR/map-rollback-plan.tsv"
@@ -481,13 +682,39 @@ run_bash storage manage move --source "$MAP_ROLLBACK_SOURCE" --destination "$MAP
 grep -Fq $'path-move\t' "$MAP_ROLLBACK_PLAN" || die 'storage manage move no registró el origen para rollback'
 printf 'y\n' | run_bash rollback --plan "$MAP_ROLLBACK_PLAN" >"$TMP_DIR/map-rollback.out"
 [[ -f "$MAP_ROLLBACK_SOURCE" && ! -e "$MAP_ROLLBACK_DEST" ]] || die 'el rollback no restauró un movimiento del mapa'
-if command -v gio >/dev/null 2>&1 || command -v trash-put >/dev/null 2>&1; then
-    run_bash storage manage delete --path "$MAP_DELETE_REAL" --yes >/dev/null
-    [[ ! -e "$MAP_DELETE_REAL" ]] || die 'storage manage delete no retiró el fixture a la papelera'
-    ok 'acciones reales del mapa no sobrescriben archivos, revierten movimientos y usan la papelera nativa'
-else
-    ok 'copiar, mover y rollback del mapa verificados; se omite solo la papelera real (sin gio ni trash-put)'
-fi
+MAP_ROLLBACK_DANGLING_SOURCE="$TMP_DIR/map-rollback-dangling-source"
+MAP_ROLLBACK_DANGLING_DEST="$TMP_DIR/map-rollback-dangling-destination"
+MAP_ROLLBACK_DANGLING_PLAN="$TMP_DIR/map-rollback-dangling-plan.tsv"
+ln -s "$TMP_DIR/missing-rollback-target" "$MAP_ROLLBACK_DANGLING_SOURCE"
+run_rust storage manage move --source "$MAP_ROLLBACK_DANGLING_SOURCE" \
+    --destination "$MAP_ROLLBACK_DANGLING_DEST" --yes --plan "$MAP_ROLLBACK_DANGLING_PLAN" >/dev/null
+[[ ! -L "$MAP_ROLLBACK_DANGLING_SOURCE" && -L "$MAP_ROLLBACK_DANGLING_DEST" ]] ||
+    die 'mover un enlace colgante no trasladó el enlace'
+printf 'y\n' | run_rust rollback --plan "$MAP_ROLLBACK_DANGLING_PLAN" \
+    >"$TMP_DIR/map-rollback-dangling.out"
+[[ -L "$MAP_ROLLBACK_DANGLING_SOURCE" && ! -L "$MAP_ROLLBACK_DANGLING_DEST" ]] ||
+    die 'el rollback no restauró el movimiento del enlace colgante'
+MAP_SYMLINK_TARGET="$TMP_DIR/map-trash-target.txt"
+MAP_SYMLINK="$TMP_DIR/map-trash-link"
+MAP_DANGLING="$TMP_DIR/map-trash-dangling-link"
+printf 'preserve target\n' >"$MAP_SYMLINK_TARGET"
+ln -s "$MAP_SYMLINK_TARGET" "$MAP_SYMLINK"
+ln -s "$TMP_DIR/missing-target" "$MAP_DANGLING"
+PATH="$MAP_FAKE_BIN:$PATH" LTOOLS_TEST_TRASH_DIR="$MAP_TRASH_DIR" \
+    run_rust storage manage delete --path "$MAP_DELETE_REAL" --yes >/dev/null
+[[ ! -e "$MAP_DELETE_REAL" && -f "$MAP_TRASH_DIR/map-delete-real.txt" ]] ||
+    die 'storage manage delete no retiró el fixture a la papelera'
+PATH="$MAP_FAKE_BIN:$PATH" LTOOLS_TEST_TRASH_DIR="$MAP_TRASH_DIR" \
+    run_rust storage manage delete --path "$MAP_SYMLINK" --yes >/dev/null
+[[ ! -L "$MAP_SYMLINK" && -L "$MAP_TRASH_DIR/map-trash-link" ]] ||
+    die 'borrar a papelera siguió el destino de un enlace simbólico'
+[[ "$(<"$MAP_SYMLINK_TARGET")" == 'preserve target' ]] ||
+    die 'borrar a papelera alteró el destino del enlace'
+PATH="$MAP_FAKE_BIN:$PATH" LTOOLS_TEST_TRASH_DIR="$MAP_TRASH_DIR" \
+    run_rust storage manage delete --path "$MAP_DANGLING" --yes >/dev/null
+[[ ! -L "$MAP_DANGLING" && -L "$MAP_TRASH_DIR/map-trash-dangling-link" ]] ||
+    die 'borrar a papelera no gestionó un enlace simbólico colgante'
+ok 'mapa: copia, movimiento, archivado, papelera y rollback respetan enlaces simbólicos'
 
 SYSTEM_PLAN="$TMP_DIR/system-plan.tsv"
 run_bash system --dry-run --plan "$SYSTEM_PLAN" status >/dev/null
@@ -606,8 +833,8 @@ timeout 30 env HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
 grep -Fq 'Comandos:' "$RUST_NOARGS_OUTPUT" || die 'el perfil CLI Rust no mostró la ayuda sin argumentos'
 ok 'perfil CLI Rust muestra ayuda sin argumentos'
 
-if command -v xvfb-run >/dev/null 2>&1; then
-    if timeout 10 xvfb-run -a true >/dev/null 2>&1; then
+if command -v xvfb-run >/dev/null 2>&1 && command -v xdpyinfo >/dev/null 2>&1; then
+    if timeout 10 xvfb-run -a xdpyinfo >/dev/null 2>&1; then
         timeout 30 xvfb-run -a env GDK_BACKEND=x11 HOME="$HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
             LTOOLS_NO_MOUNTS=1 LTOOLS_GUI_SMOKE=1 LTOOLS_GUI_REQUIRED=1 "$BIN" \
             >"$TMP_DIR/rust-gui-noargs.out" 2>&1 \
@@ -618,8 +845,8 @@ if command -v xvfb-run >/dev/null 2>&1; then
         printf '  SKIP  GUI Rust sin argumentos: Xvfb no puede crear un display aislado\n'
     fi
 else
-    (( REQUIRE_GUI == 0 )) || die '--require-gui exige xvfb-run para el arranque GUI'
-    printf '  SKIP  GUI Rust sin argumentos: xvfb-run no está disponible\n'
+    (( REQUIRE_GUI == 0 )) || die '--require-gui exige xvfb-run y xdpyinfo para el arranque GUI'
+    printf '  SKIP  GUI Rust sin argumentos: xvfb-run o xdpyinfo no está disponible\n'
 fi
 
 RUST_DEFAULTS_OUTPUT="$TMP_DIR/rust-defaults-menu.out"

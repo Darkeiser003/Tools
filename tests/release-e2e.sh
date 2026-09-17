@@ -98,6 +98,14 @@ for json in \
     [[ -f "$RELEASE_DIR/$json" && ! -L "$RELEASE_DIR/$json" && -s "$RELEASE_DIR/$json" ]] || die "falta $json regular"
     jq empty "$RELEASE_DIR/$json" >/dev/null || die "$json no es JSON válido"
 done
+project_json="$RELEASE_DIR/ltools-project.json"
+if (( REQUIRE_APPIMAGE || REQUIRE_PACKAGE )); then
+    jq -e '.platforms.linux.runtime.appimage_requires_fuse == true and
+            .platforms.linux.runtime.appimage_extract_override == "APPIMAGE_EXTRACT_AND_RUN=1" and
+            (.platforms.windows.runtime // null) == null' "$project_json" >/dev/null \
+        || die 'ltools-project.json no declara correctamente el requisito Linux de FUSE y su ausencia en Windows'
+    ok 'metadatos de runtime AppImage/FUSE coherentes por plataforma'
+fi
 for json in ltools-capabilities-windows.json ltools-terminal-windows.json; do
     if [[ -e "$RELEASE_DIR/$json" || -L "$RELEASE_DIR/$json" ]]; then
         [[ -f "$RELEASE_DIR/$json" && ! -L "$RELEASE_DIR/$json" ]] || die "$json no es un fichero regular"

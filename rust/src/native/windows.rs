@@ -6,7 +6,7 @@ use std::process::Command;
 pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
     let area = first(args).unwrap_or("menu");
     match area {
-        "network" | "net" => network(ctx, sub(args, area)),
+        "network" | "net" => network_with_args(ctx, sub(args, area), args),
         "hardware" | "hw" => hardware(ctx, sub(args, area)),
         "power" | "energy" => power(ctx, sub(args, area)),
         "security" | "firewall" => security(ctx, sub(args, area)),
@@ -39,13 +39,65 @@ fn sub<'a>(args: &'a [String], area: &str) -> &'a str {
         .unwrap_or("status")
 }
 fn network(ctx: &Context, action: &str) -> Result<(), String> {
+    network_with_args(ctx, action, &[])
+}
+
+fn network_with_args(ctx: &Context, action: &str, _args: &[String]) -> Result<(), String> {
     match action {
         "status" | "overview" => {
-            if !offer(ctx, "Get-NetIPConfiguration") {
-                return Err("no se pudo preparar la consulta de red".into());
+            if !powershell_commands_available(&[
+                "Get-NetIPConfiguration",
+                "Get-NetRoute",
+                "Get-DnsClientServerAddress",
+                "Get-NetTCPConnection",
+            ]) {
+                // Las ediciones reducidas de Windows y Wine pueden no tener
+                // los cmdlets NetTCPIP. Los binarios clásicos siguen siendo
+                // parte del sistema y permiten conservar la consulta sin
+                // mezclar comandos Linux ni depender de PowerShell.
+                let mut available = false;
+                for fallback in ["interfaces", "routes", "dns", "listening", "connections"] {
+                    if windows_network_fallback(ctx, fallback).is_ok() {
+                        available = true;
+                    }
+                }
+                return available
+                    .then_some(())
+                    .ok_or_else(|| "no se pudo preparar ninguna consulta nativa de red".into());
             }
             powershell("Get-NetIPConfiguration; Get-NetRoute -AddressFamily IPv4 | Format-Table -AutoSize; Get-DnsClientServerAddress | Format-Table -AutoSize; Get-NetTCPConnection -State Listen | Sort-Object LocalPort | Format-Table -AutoSize")
         }
+        "interfaces" | "ifaces" => {
+            if powershell_command_available("Get-NetAdapter")
+                && powershell_command_available("Get-NetIPConfiguration")
+            {
+                powershell("Get-NetAdapter | Select-Object Name,Status,MacAddress,LinkSpeed,InterfaceDescription | Format-Table -AutoSize; Get-NetIPConfiguration | Format-Table -AutoSize")
+            } else {
+                windows_network_fallback(ctx, "interfaces")
+            }
+        }
+        "routes" | "route" => {
+            if powershell_command_available("Get-NetRoute") {
+                powershell("Get-NetRoute -AddressFamily IPv4 | Sort-Object DestinationPrefix,RouteMetric | Format-Table -AutoSize")
+            } else {
+                windows_network_fallback(ctx, "routes")
+            }
+        }
+        "dns" => {
+            if powershell_command_available("Get-DnsClientServerAddress") {
+                powershell("Get-DnsClientServerAddress | Format-Table -AutoSize")
+            } else {
+                windows_network_fallback(ctx, "dns")
+            }
+        }
+        "listening" | "ports" | "listeners" => {
+            if powershell_command_available("Get-NetTCPConnection") {
+                powershell("Get-NetTCPConnection -State Listen | Sort-Object LocalPort | Format-Table -AutoSize")
+            } else {
+                windows_network_fallback(ctx, "listening")
+            }
+        }
+        "connections" => windows_network_fallback(ctx, "connections"),
         "flush-dns" | "dns-flush" => {
             if !offer(ctx, "ipconfig") {
                 return Err("ipconfig no está disponible".into());
@@ -85,17 +137,62 @@ fn network(ctx: &Context, action: &str) -> Result<(), String> {
                 Err("ipconfig /flushdns devolvió un error".into())
             }
         }
-        _ => Err("network admite status u flush-dns".into()),
+        _ => Err(
+            "network admite status, interfaces, routes, dns, listening, connections o flush-dns"
+                .into(),
+        ),
     }
 }
-fn hardware(ctx: &Context, action: &str) -> Result<(), String> {
+
+fn windows_network_fallback(ctx: &Context, action: &str) -> Result<(), String> {
+    let (program, arguments, title) = windows_network_fallback_command(action)?;
+    if !offer(ctx, program) {
+        return Err(format!("{program} no está disponible"));
+    }
+    println!("=== {title} (herramienta integrada) ===");
+    native(program, arguments)
+}
+
+fn windows_network_fallback_command(
+    action: &str,
+) -> Result<(&'static str, &'static [&'static str], &'static str), String> {
+    Ok(match action {
+        "interfaces" => ("ipconfig", &["/all"], "Interfaces y direcciones Windows"),
+        "routes" => ("route", &["print"], "Tabla de rutas Windows"),
+        "dns" => ("ipconfig", &["/displaydns"], "Caché DNS Windows"),
+        "listening" => ("netstat", &["-ano", "-p", "tcp"], "Conexiones TCP Windows"),
+        "connections" => (
+            "netsh.exe",
+            &["interface", "show", "interface"],
+            "Interfaces conectadas Windows",
+        ),
+        _ => return Err(format!("consulta de red Windows no válida: {action}")),
+    })
+}
+fn hardware(_ctx: &Context, action: &str) -> Result<(), String> {
     if action != "status" && action != "overview" {
         return Err("hardware admite status".into());
     }
-    if !offer(ctx, "Get-CimInstance") {
-        return Err("PowerShell/CIM no está disponible".into());
+    if powershell_command_available("Get-CimInstance") {
+        return powershell("Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version,OSArchitecture,LastBootUpTime | Format-List; Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors | Format-Table -AutoSize; Get-CimInstance Win32_ComputerSystem | Select-Object TotalPhysicalMemory | Format-List; Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM,DriverVersion | Format-Table -AutoSize");
     }
-    powershell("Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version,OSArchitecture,LastBootUpTime | Format-List; Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors | Format-Table -AutoSize; Get-CimInstance Win32_ComputerSystem | Select-Object TotalPhysicalMemory | Format-List; Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM,DriverVersion | Format-Table -AutoSize")
+    if command_exists("systeminfo") {
+        println!("=== Hardware Windows (systeminfo integrado) ===");
+        return native("systeminfo", &[]);
+    }
+    if command_exists("wmic") {
+        println!("=== Hardware Windows (WMIC integrado) ===");
+        return native(
+            "wmic",
+            &[
+                "computersystem",
+                "get",
+                "Manufacturer,Model,TotalPhysicalMemory",
+            ],
+        );
+    }
+    println!("=== Hardware Windows (información mínima del sistema) ===");
+    native("cmd.exe", &["/c", "ver"])
 }
 fn power(ctx: &Context, action: &str) -> Result<(), String> {
     if action != "status" && action != "overview" && action != "plans" {
@@ -113,14 +210,28 @@ fn power(ctx: &Context, action: &str) -> Result<(), String> {
         },
     )
 }
-fn security(ctx: &Context, action: &str) -> Result<(), String> {
+fn security(_ctx: &Context, action: &str) -> Result<(), String> {
+    if action == "scanners" || action == "code-scanners" {
+        crate::native::security_scanner_inventory();
+        return Ok(());
+    }
     if action != "status" && action != "overview" {
-        return Err("security admite status".into());
+        return Err("security admite status o scanners".into());
     }
-    if !offer(ctx, "Get-NetFirewallProfile") {
-        return Err("Get-NetFirewallProfile no está disponible".into());
+    if powershell_command_available("Get-NetFirewallProfile") {
+        let mut script = "Get-NetFirewallProfile | Select-Object Name,Enabled,DefaultInboundAction,DefaultOutboundAction | Format-Table -AutoSize".to_owned();
+        if powershell_command_available("Get-MpComputerStatus") {
+            script.push_str("; Get-MpComputerStatus | Select-Object AMServiceEnabled,AntivirusEnabled,RealTimeProtectionEnabled | Format-List");
+        } else {
+            script.push_str("; Write-Output 'Defender: cmdlet Get-MpComputerStatus no disponible en esta edición.'");
+        }
+        return powershell(&script);
     }
-    powershell("Get-NetFirewallProfile | Select-Object Name,Enabled,DefaultInboundAction,DefaultOutboundAction | Format-Table -AutoSize; Get-MpComputerStatus | Select-Object AMServiceEnabled,AntivirusEnabled,RealTimeProtectionEnabled | Format-List")
+    if command_exists("netsh.exe") {
+        println!("=== Firewall Windows (netsh integrado) ===");
+        return native("netsh.exe", &["advfirewall", "show", "allprofiles"]);
+    }
+    Err("no está disponible PowerShell/Firewall ni netsh.exe para consultar la seguridad".into())
 }
 
 fn tools(ctx: &Context, action: &str, args: &[String]) -> Result<(), String> {
@@ -1969,15 +2080,42 @@ fn record_native(
 }
 
 fn powershell(script: &str) -> Result<(), String> {
-    let shell = if command_exists("powershell") {
-        "powershell"
-    } else {
-        "pwsh"
-    };
+    let shell = powershell_executable().ok_or("PowerShell no está disponible")?;
     native(
         shell,
         &["-NoProfile", "-NonInteractive", "-Command", script],
     )
+}
+
+fn powershell_executable() -> Option<&'static str> {
+    if command_exists("powershell") {
+        Some("powershell")
+    } else if command_exists("pwsh") {
+        Some("pwsh")
+    } else {
+        None
+    }
+}
+
+fn powershell_command_available(command: &str) -> bool {
+    let Some(shell) = powershell_executable() else {
+        return false;
+    };
+    // Los nombres consultados son constantes internas. Aun así, escapar la
+    // comilla mantiene la función segura si se reutiliza con un catálogo
+    // ampliado en el futuro.
+    let escaped = command.replace('\'', "''");
+    let query = format!("Get-Command -Name '{escaped}' -ErrorAction Stop | Out-Null");
+    Command::new(shell)
+        .args(["-NoProfile", "-NonInteractive", "-Command", &query])
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
+fn powershell_commands_available(commands: &[&str]) -> bool {
+    commands
+        .iter()
+        .all(|command| powershell_command_available(command))
 }
 fn native(program: &str, args: &[&str]) -> Result<(), String> {
     let output = Command::new(program)
@@ -2030,7 +2168,7 @@ fn menu(ctx: &Context) -> Result<(), String> {
     loop {
         crate::clear_screen();
         println!("=== Red, hardware, energía y seguridad Windows ===");
-        println!("  1) Estado de red, rutas, DNS y puertos\n  2) Vaciar caché DNS\n  3) Hardware\n  4) Planes de energía\n  5) Firewall y Defender\n  q) Volver");
+        println!("  1) Estado de red, rutas, DNS y puertos\n  2) Vaciar caché DNS\n  3) Hardware\n  4) Planes de energía\n  5) Firewall y Defender\n  6) Analizadores de código y CI\n  q) Volver");
         print!("Elige una opción (Enter para volver): ");
         let _ = io::stdout().flush();
         let mut input = String::new();
@@ -2043,6 +2181,7 @@ fn menu(ctx: &Context) -> Result<(), String> {
             "3" => hardware(ctx, "status"),
             "4" => power(ctx, "plans"),
             "5" => security(ctx, "status"),
+            "6" => security(ctx, "scanners"),
             "" | "q" | "Q" => return Ok(()),
             _ => {
                 println!("Opción no válida.");
@@ -2054,6 +2193,33 @@ fn menu(ctx: &Context) -> Result<(), String> {
         }
         if !input.trim().is_empty() {
             let _ = crate::menu_input("Pulsa Enter para continuar...");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::windows_network_fallback_command;
+
+    #[test]
+    fn windows_network_fallback_covers_every_read_only_query() {
+        for (action, expected_program) in [
+            ("interfaces", "ipconfig"),
+            ("routes", "route"),
+            ("dns", "ipconfig"),
+            ("listening", "netstat"),
+            ("connections", "netsh.exe"),
+        ] {
+            let (program, arguments, title) = windows_network_fallback_command(action).unwrap();
+            assert_eq!(
+                program, expected_program,
+                "fallback incompleto para {action}"
+            );
+            assert!(
+                !arguments.is_empty(),
+                "fallback sin argumentos para {action}"
+            );
+            assert!(!title.is_empty(), "fallback sin título para {action}");
         }
     }
 }

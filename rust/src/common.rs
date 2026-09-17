@@ -213,7 +213,7 @@ fn ensure_private_plan_directory(path: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 mod plan_tests {
-    use super::{stable_plan_name, Plan};
+    use super::{copy_file_without_replace, stable_plan_name, Plan};
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -355,6 +355,21 @@ mod plan_tests {
 
         assert!(Plan::create(Some(link), "test").is_err());
         assert_eq!(fs::read_to_string(&target).unwrap(), "keep this file\n");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn restoring_a_file_never_overwrites_a_destination_that_appears() {
+        let directory = temporary_directory("restore-no-replace");
+        let backup = directory.join("backup.txt");
+        let destination = directory.join("destination.txt");
+        fs::write(&backup, "backup data").unwrap();
+        fs::write(&destination, "new user data").unwrap();
+
+        assert!(copy_file_without_replace(&backup, &destination).is_err());
+        assert_eq!(fs::read_to_string(&backup).unwrap(), "backup data");
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "new user data");
+
         fs::remove_dir_all(directory).unwrap();
     }
 }
@@ -525,16 +540,33 @@ pub fn command_output_owned(program: &str, args: &[String]) -> Option<String> {
 }
 
 pub fn command_output_detailed(program: &str, args: &[&str]) -> io::Result<CommandOutput> {
+    command_output_detailed_with_env(program, args, &[])
+}
+
+pub fn command_output_detailed_with_env(
+    program: &str,
+    args: &[&str],
+    environment: &[(&str, &str)],
+) -> io::Result<CommandOutput> {
     let args = args
         .iter()
         .map(|value| (*value).to_owned())
         .collect::<Vec<_>>();
-    command_output_detailed_owned(program, &args)
+    command_output_detailed_owned_with_env(program, &args, environment)
 }
 
 pub fn command_output_detailed_owned(program: &str, args: &[String]) -> io::Result<CommandOutput> {
+    command_output_detailed_owned_with_env(program, args, &[])
+}
+
+fn command_output_detailed_owned_with_env(
+    program: &str,
+    args: &[String],
+    environment: &[(&str, &str)],
+) -> io::Result<CommandOutput> {
     let mut child = Command::new(program)
         .args(args)
+        .envs(environment.iter().copied())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
@@ -708,6 +740,20 @@ pub fn directory_size(path: &Path, dev: Option<u64>) -> u64 {
     directory_size_with_cancel(path, dev, None)
 }
 
+pub(crate) fn is_link_or_reparse_point(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        metadata.file_attributes()
+            & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT
+            != 0
+    }
+    #[cfg(not(windows))]
+    {
+        metadata.file_type().is_symlink()
+    }
+}
+
 pub fn directory_size_with_cancel(
     path: &Path,
     dev: Option<u64>,
@@ -720,7 +766,7 @@ pub fn directory_size_with_cancel(
         Ok(m) => m,
         Err(_) => return 0,
     };
-    if metadata.file_type().is_symlink() || dev.is_some_and(|d| !same_device(path, d)) {
+    if is_link_or_reparse_point(&metadata) || dev.is_some_and(|d| !same_device(path, d)) {
         return 0;
     }
     if metadata.is_file() {
@@ -899,7 +945,7 @@ pub fn restore_plan(path: &Path, dry_run: bool) -> io::Result<()> {
                             "Simulación: restauraría {} desde {}{}.",
                             target.display(),
                             data1.display(),
-                            if target.exists() {
+                            if path_entry_exists(&target) {
                                 " (retirando antes el destino actual)"
                             } else {
                                 ""
@@ -908,14 +954,14 @@ pub fn restore_plan(path: &Path, dry_run: bool) -> io::Result<()> {
                         restored += 1;
                         continue;
                     }
-                    if target.exists() && !move_to_trash(&target, false)? {
+                    if path_entry_exists(&target) && !move_to_trash(&target, false)? {
                         skipped += 1;
                         continue;
                     }
                     if let Some(parent) = target.parent() {
                         fs::create_dir_all(parent)?;
                     }
-                    fs::copy(&data1, &target)?;
+                    copy_file_without_replace(&data1, &target)?;
                     println!("Restaurado: {}", target.display());
                     restored += 1;
                 } else {
@@ -923,7 +969,7 @@ pub fn restore_plan(path: &Path, dry_run: bool) -> io::Result<()> {
                 }
             }
             "trash-move" => {
-                if data1.exists() && !target.exists() {
+                if path_entry_exists(&data1) && !path_entry_exists(&target) {
                     if dry_run {
                         println!(
                             "Simulación: recuperaría {} desde la papelera ({}).",
@@ -936,14 +982,14 @@ pub fn restore_plan(path: &Path, dry_run: bool) -> io::Result<()> {
                     if let Some(parent) = target.parent() {
                         fs::create_dir_all(parent)?;
                     }
-                    fs::rename(&data1, &target)?;
+                    crate::storage_map::rename_without_replace(&data1, &target)?;
                     println!("Recuperado: {}", target.display());
                     restored += 1;
                 } else {
                     skipped += 1;
                 }
             }
-            "path-move" if target.exists() && !data1.exists() => {
+            "path-move" if path_entry_exists(&target) && !path_entry_exists(&data1) => {
                 if dry_run {
                     println!(
                         "Simulación: devolvería {} a su ubicación original {}.",
@@ -956,7 +1002,7 @@ pub fn restore_plan(path: &Path, dry_run: bool) -> io::Result<()> {
                 if let Some(parent) = data1.parent() {
                     fs::create_dir_all(parent)?;
                 }
-                match fs::rename(&target, &data1) {
+                match crate::storage_map::rename_without_replace(&target, &data1) {
                     Ok(()) => {
                         println!("Movimiento restaurado: {}", data1.display());
                         restored += 1;
@@ -972,14 +1018,14 @@ pub fn restore_plan(path: &Path, dry_run: bool) -> io::Result<()> {
                 }
             }
             "path-move" => skipped += 1,
-            "remove-created" if dry_run && target.exists() => {
+            "remove-created" if dry_run && path_entry_exists(&target) => {
                 println!(
                     "Simulación: retiraría el destino creado a la papelera: {}",
                     target.display()
                 );
                 restored += 1;
             }
-            "remove-created" if target.exists() && move_to_trash(&target, false)? => {
+            "remove-created" if path_entry_exists(&target) && move_to_trash(&target, false)? => {
                 println!("Destino retirado a papelera: {}", target.display());
                 restored += 1;
             }
@@ -995,6 +1041,14 @@ pub fn restore_plan(path: &Path, dry_run: bool) -> io::Result<()> {
         println!("Rollback terminado: {restored} restauradas, {skipped} omitidas/no reversibles.");
     }
     Ok(())
+}
+
+fn path_entry_exists(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok()
+}
+
+fn copy_file_without_replace(source: &Path, destination: &Path) -> io::Result<()> {
+    crate::storage_map::copy_new_path(source, destination).map_err(io::Error::other)
 }
 
 #[cfg(test)]

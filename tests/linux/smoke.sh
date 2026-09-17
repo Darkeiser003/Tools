@@ -7,7 +7,6 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 BIN="$ROOT_DIR/rust/target/release/ltools"
 VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/rust/Cargo.toml" | head -n1)"
 APPIMAGE_PATH=""
-RUNNER_PATH=""
 LOG_PATH=""
 KEEP_TEMP=0
 REQUIRE_FUSE=0
@@ -17,13 +16,12 @@ APPIMAGE_FUSE_WORKS=0
 die() { printf 'SMOKE ERROR: %s\n' "$1" >&2; exit 1; }
 ok() { printf '  OK    %s\n' "$1"; }
 skip() { printf '  SKIP  %s\n' "$1"; }
-usage() { printf 'Uso: %s [--binary RUTA] [--appimage RUTA] [--runner RUTA] [--log RUTA] [--require-fuse] [--require-gui] [--keep-temp]\n' "$0"; }
+usage() { printf 'Uso: %s [--binary RUTA] [--appimage RUTA] [--log RUTA] [--require-fuse] [--require-gui] [--keep-temp]\n' "$0"; }
 
 while (($#)); do
     case "$1" in
         --binary) (($# >= 2)) || die '--binary necesita una ruta'; BIN="$2"; shift ;;
         --appimage) (($# >= 2)) || die '--appimage necesita una ruta'; APPIMAGE_PATH="$2"; shift ;;
-        --runner) (($# >= 2)) || die '--runner necesita una ruta'; RUNNER_PATH="$2"; shift ;;
         --log) (($# >= 2)) || die '--log necesita una ruta'; LOG_PATH="$2"; shift ;;
         --require-fuse) REQUIRE_FUSE=1 ;;
         --require-gui) REQUIRE_GUI=1 ;;
@@ -35,16 +33,16 @@ while (($#)); do
 done
 
 if (( REQUIRE_GUI )); then
-    for command_name in timeout xvfb-run xdotool import identify file; do
+    for command_name in timeout xvfb-run xdotool import identify file xdpyinfo; do
         command -v "$command_name" >/dev/null 2>&1 || die "--require-gui exige «$command_name»"
     done
-    timeout 10 xvfb-run -a -s "-screen 0 1280x900x24" true >/dev/null 2>&1 ||
+    timeout 10 xvfb-run -a -s "-screen 0 1280x900x24" xdpyinfo >/dev/null 2>&1 ||
         die '--require-gui no pudo iniciar un display Xvfb'
 fi
 
 [[ -x "$BIN" ]] || die "no existe el binario ejecutable: $BIN"
 [[ -f "$ROOT_DIR/ltools-cli.sh" ]] || die 'no existe el lanzador CLI Linux'
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/cachyos-smoke.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ltools-smoke.XXXXXX")"
 cleanup_smoke_temp() {
     local status=$?
     if (( KEEP_TEMP != 0 || status != 0 )); then
@@ -115,6 +113,12 @@ for internal_option in wipefs mdadm --depth pkexec; do
     ! grep -Fq -- "$internal_option" <<<"$GUIDE_GUI_STORAGE_OUTPUT" ||
         die "la guía gráfica expuso la opción interna $internal_option"
 done
+EN_STORAGE_GUIDE_OUTPUT="$(LTOOLS_LANG=en "$BIN" guide gui storage-partitions)"
+grep -Fq 'GUÍA GRÁFICA: Partitions and tables' <<<"$EN_STORAGE_GUIDE_OUTPUT" ||
+    die 'la guía profunda de almacenamiento no respeta el idioma inglés'
+! grep -Fq 'PARTICIONADO Y TABLAS' <<<"$EN_STORAGE_GUIDE_OUTPUT" ||
+    die 'la guía profunda de almacenamiento reintrodujo el título español en inglés'
+ok 'guías profundas de almacenamiento conservan el idioma activo'
 GUIDE_ALL_OUTPUT="$("$BIN" guide all)" || die 'el índice de guías no responde'
 for guide_topic in network boot services storage wine containers kubernetes actions; do
     grep -Fq "$guide_topic" <<<"$GUIDE_ALL_OUTPUT" || die "el índice de guías no incluye $guide_topic"
@@ -178,8 +182,8 @@ for marker in 'Auditar / Inventariar' 'Dependencias' 'Herramientas nativas' 'Her
 done
 ! grep -Fq -- 'WinSlim' <<<"$MENU_OUTPUT" || die 'la build Linux mostró la categoría exclusiva de WinSlim'
 ok 'menú principal Linux con categorías generales y sin WinSlim'
-if command -v xvfb-run >/dev/null 2>&1; then
-    if timeout 10 xvfb-run -a -s "-screen 0 1280x900x24" true >/dev/null 2>&1; then
+if command -v xvfb-run >/dev/null 2>&1 && command -v xdpyinfo >/dev/null 2>&1; then
+    if timeout 10 xvfb-run -a -s "-screen 0 1280x900x24" xdpyinfo >/dev/null 2>&1; then
         set +e
         GUI_OUTPUT="$(timeout 30 xvfb-run -a -s "-screen 0 1280x900x24" env GDK_BACKEND=x11 \
             LTOOLS_GUI_SMOKE=1 LTOOLS_GUI_REQUIRED=1 LTOOLS_DISABLE_GUI=0 \
@@ -209,10 +213,11 @@ if command -v xvfb-run >/dev/null 2>&1; then
             local page capture marker capture_log window_log scroll_capture
             page="$1"
             capture="$2"
-            marker="${3:-}"
+            marker="${3:-$GUI_AUDIT_MARKER}"
             scroll_capture="${4:-}"
             capture_log="$TMP_DIR/gui-capture-${page}.log"
             window_log="$TMP_DIR/gui-window-${page}.log"
+            mkdir -p -- "$TMP_DIR/gui-page-${page}-home" "$TMP_DIR/gui-page-${page}-state"
             timeout 30 xvfb-run -a -s "-screen 0 1280x900x24" bash -c '
                 set -Eeuo pipefail
                 export GDK_BACKEND=x11
@@ -241,31 +246,87 @@ if command -v xvfb-run >/dev/null 2>&1; then
                 else
                     unset LTOOLS_GUI_AUDIT_MARKER
                 fi
+                wait_for_rendered_capture() {
+                    local output_path="$1" description="$2" entropy=""
+                    for _ in {1..30}; do
+                        import -window "$window_id" "$output_path" >/dev/null 2>&1 ||
+                            import -window root "$output_path" >/dev/null 2>&1 || return 1
+                        entropy="$(LC_ALL=C identify -format "%[entropy]" "$output_path" 2>/dev/null || true)"
+                        if LC_ALL=C awk -v value="$entropy" "BEGIN { exit !(value >= 0.06) }"; then
+                            return 0
+                        fi
+                        sleep 0.2
+                    done
+                    printf "La página %s permaneció vacía o sin texto renderizado (entropía %s).\\n" \
+                        "$description" "${entropy:-no disponible}" >&2
+                    return 1
+                }
+                wait_for_page_marker() {
+                    local expected_page="$1" marker_path="$2"
+                    for _ in {1..100}; do
+                        if grep -Eq "^VISIBLE_PAGE[[:space:]]${expected_page}[[:space:]]" "$marker_path"; then
+                            # GTK records the selected page before the next
+                            # compositor frame; allow that frame to paint
+                            # before accepting a non-empty screenshot.
+                            sleep 0.1
+                            return 0
+                        fi
+                        if ! kill -0 "$pid" 2>/dev/null; then
+                            break
+                        fi
+                        sleep 0.05
+                    done
+                    printf "La GUI no llegó a la página %s antes de capturarla.\\n" \
+                        "$expected_page" >&2
+                    return 1
+                }
                 "$binary" >"$window_log" 2>&1 &
                 pid=$!
                 window_id=""
                 for _ in {1..24}; do
-                    window_id="$(xdotool search --onlyvisible --name 'LTools' 2>/dev/null | head -n1 || true)"
+                    window_id="$(xdotool search --onlyvisible --name "LTools" 2>/dev/null | head -n1 || true)"
                     if [[ -n "$window_id" ]]; then
                         break
                     fi
                     sleep 0.15
                 done
                 [[ -n "$window_id" ]]
-                # Espera a que GTK haya pintado los controles, no solo a que
-                # exista la ventana. Así se evita guardar un root negro por
-                # capturar durante el primer ciclo del compositor.
-                sleep 0.6
-                import -window "$window_id" "$capture" >/dev/null 2>&1 ||
-                    import -window root "$capture" >/dev/null 2>&1
+                geometry="$(xdotool getwindowgeometry --shell "$window_id")"
+                window_x="$(sed -n 's/^X=//p' <<<"$geometry")"
+                window_y="$(sed -n 's/^Y=//p' <<<"$geometry")"
+                window_width="$(sed -n 's/^WIDTH=//p' <<<"$geometry")"
+                window_height="$(sed -n 's/^HEIGHT=//p' <<<"$geometry")"
+                screen_size="$(xdpyinfo 2>/dev/null | sed -n "s/^  dimensions: *\([0-9][0-9]*x[0-9][0-9]*\) pixels.*/\1/p" | head -n1)"
+                screen_width="${screen_size%x*}"
+                screen_height="${screen_size#*x}"
+                [[ "$window_x" =~ ^-?[0-9]+$ && "$window_y" =~ ^-?[0-9]+$ &&
+                    "$window_width" =~ ^[0-9]+$ && "$window_height" =~ ^[0-9]+$ &&
+                    "$screen_width" =~ ^[0-9]+$ && "$screen_height" =~ ^[0-9]+$ ]] || {
+                    printf "Geometría X11 incompleta para la página %s: %s\n" "$page" "$geometry" >&2
+                    exit 1
+                }
+                ((window_x >= 0 && window_y >= 0 &&
+                    window_x + window_width <= screen_width &&
+                    window_y + window_height <= screen_height)) || {
+                    printf "La ventana de la página %s se sale de la pantalla: x=%s y=%s width=%s height=%s screen=%sx%s\n" \
+                        "$page" "$window_x" "$window_y" "$window_width" "$window_height" \
+                        "$screen_width" "$screen_height" >&2
+                    exit 1
+                }
+                printf "GUI_WINDOW_FITS_SCREEN page=%s x=%s y=%s width=%s height=%s screen=%sx%s\n" \
+                    "$page" "$window_x" "$window_y" "$window_width" "$window_height" \
+                    "$screen_width" "$screen_height"
+                wait_for_page_marker "$page" "$marker"
+                # No basta con esperar a que exista la ventana: el E2E toma
+                # capturas hasta comprobar que el contenido ya se pintó. Así
+                # detecta la ventana gris/vacía que puede aparecer al arrancar.
+                wait_for_rendered_capture "$capture" "menú $page"
                 if [[ -n "$scroll_capture" ]]; then
                     # Captura también las opciones que quedan fuera del primer
                     # viewport y confirma que los menús largos se desplazan.
                     xdotool mousemove --window "$window_id" 700 560 \
                         click --repeat 50 --delay 80 5
-                    sleep 0.3
-                    import -window "$window_id" "$scroll_capture" >/dev/null 2>&1 ||
-                        import -window root "$scroll_capture" >/dev/null 2>&1
+                    wait_for_rendered_capture "$scroll_capture" "menú desplazado $page"
                 fi
                 wait "$pid"
                 [[ -s "$capture" ]]
@@ -397,8 +458,9 @@ if command -v xvfb-run >/dev/null 2>&1; then
             die 'la E2E no pudo abrir/capturar/cerrar el mapa interactivo real'
         }
         grep -Fq 'tree-opened' "$TREE_MARKER" || die 'la E2E no confirmó que se abriera el mapa interactivo'
-        bash "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" \
-            --binary "$BIN" --tmp "$TMP_DIR" --captures "$GUI_CAPTURE_DIR" \
+        map_gui_args=(--binary "$BIN" --tmp "$TMP_DIR" --captures "$GUI_CAPTURE_DIR")
+        (( REQUIRE_GUI == 0 )) || map_gui_args+=(--require-gui)
+        bash "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" "${map_gui_args[@]}" \
             >"$TMP_DIR/storage-map-gui-actions.log" 2>&1 || {
             cat "$TMP_DIR/storage-map-gui-actions.log" >&2 || true
             die 'falló la E2E de acciones reales del mapa GUI'
@@ -427,9 +489,16 @@ if command -v xvfb-run >/dev/null 2>&1; then
             "$GUI_CAPTURE_DIR/linux-wine-proton.png"
             "$GH_DIALOG_CAPTURE"
             "$TREE_CAPTURE"
+            "$GUI_CAPTURE_DIR/linux-storage-map-tree-expanded-es.png"
+            "$GUI_CAPTURE_DIR/linux-storage-map-tree-collapsed-es.png"
             "$GUI_CAPTURE_DIR/linux-storage-map-confirm-no-es.png"
             "$GUI_CAPTURE_DIR/linux-storage-map-confirm-yes-es.png"
         )
+        if [[ -s "$GUI_CAPTURE_DIR/linux-storage-map-confirm-trash-es.png" ]]; then
+            GUI_CAPTURES+=("$GUI_CAPTURE_DIR/linux-storage-map-confirm-trash-es.png")
+        elif (( REQUIRE_GUI )); then
+            die 'la E2E estricta no capturó la confirmación de papelera del mapa'
+        fi
         for capture in "${GUI_CAPTURES[@]}"; do
             [[ -s "$capture" ]] || die "captura GUI vacía: $capture"
             if command -v identify >/dev/null 2>&1; then
@@ -496,6 +565,14 @@ if command -v xvfb-run >/dev/null 2>&1; then
             grep -Fq "$expected_button" "$GUI_AUDIT_MARKER" ||
                 die "la auditoría GUI no registró la opción: ${expected_button#*$'\t'}"
         done
+        if command -v git-lfs >/dev/null 2>&1; then
+            grep -Fq $'BUTTON\tEstado de Git LFS y comando nativo\tGIT\toperation=lfs-status' \
+                "$GUI_AUDIT_MARKER" || die 'Git LFS está disponible pero la GUI no mostró su acción'
+        else
+            if grep -Fq $'BUTTON\tEstado de Git LFS y comando nativo\tGIT\toperation=lfs-status' "$GUI_AUDIT_MARKER"; then
+                die 'la GUI mostró Git LFS aunque la dependencia no está disponible'
+            fi
+        fi
         for field in git_repo_placeholder git_url_placeholder git_destination_placeholder git_remote_message_placeholder git_notes_placeholder git_limit_placeholder; do
             grep -Fq $'FIELD\tgit\t'"$field"$'\t' "$GUI_AUDIT_MARKER" ||
                 die "la auditoría GUI no registró el argumento/campo Git: $field"
@@ -554,8 +631,8 @@ else
     skip 'GUI Rust Linux: xvfb-run está instalado, pero Xvfb no puede crear un display aislado'
 fi
 else
-    (( REQUIRE_GUI == 0 )) || die '--require-gui exige xvfb-run para la GUI Rust'
-    skip 'GUI Rust Linux: xvfb-run no está disponible'
+    (( REQUIRE_GUI == 0 )) || die '--require-gui exige xvfb-run y xdpyinfo para la GUI Rust'
+    skip 'GUI Rust Linux: xvfb-run o xdpyinfo no está disponible'
 fi
 CAPABILITIES_JSON="$("$BIN" capabilities --format json)"
 grep -Fq '"schema": "ltools-capabilities-v1"' <<<"$CAPABILITIES_JSON" ||
@@ -593,10 +670,16 @@ grep -Fq 'no se ejecutaría wineboot' <<<"$ACTION_WINE_DRY_RUN" || die 'actions 
 ok 'registro de acciones guiadas, política de objetivo explícito y dry-run'
 
 NATIVE_TOOLS_OUTPUT="$("$BIN" native tools)"
-for native_tool in ssh scp sftp adb docker kubectl; do
+for native_tool in ssh scp sftp adb docker kubectl shellcheck actionlint zizmor gitleaks osv-scanner codeql scorecard cargo-audit cargo-deny; do
     grep -Fq "$native_tool" <<<"$NATIVE_TOOLS_OUTPUT" || die "native tools no enumeró $native_tool"
 done
 ok 'catálogo de SSH, ADB, Docker y Kubernetes en la consulta nativa'
+
+SCANNER_ACTION="$("$BIN" actions run native.security-scanners 2>&1)" || die 'la acción de analizadores nativos falló'
+grep -Fq 'Analizadores de código y CI' <<<"$SCANNER_ACTION" || die 'actions run no delegó el inventario de analizadores nativos'
+if grep -Eiq 'sudo |pkexec|runas|UAC' <<<"$SCANNER_ACTION"; then
+    die 'actions run del inventario de analizadores nativos intentó elevarse'
+fi
 bash "$ROOT_DIR/tests/linux/native-help-e2e.sh" --binary "$BIN" >"$TMP_DIR/native-help-e2e.out" 2>&1 || {
     sed -n '1,220p' "$TMP_DIR/native-help-e2e.out" >&2
     die 'la auditoría de ayudas nativas o la correspondencia GUI falló'
@@ -677,6 +760,14 @@ fi
 ok 'descriptor JSON específico para terminales'
 EN_HELP="$(LTOOLS_LANG=en "$BIN" --help)"
 grep -Fq 'Usage: ltools' <<<"$EN_HELP" || die 'el idioma inglés no se aplicó al backend Rust'
+if grep -Fq 'winslim       ' <<<"$EN_HELP"; then
+    die 'la ayuda Linux anuncia el comando WinSlim, que solo existe en Windows'
+fi
+for untranslated in 'Leer un informe' 'Política de elevación' 'Detectar NSudo' 'la preferencia persistente' 'opciones seguras'; do
+    if grep -Fq -- "$untranslated" <<<"$EN_HELP"; then
+        die "la ayuda inglesa conserva texto español: $untranslated"
+    fi
+done
 DE_HELP="$("$BIN" --lang de --help)"
 grep -Fq 'Verwendung:' <<<"$DE_HELP" || die 'la opción --lang no se aplicó al backend Rust'
 declare -A LANGUAGE_MARKERS=(
@@ -691,6 +782,16 @@ for language in "${!LANGUAGE_MARKERS[@]}"; do
     grep -Fq "${LANGUAGE_MARKERS[$language]}" <<<"$translated_help" ||
         die "el idioma Rust $language no se aplicó a la ayuda"
 done
+CAPABILITIES_LANGUAGE_JSON="$("$BIN" capabilities --format json)"
+if command -v jq >/dev/null 2>&1; then
+    jq -e --argjson expected '["ar","de","en","es","fr","hi","it","ja","ko","pl","pt","ro","ru","uk","zh"]' \
+        '.schema == "ltools-capabilities-v1" and .ui_context.language.values == $expected' \
+        <<<"$CAPABILITIES_LANGUAGE_JSON" >/dev/null ||
+        die 'el contrato de capacidades no anuncia exactamente los 15 idiomas soportados'
+else
+    grep -Fq '"values": [' <<<"$CAPABILITIES_LANGUAGE_JSON" ||
+        die 'el contrato de capacidades no anuncia sus idiomas'
+fi
 ok 'los 15 idiomas del contrato se aceptan y la ayuda permanece operativa'
 THEMED_MENU="$(printf 'q\n' | LTOOLS_LANG=en LTERMINAL_THEME=amber LTOOLS_COLOR=always LTOOLS_NO_CLEAR=1 "$BIN" menu 2>&1)"
 grep -Fq $'\033[' <<<"$THEMED_MENU" || die 'la CLI no aplica color ANSI al tema recibido de la terminal'
@@ -784,6 +885,14 @@ NATIVE_POWER="$("$BIN" native power status 2>&1)" || die 'native power status te
 grep -Fq 'Energía Linux' <<<"$NATIVE_POWER" || die 'native power status no mostró su sección Linux'
 NATIVE_SECURITY="$("$BIN" native security status 2>&1)" || die 'native security status terminó con error por permisos o herramienta opcional'
 grep -Fq 'Firewall Linux' <<<"$NATIVE_SECURITY" || die 'native security status no mostró su sección Linux'
+NATIVE_SCANNERS="$("$BIN" native security scanners 2>&1)" || die 'native security scanners terminó con error'
+grep -Fq 'Analizadores de código y CI' <<<"$NATIVE_SCANNERS" || die 'native security scanners no mostró su sección'
+if grep -Eqi 'Elevación:|sudo |pkexec|UAC' <<<"$NATIVE_SCANNERS"; then
+    die 'native security scanners intentó elevar una consulta de solo lectura'
+fi
+for scanner in shellcheck actionlint zizmor gitleaks osv-scanner codeql scorecard cargo-audit cargo-deny; do
+    grep -Fq "$scanner" <<<"$NATIVE_SCANNERS" || die "native security scanners no enumeró $scanner"
+done
 NATIVE_DNS_DRY_RUN="$("$BIN" --dry-run native network flush-dns 2>&1)" || die 'native network flush-dns dry-run terminó con error'
 grep -Fq 'resolvectl flush-caches' <<<"$NATIVE_DNS_DRY_RUN" || die 'native network flush-dns no generó el plan esperado'
 ok 'acciones nativas Linux directas: red, hardware, energía, seguridad y DNS'
@@ -892,8 +1001,8 @@ if [[ -n "$APPIMAGE_PATH" ]]; then
         ok "AppImage probado por extracción (FUSE ausente); log: $DIRECT_LOG"
     fi
 
-    if command -v xvfb-run >/dev/null 2>&1; then
-        if timeout 10 xvfb-run -a true >/dev/null 2>&1; then
+    if command -v xvfb-run >/dev/null 2>&1 && command -v xdpyinfo >/dev/null 2>&1; then
+        if timeout 10 xvfb-run -a xdpyinfo >/dev/null 2>&1; then
             set +e
             APPIMAGE_GUI_OUTPUT="$(timeout 30 xvfb-run -a env GDK_BACKEND=x11 \
                 LTOOLS_GUI_SMOKE=1 LTOOLS_GUI_REQUIRED=1 LTOOLS_DISABLE_GUI=0 \
@@ -1201,8 +1310,8 @@ if [[ -n "$APPIMAGE_PATH" ]]; then
             skip 'GUI AppImage: Xvfb no puede crear un display aislado'
         fi
     else
-        (( REQUIRE_GUI == 0 )) || die '--require-gui exige xvfb-run para probar el AppImage GUI'
-        skip 'GUI AppImage: xvfb-run no está disponible'
+        (( REQUIRE_GUI == 0 )) || die '--require-gui exige xvfb-run y xdpyinfo para probar el AppImage GUI'
+        skip 'GUI AppImage: xvfb-run o xdpyinfo no está disponible'
     fi
 
     CLI_APPIMAGE_PATH="${APPIMAGE_PATH%.AppImage}-cli.AppImage"
@@ -1419,20 +1528,6 @@ EOF
     grep -Eq 'actual mount permission unverified|device/helper missing' <<<"$FUSE_OUTPUT" ||
         die '--fuse-check afirmó disponibilidad sin distinguir detección de permiso real de montaje'
     ok 'diagnóstico FUSE'
-    if [[ -n "$RUNNER_PATH" ]]; then
-        [[ -x "$RUNNER_PATH" ]] || die "lanzador no ejecutable: $RUNNER_PATH"
-        set +e
-        RUNNER_OUTPUT="$(timeout 30 "$RUNNER_PATH" --appimage "$APPIMAGE_PATH" --doctor 2>&1)"
-        RUNNER_STATUS=$?
-        set -e
-        if [[ "$RUNNER_STATUS" -ne 0 ]]; then
-            printf 'Salida del lanzador AppImage (código %s):\n%s\n' "$RUNNER_STATUS" "$RUNNER_OUTPUT" >&2
-            die 'el lanzador no recuperó la ejecución si el montaje FUSE falla'
-        fi
-        ok 'lanzador AppImage prueba FUSE y recupera por extracción si el host lo deniega'
-        LTOOLS_FORCE_EXTRACT=1 "$RUNNER_PATH" --version >/dev/null
-        ok 'lanzador externo con fallback forzado sin FUSE'
-    fi
 else
     skip 'AppImage: no se proporcionó --appimage'
 fi

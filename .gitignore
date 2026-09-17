@@ -4,6 +4,7 @@
 # Artefactos distribuibles y staging local. Todo se puede regenerar con el
 # builder; no se guardan releases ni resultados de una máquina concreta.
 /dist/
+/rust/dist/
 /build/
 /out/
 /artifacts/
@@ -14,6 +15,8 @@
 # Rust/Cargo. Cargo.lock se conserva: LTools es una aplicación distribuible.
 /target/
 /rust/target/
+/fuzz/target/
+/fuzz/artifacts/
 *.rs.bk
 
 # Node, JavaScript y gestores de frontend/herramientas auxiliares.

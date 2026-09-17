@@ -74,11 +74,19 @@ mod account_password_tempfile_tests {
 
     #[test]
     fn password_file_is_private_and_cleanup_removes_it() {
-        let path = create_account_password_file("not-a-real-password")
+        let test_value = format!(
+            "fixture-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        );
+        let path = create_account_password_file(&test_value)
             .expect("create private password hand-off file");
         assert_eq!(
             std::fs::read_to_string(&path).expect("read test password file"),
-            "not-a-real-password"
+            test_value
         );
         #[cfg(unix)]
         {
@@ -530,6 +538,16 @@ mod linux {
         fn gtk_tree_view_append_column(view: *mut Widget, column: *mut Widget) -> c_int;
         fn gtk_tree_view_expand_all(view: *mut Widget);
         fn gtk_tree_view_collapse_all(view: *mut Widget);
+        fn gtk_tree_view_get_cursor(
+            view: *mut Widget,
+            path: *mut *mut Widget,
+            focus_column: *mut *mut Widget,
+        );
+        fn gtk_tree_view_row_expanded(view: *mut Widget, path: *mut Widget) -> c_int;
+        fn gtk_tree_view_expand_row(view: *mut Widget, path: *mut Widget, open_all: c_int)
+            -> c_int;
+        fn gtk_tree_view_collapse_row(view: *mut Widget, path: *mut Widget) -> c_int;
+        fn gtk_tree_path_free(path: *mut Widget);
         fn gtk_tree_view_column_new() -> *mut Widget;
         fn gtk_tree_view_column_set_title(column: *mut Widget, title: *const c_char);
         fn gtk_tree_view_column_set_sizing(column: *mut Widget, sizing: c_int);
@@ -550,6 +568,7 @@ mod linux {
         fn g_free(pointer: *mut c_void);
         fn gtk_widget_show_all(widget: *mut Widget);
         fn gtk_widget_show(widget: *mut Widget);
+        fn gtk_widget_grab_focus(widget: *mut Widget) -> c_int;
         fn gtk_widget_hide(widget: *mut Widget);
         fn gtk_widget_get_visible(widget: *mut Widget) -> c_int;
         fn gtk_widget_destroy(widget: *mut Widget);
@@ -558,6 +577,7 @@ mod linux {
         fn gtk_widget_set_halign(widget: *mut Widget, align: c_int);
         fn gtk_widget_set_hexpand(widget: *mut Widget, expand: c_int);
         fn gtk_widget_set_sensitive(widget: *mut Widget, sensitive: c_int);
+        fn gtk_widget_set_can_focus(widget: *mut Widget, can_focus: c_int);
         fn gtk_spinner_new() -> *mut Widget;
         fn gtk_spinner_start(spinner: *mut Widget);
         fn gtk_spinner_stop(spinner: *mut Widget);
@@ -616,6 +636,7 @@ mod linux {
         fn gdk_screen_get_default() -> *mut Widget;
         fn gdk_screen_get_width(screen: *mut Widget) -> c_int;
         fn gdk_screen_get_height(screen: *mut Widget) -> c_int;
+        fn gdk_event_get_keyval(event: *mut c_void, keyval: *mut u32) -> c_int;
     }
 
     unsafe fn apply_terminal_theme(theme: crate::theme::Theme) {
@@ -3578,11 +3599,79 @@ mod linux {
     unsafe extern "C" fn on_storage_tree_expand(_button: *mut Widget, pointer: *mut c_void) {
         let data = &*(pointer as *const StorageTreeControlData);
         gtk_tree_view_expand_all(data.tree);
+        gui_audit_event("STORAGE_TREE_EXPAND_ALL");
     }
 
     unsafe extern "C" fn on_storage_tree_collapse(_button: *mut Widget, pointer: *mut c_void) {
         let data = &*(pointer as *const StorageTreeControlData);
         gtk_tree_view_collapse_all(data.tree);
+        gui_audit_event("STORAGE_TREE_COLLAPSE_ALL");
+    }
+
+    unsafe extern "C" fn on_storage_tree_row_expanded(
+        _tree: *mut Widget,
+        _iter: *mut c_void,
+        _path: *mut c_void,
+        _pointer: *mut c_void,
+    ) {
+        gui_audit_event("STORAGE_TREE_ROW_EXPANDED");
+    }
+
+    unsafe extern "C" fn on_storage_tree_row_collapsed(
+        _tree: *mut Widget,
+        _iter: *mut c_void,
+        _path: *mut c_void,
+        _pointer: *mut c_void,
+    ) {
+        gui_audit_event("STORAGE_TREE_ROW_COLLAPSED");
+    }
+
+    unsafe extern "C" fn on_storage_tree_key_press(
+        tree: *mut Widget,
+        event: *mut c_void,
+        _pointer: *mut c_void,
+    ) -> c_int {
+        if tree.is_null() || event.is_null() {
+            return 0;
+        }
+        let mut keyval = 0_u32;
+        if gdk_event_get_keyval(event, &mut keyval) == 0 {
+            return 0;
+        }
+        // GDK_KEY_Left/Right and their keypad equivalents. GtkTreeView normally
+        // handles these itself, but explicitly expanding the cursor row keeps
+        // the disclosure controls accessible across GTK themes/window managers.
+        let expand = matches!(keyval, 0xff53 | 0xff98);
+        let collapse = matches!(keyval, 0xff51 | 0xff96);
+        if !expand && !collapse {
+            return 0;
+        }
+
+        let mut path = null_mut();
+        let mut focus_column = null_mut();
+        gtk_tree_view_get_cursor(tree, &mut path, &mut focus_column);
+        if path.is_null() {
+            return 0;
+        }
+        let is_expanded = gtk_tree_view_row_expanded(tree, path) != 0;
+        let handled = if expand && !is_expanded {
+            gtk_tree_view_expand_row(tree, path, 0) != 0
+        } else if collapse && is_expanded {
+            gtk_tree_view_collapse_row(tree, path) != 0
+        } else {
+            false
+        };
+        gtk_tree_path_free(path);
+        handled as c_int
+    }
+
+    unsafe fn connect_storage_tree_key_press(tree: *mut Widget) {
+        let name = CString::new("key-press-event").expect("señal GTK sin NUL");
+        let callback: Callback = Some(std::mem::transmute::<
+            unsafe extern "C" fn(*mut Widget, *mut c_void, *mut c_void) -> c_int,
+            unsafe extern "C" fn(),
+        >(on_storage_tree_key_press));
+        g_signal_connect_data(tree, name.as_ptr(), callback, null_mut(), None, 0);
     }
 
     fn storage_map_message(key: &str, values: &[(&str, String)]) -> String {
@@ -3939,6 +4028,7 @@ mod linux {
                 gtk_window_set_deletable(data.dialog, 1);
                 gtk_widget_hide(data.progress);
                 gtk_widget_show(data.tree);
+                gtk_widget_grab_focus(data.tree);
                 if let Ok(marker) = std::env::var("LTOOLS_GUI_TREE_READY_MARKER") {
                     let _ = std::fs::write(marker, "tree-ready\n");
                 }
@@ -4026,6 +4116,26 @@ mod linux {
             return;
         }
         let tree = gtk_tree_view_new_with_model(store);
+        gtk_widget_set_can_focus(tree, 1);
+        connect_storage_tree_key_press(tree);
+        connect(
+            tree,
+            "row-expanded",
+            std::mem::transmute::<
+                unsafe extern "C" fn(*mut Widget, *mut c_void, *mut c_void, *mut c_void),
+                unsafe extern "C" fn(*mut Widget, *mut c_void),
+            >(on_storage_tree_row_expanded),
+            null_mut(),
+        );
+        connect(
+            tree,
+            "row-collapsed",
+            std::mem::transmute::<
+                unsafe extern "C" fn(*mut Widget, *mut c_void, *mut c_void, *mut c_void),
+                unsafe extern "C" fn(*mut Widget, *mut c_void),
+            >(on_storage_tree_row_collapsed),
+            null_mut(),
+        );
         gtk_tree_view_set_headers_visible(tree, 0);
         let column = gtk_tree_view_column_new();
         let column_title =
@@ -4457,13 +4567,19 @@ mod linux {
         gtk_grid_set_column_spacing(grid, 10);
         gtk_container_set_border_width(grid, 14);
         let fields = [
-            ("Nombre", entry.name.as_str()),
-            ("Programa o ruta", entry.program.as_str()),
             (
-                "Directorio (vacío conserva; - elimina)",
+                crate::i18n::automation_text("field_name"),
+                entry.name.as_str(),
+            ),
+            (
+                crate::i18n::automation_text("field_program"),
+                entry.program.as_str(),
+            ),
+            (
+                crate::i18n::automation_text("field_working_directory"),
                 entry.working_directory.as_deref().unwrap_or(""),
             ),
-            ("Argumentos (vacío conserva; - elimina)", ""),
+            (crate::i18n::automation_text("field_arguments"), ""),
         ];
         let mut controls = Vec::new();
         for (row, (prompt, value)) in fields.iter().enumerate() {
@@ -4489,7 +4605,7 @@ mod linux {
         }
         gtk_container_add(content, grid);
         let cancel = CString::new(crate::i18n::gui_action_text("cancel")).ok()?;
-        let execute = CString::new("Guardar cambios").ok()?;
+        let execute = CString::new(crate::i18n::automation_text("save")).ok()?;
         gtk_dialog_add_button(dialog, cancel.as_ptr(), -6);
         gtk_dialog_add_button(dialog, execute.as_ptr(), -8);
         gtk_widget_show_all(dialog);
@@ -4664,6 +4780,11 @@ mod linux {
                 Ok(())
             }
             "status" => Ok(()),
+            "lfs-status" => {
+                args[0] = "lfs".to_owned();
+                args.insert(1, "status".to_owned());
+                Ok(())
+            }
             "clone" => {
                 if first.trim().is_empty() {
                     Err("Indica la URL del repositorio que quieres clonar.".to_owned())
@@ -4966,10 +5087,16 @@ mod linux {
         let enabled = gtk_toggle_button_get_active(data.button) != 0;
         let result = match crate::gui_preferences::set_elevate_by_default(enabled) {
             Ok(()) => format!(
-                "Elevación por defecto: {}. Las consultas, Git/Wine y la papelera del usuario no se elevan automáticamente.",
-                if enabled { "activada" } else { "desactivada" }
+                "{}: {}. {}",
+                crate::i18n::gui_text("elevation_default"),
+                if enabled {
+                    crate::i18n::gui_text("elevation_enabled")
+                } else {
+                    crate::i18n::gui_text("elevation_disabled")
+                },
+                crate::i18n::gui_text("elevation_scope")
             ),
-            Err(error) => format!("No se pudo guardar la elevación por defecto: {error}"),
+            Err(error) => format!("{} {error}", crate::i18n::gui_text("elevation_save_error")),
         };
         write_preference_output(
             data.buffer,
@@ -5160,7 +5287,7 @@ mod linux {
     unsafe extern "C" fn start_gui_smoke_suite(pointer: *mut c_void) -> c_int {
         let marker = *Box::from_raw(pointer as *mut String);
         std::thread::spawn(move || {
-            let cases: Vec<(&str, Vec<&str>)> = vec![
+            let mut cases: Vec<(&str, Vec<&str>)> = vec![
                 ("audit", vec!["--no-mounts"]),
                 ("games", vec!["--no-mounts"]),
                 ("packages", vec![]),
@@ -5210,6 +5337,9 @@ mod linux {
                 ("update", vec!["--help"]),
                 ("automation", vec!["list"]),
             ];
+            if crate::common::command_exists("git-lfs") {
+                cases.push(("git", vec!["lfs", "status"]));
+            }
             let mut report = vec!["GUI_SAFE_ACTIONS_BEGIN".to_owned()];
             if SERVICES_BACK_ROW > SERVICES_LAST_ACTION_ROW {
                 report.push(format!(
@@ -5715,9 +5845,21 @@ mod linux {
         status: *mut Widget,
     ) {
         let label = match action {
-            0 => format!("Ejecutar: {}", entry.name),
-            1 => format!("Borrar: {}", entry.name),
-            _ => format!("Editar: {}", entry.name),
+            0 => format!(
+                "{}: {}",
+                crate::i18n::automation_text("action_run"),
+                entry.name
+            ),
+            1 => format!(
+                "{}: {}",
+                crate::i18n::automation_text("action_remove"),
+                entry.name
+            ),
+            _ => format!(
+                "{}: {}",
+                crate::i18n::automation_text("action_edit"),
+                entry.name
+            ),
         };
         let label = CString::new(label).unwrap_or_default();
         let button = gtk_button_new_with_label(label.as_ptr());
@@ -5740,7 +5882,7 @@ mod linux {
         buffer: *mut Widget,
         status: *mut Widget,
     ) {
-        let label = CString::new("Recargar listado").unwrap_or_default();
+        let label = CString::new(crate::i18n::automation_text("refresh")).unwrap_or_default();
         let button = gtk_button_new_with_label(label.as_ptr());
         gtk_widget_set_size_request(button, 230, 36);
         gtk_widget_set_halign(button, 3);
@@ -5759,12 +5901,16 @@ mod linux {
         buffer: *mut Widget,
         status: *mut Widget,
     ) {
-        add_section_heading(scripts_page, 0, "Scripts registrados");
+        add_section_heading(
+            scripts_page,
+            0,
+            crate::i18n::gui_catalog_text("registered_scripts"),
+        );
         add_automation_refresh_button(scripts_page, 1, navigation, buffer, status);
         let mut scripts_back_row = 3;
         match crate::automation::load() {
             Ok(entries) if entries.is_empty() => {
-                let none = CString::new("No hay scripts registrados.").unwrap();
+                let none = CString::new(crate::i18n::automation_text("none")).unwrap();
                 let label = gtk_label_new(none.as_ptr());
                 gtk_label_set_xalign(label, 0.0);
                 gtk_grid_attach(scripts_page, label, 0, 2, 2, 1);
@@ -5798,7 +5944,7 @@ mod linux {
         add_action(
             scripts_page,
             scripts_back_row,
-            "Guía de scripts y automatización",
+            crate::i18n::gui_catalog_text("scripts_guide"),
             "guide",
             &["automation"],
             buffer,
@@ -6053,7 +6199,7 @@ mod linux {
                     crate::i18n::gui_family_text("native_storage"),
                     crate::i18n::gui_family_text("native_system"),
                     crate::i18n::gui_family_text("installable_docker"),
-                    "Kubernetes",
+                    crate::i18n::gui_family_text("kubernetes"),
                     crate::i18n::gui_family_text("containers"),
                     crate::i18n::gui_family_text("images"),
                     crate::i18n::gui_family_text("volumes_networks"),
@@ -6061,16 +6207,16 @@ mod linux {
                     crate::i18n::gui_family_text("installable_ssh"),
                     crate::i18n::gui_family_text("installable_android"),
                     crate::i18n::gui_family_text("installable_utilities"),
-                    "Particionado y tablas",
-                    "Sistemas de archivos",
-                    "Cifrado y volúmenes",
+                    crate::i18n::gui_family_text("storage_partitions"),
+                    crate::i18n::gui_family_text("storage_filesystems"),
+                    crate::i18n::gui_family_text("storage_volumes"),
                     crate::i18n::accounts_label(),
-                    "Scripts registrados",
-                    "Registrar script",
-                    "Red, rutas, DNS y puertos escuchando",
-                    "Arranque, EFI y cargador del sistema",
-                    "Servicios del sistema",
-                    "Gestión de prefijos Wine y Proton",
+                    crate::i18n::gui_catalog_text("registered_scripts"),
+                    crate::i18n::gui_catalog_text("register_script"),
+                    crate::i18n::system_page_text("network_title"),
+                    crate::i18n::system_page_text("boot_title"),
+                    crate::i18n::system_page_text("services_title"),
+                    crate::i18n::gui_family_text("wine_prefixes"),
                 ],
                 pages,
                 category_buttons: [null_mut(); 7],
@@ -6402,7 +6548,7 @@ mod linux {
             add_action(
                 (*navigation).pages[1],
                 3,
-                "Guía de herramientas nativas",
+                crate::i18n::gui_catalog_text("native_guide"),
                 "guide",
                 &["native"],
                 buffer,
@@ -6416,7 +6562,11 @@ mod linux {
                 0,
                 crate::i18n::gui_family_text("native_storage"),
             );
-            add_section_heading(storage_page, 1, "Consulta y mapa");
+            add_section_heading(
+                storage_page,
+                1,
+                crate::i18n::storage_section_text("query_map"),
+            );
             add_action(
                 storage_page,
                 2,
@@ -6451,7 +6601,11 @@ mod linux {
                 buffer,
                 status,
             );
-            add_section_heading(storage_page, 6, "Archivos y rutas");
+            add_section_heading(
+                storage_page,
+                6,
+                crate::i18n::storage_section_text("file_paths"),
+            );
             add_storage_file_action_button(
                 storage_page,
                 7,
@@ -6515,11 +6669,37 @@ mod linux {
                 buffer,
                 status,
             );
-            add_section_heading(storage_page, 14, "Discos y volúmenes");
-            add_submenu_button(storage_page, 15, "Particionado y tablas", navigation, 21);
-            add_submenu_button(storage_page, 16, "Sistemas de archivos", navigation, 22);
-            add_submenu_button(storage_page, 17, "Cifrado y volúmenes", navigation, 23);
-            add_section_heading(storage_page, 18, "Herramientas y limpieza");
+            add_section_heading(
+                storage_page,
+                14,
+                crate::i18n::storage_section_text("disk_volumes"),
+            );
+            add_submenu_button(
+                storage_page,
+                15,
+                crate::i18n::gui_family_text("storage_partitions"),
+                navigation,
+                21,
+            );
+            add_submenu_button(
+                storage_page,
+                16,
+                crate::i18n::gui_family_text("storage_filesystems"),
+                navigation,
+                22,
+            );
+            add_submenu_button(
+                storage_page,
+                17,
+                crate::i18n::gui_family_text("storage_volumes"),
+                navigation,
+                23,
+            );
+            add_section_heading(
+                storage_page,
+                18,
+                crate::i18n::storage_section_text("tools_cleanup"),
+            );
             add_action(
                 storage_page,
                 19,
@@ -6568,8 +6748,16 @@ mod linux {
             add_back_button_at(storage_page, navigation, 24);
 
             let partition_page = (*navigation).pages[21];
-            add_section_heading(partition_page, 0, "Particionado y tablas");
-            add_section_heading(partition_page, 1, "Consulta y diagnóstico");
+            add_section_heading(
+                partition_page,
+                0,
+                crate::i18n::gui_family_text("storage_partitions"),
+            );
+            add_section_heading(
+                partition_page,
+                1,
+                crate::i18n::storage_section_text("partition_inspection"),
+            );
             add_storage_action_button(
                 partition_page,
                 2,
@@ -6597,7 +6785,11 @@ mod linux {
                 buffer,
                 status,
             );
-            add_section_heading(partition_page, 5, "Tablas y particiones");
+            add_section_heading(
+                partition_page,
+                5,
+                crate::i18n::storage_section_text("partition_tables"),
+            );
             add_storage_action_button(
                 partition_page,
                 6,
@@ -6652,7 +6844,11 @@ mod linux {
                 buffer,
                 status,
             );
-            add_section_heading(partition_page, 12, "Flags y recuperación");
+            add_section_heading(
+                partition_page,
+                12,
+                crate::i18n::storage_section_text("partition_recovery"),
+            );
             add_storage_action_button(
                 partition_page,
                 13,
@@ -6698,7 +6894,11 @@ mod linux {
                 buffer,
                 status,
             );
-            add_section_heading(partition_page, 18, "Destrucción explícita");
+            add_section_heading(
+                partition_page,
+                18,
+                crate::i18n::storage_section_text("partition_destruction"),
+            );
             add_storage_action_button(
                 partition_page,
                 19,
@@ -6729,8 +6929,16 @@ mod linux {
             add_back_button_at(partition_page, navigation, 22);
 
             let filesystem_page = (*navigation).pages[22];
-            add_section_heading(filesystem_page, 0, "Sistemas de archivos");
-            add_section_heading(filesystem_page, 1, "Formato y comprobación");
+            add_section_heading(
+                filesystem_page,
+                0,
+                crate::i18n::gui_family_text("storage_filesystems"),
+            );
+            add_section_heading(
+                filesystem_page,
+                1,
+                crate::i18n::storage_action_text("filesystem_format_check"),
+            );
             add_storage_action_button(
                 filesystem_page,
                 2,
@@ -6776,7 +6984,11 @@ mod linux {
                 buffer,
                 status,
             );
-            add_section_heading(filesystem_page, 7, "Montaje y swap");
+            add_section_heading(
+                filesystem_page,
+                7,
+                crate::i18n::storage_action_text("mount_swap"),
+            );
             add_storage_action_button(
                 filesystem_page,
                 8,
@@ -6825,8 +7037,16 @@ mod linux {
             add_back_button_at(filesystem_page, navigation, 13);
 
             let volumes_page = (*navigation).pages[23];
-            add_section_heading(volumes_page, 0, "Cifrado y volúmenes");
-            add_section_heading(volumes_page, 1, "LUKS: cifrado y cabeceras");
+            add_section_heading(
+                volumes_page,
+                0,
+                crate::i18n::gui_family_text("storage_volumes"),
+            );
+            add_section_heading(
+                volumes_page,
+                1,
+                crate::i18n::storage_action_text("luks_headers"),
+            );
             add_storage_action_button(
                 volumes_page,
                 2,
@@ -6872,7 +7092,11 @@ mod linux {
                 buffer,
                 status,
             );
-            add_section_heading(volumes_page, 7, "Capas de volumen");
+            add_section_heading(
+                volumes_page,
+                7,
+                crate::i18n::storage_action_text("volume_layers"),
+            );
             add_storage_action_button(
                 volumes_page,
                 8,
@@ -7159,23 +7383,41 @@ mod linux {
                 buffer,
                 status,
             );
-            add_submenu_button(
+            add_action(
                 system_page,
                 7,
+                crate::i18n::system_page_text("native_security_status"),
+                "native",
+                &["security", "status"],
+                buffer,
+                status,
+            );
+            add_action(
+                system_page,
+                8,
+                crate::i18n::system_page_text("native_security_scanners"),
+                "native",
+                &["security", "scanners"],
+                buffer,
+                status,
+            );
+            add_submenu_button(
+                system_page,
+                9,
                 crate::i18n::gui_text("system_services"),
                 navigation,
                 29,
             );
             add_action(
                 system_page,
-                8,
+                10,
                 "Guía del sistema",
                 "guide",
                 &["system"],
                 buffer,
                 status,
             );
-            add_back_button_at(system_page, navigation, 9);
+            add_back_button_at(system_page, navigation, 11);
 
             let network_page = (*navigation).pages[27];
             add_section_heading(
@@ -7491,7 +7733,7 @@ mod linux {
             );
             add_back_button_at(services_page, navigation, 11);
             let wine_page = (*navigation).pages[30];
-            add_section_heading(wine_page, 0, "Gestión de prefijos Wine y Proton");
+            add_section_heading(wine_page, 0, crate::i18n::gui_family_text("wine_prefixes"));
             add_action(
                 wine_page,
                 1,
@@ -7584,7 +7826,7 @@ mod linux {
             add_action(
                 (*navigation).pages[2],
                 5,
-                "Guía de dependencias",
+                crate::i18n::gui_catalog_text("dependencies_guide"),
                 "guide",
                 &["diagnostics"],
                 buffer,
@@ -8349,7 +8591,13 @@ mod linux {
                 navigation,
                 12,
             );
-            add_submenu_button((*navigation).pages[4], 5, "Kubernetes", navigation, 13);
+            add_submenu_button(
+                (*navigation).pages[4],
+                5,
+                crate::i18n::gui_family_text("kubernetes"),
+                navigation,
+                13,
+            );
             add_submenu_button(
                 (*navigation).pages[4],
                 6,
@@ -8360,7 +8608,7 @@ mod linux {
             add_action(
                 (*navigation).pages[4],
                 7,
-                "Guía de herramientas instalables",
+                crate::i18n::gui_catalog_text("installable_guide"),
                 "guide",
                 &["installable"],
                 buffer,
@@ -8573,14 +8821,29 @@ mod linux {
                 git_fields,
                 (buffer, status),
             );
+            let lfs_available = crate::common::command_exists("git-lfs");
+            if lfs_available {
+                add_section_heading(git_page, 20, crate::i18n::tools_text("git_lfs"));
+                add_git_action_button(
+                    git_page,
+                    21,
+                    0,
+                    crate::i18n::tools_text("git_lfs"),
+                    "lfs-status",
+                    git_fields,
+                    (buffer, status),
+                );
+            }
+            let recovery_heading_row = if lfs_available { 22 } else { 20 };
+            let recovery_action_row = recovery_heading_row + 1;
             add_section_heading(
                 git_page,
-                20,
+                recovery_heading_row,
                 crate::i18n::git_action_text("recovery_heading"),
             );
             add_git_action_button(
                 git_page,
-                21,
+                recovery_action_row,
                 0,
                 crate::i18n::git_action_text("diagnose"),
                 "diagnose",
@@ -8589,7 +8852,7 @@ mod linux {
             );
             add_git_action_button(
                 git_page,
-                21,
+                recovery_action_row,
                 1,
                 crate::i18n::git_action_text("repair_index"),
                 "repair",
@@ -8598,14 +8861,14 @@ mod linux {
             );
             add_git_action_button(
                 git_page,
-                22,
+                recovery_action_row + 1,
                 0,
                 crate::i18n::git_action_text("repair_remote"),
                 "repair-remote",
                 git_fields,
                 (buffer, status),
             );
-            add_back_button_at(git_page, navigation, 23);
+            add_back_button_at(git_page, navigation, recovery_action_row + 2);
             add_section_heading(
                 (*navigation).pages[5],
                 0,
@@ -8614,21 +8877,21 @@ mod linux {
             add_submenu_button(
                 (*navigation).pages[5],
                 1,
-                "Scripts registrados",
+                crate::i18n::gui_catalog_text("registered_scripts"),
                 navigation,
                 25,
             );
             add_submenu_button(
                 (*navigation).pages[5],
                 2,
-                "Registrar nuevo script",
+                crate::i18n::gui_catalog_text("register_script"),
                 navigation,
                 26,
             );
             add_action(
                 (*navigation).pages[5],
                 3,
-                "Guía de automatización",
+                crate::i18n::gui_catalog_text("automation_guide"),
                 "guide",
                 &["automation"],
                 buffer,
@@ -8807,6 +9070,58 @@ mod linux {
         }
     }
 
+    /// Devuelve las etiquetas efectivamente usadas por los menús raíz Linux.
+    /// La guía gráfica consume este catálogo en vez de mantener una segunda
+    /// lista manual que pueda quedar desfasada cuando se añade un botón.
+    pub(super) fn menu_labels(page: usize) -> Vec<String> {
+        let labels: Vec<&'static str> = match page {
+            1 => vec![
+                crate::i18n::gui_family_text("native_storage"),
+                crate::i18n::gui_family_text("native_system"),
+                crate::i18n::gui_catalog_text("native_guide"),
+            ],
+            2 => vec![
+                crate::i18n::gui_text("doctor"),
+                crate::i18n::native_action_text("tools_status"),
+                crate::i18n::tools_text("install"),
+                crate::i18n::native_action_text("tools_install"),
+                crate::i18n::diagnostics_label(),
+                crate::i18n::gui_catalog_text("dependencies_guide"),
+            ],
+            4 => vec![
+                crate::i18n::tools_text("git_menu"),
+                crate::i18n::tools_text("software_menu"),
+                crate::i18n::gui_family_text("installable_connectivity"),
+                crate::i18n::gui_family_text("installable_docker"),
+                crate::i18n::gui_family_text("kubernetes"),
+                crate::i18n::gui_family_text("installable_utilities"),
+                crate::i18n::gui_catalog_text("installable_guide"),
+            ],
+            5 => vec![
+                crate::i18n::gui_catalog_text("registered_scripts"),
+                crate::i18n::gui_catalog_text("register_script"),
+                crate::i18n::gui_catalog_text("automation_guide"),
+                // El botón de guía del submenú «Scripts registrados» usa el
+                // mismo tema; se incluye en el índice de la categoría para
+                // que el E2E pueda comprobar la rama completa.
+                crate::i18n::gui_catalog_text("scripts_guide"),
+            ],
+            _ => Vec::new(),
+        };
+        labels.into_iter().map(str::to_owned).collect()
+    }
+
+    pub(super) fn page_title(page: usize) -> Option<String> {
+        let key = match page {
+            1 => "native_tools",
+            2 => "dependencies",
+            4 => "installable_tools",
+            5 => "automation",
+            _ => return None,
+        };
+        Some(crate::i18n::category_text(key).to_owned())
+    }
+
     #[cfg(test)]
     mod storage_operation_choice_tests {
         use super::storage_operation_choices;
@@ -8964,8 +9279,8 @@ mod windows {
 
     const CATEGORY_BASE: i32 = 1000;
     const ACTION_BASE: i32 = 1100;
-    const ACTION_STRIDE: i32 = 18;
-    const ACTION_COUNT: usize = 18;
+    const ACTION_STRIDE: i32 = 22;
+    const ACTION_COUNT: usize = 22;
     const MB_DEFAULT_NO: u32 = 0x0100; // MB_DEFBUTTON2 para los diálogos Sí/No.
     const BACK_BASE: i32 = 1200;
     const FIELD_BASE: i32 = 1300;
@@ -9175,6 +9490,66 @@ mod windows {
                 crate::i18n::storage_action_text("manager"),
             )),
             (1, 4) => Some(("storage", &["guide"], "storage_guide")),
+            (1, 10) => Some((
+                "storage",
+                &["usage"],
+                crate::i18n::storage_action_text("usage"),
+            )),
+            (1, 11) => Some((
+                "storage",
+                &["pools"],
+                crate::i18n::storage_action_text("pools"),
+            )),
+            (1, 12) => Some((
+                "storage",
+                &["bitlocker"],
+                crate::i18n::storage_action_text("bitlocker"),
+            )),
+            (1, 13) => Some((
+                "native",
+                &["network", "interfaces"],
+                crate::i18n::system_page_text("network_interfaces"),
+            )),
+            (1, 14) => Some((
+                "native",
+                &["network", "routes"],
+                crate::i18n::system_page_text("network_routes"),
+            )),
+            (1, 15) => Some((
+                "native",
+                &["network", "dns"],
+                crate::i18n::system_page_text("network_dns"),
+            )),
+            (1, 16) => Some((
+                "native",
+                &["network", "listening"],
+                crate::i18n::system_page_text("network_listening"),
+            )),
+            (1, 17) => Some((
+                "native",
+                &["network", "connections"],
+                crate::i18n::native_action_text("network_connections"),
+            )),
+            (1, 18) => Some((
+                "native",
+                &["hardware", "status"],
+                crate::i18n::system_page_text("native_hardware_status"),
+            )),
+            (1, 19) => Some((
+                "native",
+                &["power", "status"],
+                crate::i18n::system_page_text("native_power_status"),
+            )),
+            (1, 20) => Some((
+                "native",
+                &["security", "status"],
+                crate::i18n::system_page_text("native_security_status"),
+            )),
+            (1, 21) => Some((
+                "native",
+                &["security", "scanners"],
+                crate::i18n::system_page_text("native_security_scanners"),
+            )),
             (1, 5) => Some(("system", &["status"], "system")),
             (1, 6) => Some(("accounts", &["list"], "accounts")),
             (1, 7) => Some(("native", &["network", "status"], "native")),
@@ -9256,10 +9631,38 @@ mod windows {
                 1 => Some("partitions"),
                 2 => Some("mounts"),
                 3 => Some("manager"),
+                10 => Some("usage"),
+                11 => Some("pools"),
+                12 => Some("bitlocker"),
                 _ => None,
             };
             if let Some(key) = storage_key {
                 return crate::i18n::storage_action_text(key).to_owned();
+            }
+            let network_key = match index {
+                13 => Some("network_interfaces"),
+                14 => Some("network_routes"),
+                15 => Some("network_dns"),
+                16 => Some("network_listening"),
+                17 => Some("network_connections"),
+                _ => None,
+            };
+            if let Some(key) = network_key {
+                return if key == "network_connections" {
+                    crate::i18n::native_action_text(key).to_owned()
+                } else {
+                    crate::i18n::system_page_text(key).to_owned()
+                };
+            }
+            let native_key = match index {
+                18 => Some("native_hardware_status"),
+                19 => Some("native_power_status"),
+                20 => Some("native_security_status"),
+                21 => Some("native_security_scanners"),
+                _ => None,
+            };
+            if let Some(key) = native_key {
+                return crate::i18n::system_page_text(key).to_owned();
             }
         }
         if label == "native_tools" {
@@ -9303,7 +9706,7 @@ mod windows {
             .creation_flags(0x0000_0010) // CREATE_NEW_CONSOLE
             .spawn()
         {
-            Ok(_) => "Se abrió el asistente WinSlim / NSudo en una consola independiente.".into(),
+            Ok(_) => crate::i18n::automation_text("winslim_opened").into(),
             Err(error) => format!("No se pudo abrir el asistente de consola: {error}"),
         }
     }
@@ -9317,12 +9720,16 @@ mod windows {
             .env("LTOOLS_CLI", "1")
             .env("LTOOLS_NO_AUTO_TERMINAL", "1")
             .arg("update")
-            .args(args.iter().copied().filter(|argument| *argument != "--pause"))
+            .args(
+                args.iter()
+                    .copied()
+                    .filter(|argument| *argument != "--pause"),
+            )
             .arg("--pause")
             .creation_flags(0x0000_0010) // CREATE_NEW_CONSOLE
             .spawn()
         {
-            Ok(_) => "Se abrió una consola independiente para comprobar o descargar una actualización. No se eleva el proceso ni se sustituye automáticamente la instalación.".into(),
+            Ok(_) => crate::i18n::automation_text("update_opened").into(),
             Err(error) => format!("No se pudo abrir la consola de actualización: {error}"),
         }
     }
@@ -9502,11 +9909,27 @@ mod windows {
             } else {
                 2
             };
+            let action_count = (0..ACTION_COUNT)
+                .filter(|index| action_spec(page, *index).is_some())
+                .count();
             let (action_top, action_height, row_gap) = if page == ACCOUNT_PAGE {
                 if action_columns == 3 {
                     (168, 36, 6)
                 } else {
                     (168, 30, 2)
+                }
+            } else if action_count > 10 {
+                // Long native menus must remain usable in the 640x480 smoke
+                // size too. Keep the normal 36px rows when they fit, and use
+                // the same two-line compact height as the narrow accounts
+                // form when the extra actions would otherwise be clipped.
+                let rows = (action_count as i32 + action_columns - 1) / action_columns;
+                let normal_height = rows * (36 + 6);
+                let compact = normal_height > page_height - 38 - 12;
+                if compact {
+                    (38, 30, 2)
+                } else {
+                    (38, 36, 6)
                 }
             } else {
                 (38, button_height, 10)
@@ -10045,6 +10468,9 @@ mod windows {
                         (1, 1) => crate::i18n::storage_action_text("partitions"),
                         (1, 2) => crate::i18n::storage_action_text("mounts"),
                         (1, 3) => crate::i18n::storage_action_text("manager"),
+                        (1, 10) => crate::i18n::storage_action_text("usage"),
+                        (1, 11) => crate::i18n::storage_action_text("pools"),
+                        (1, 12) => crate::i18n::storage_action_text("bitlocker"),
                         _ => crate::i18n::gui_text(label),
                     };
                     let text = wide(&format!("{}\n\n{}", label_text, result));
@@ -10632,26 +11058,56 @@ mod windows_menu_tests {
                 );
             }
         }
+    }
 
-        #[test]
-        fn account_menu_uses_selected_locale_for_title_and_actions() {
-            let _language_guard = crate::i18n::language_test_guard();
-            for language in crate::i18n::SUPPORTED {
-                crate::i18n::set(language);
-                let title = windows_menu_title(8).expect("account page title");
-                let labels = windows_menu_labels(8);
-                assert_eq!(title, crate::i18n::gui_account_text("title"));
-                assert_eq!(labels.len(), 18);
-                assert_eq!(labels[0], crate::i18n::gui_account_text("list"));
-                assert_eq!(labels[7], crate::i18n::gui_account_text("password"));
-                assert_eq!(labels[17], crate::i18n::gui_account_text("admin_groups"));
-                if *language != "es" {
-                    assert_ne!(labels[0], "Listar cuentas locales");
-                    assert_ne!(labels[7], "Cambiar contraseña");
+    #[test]
+    fn native_system_menu_uses_localized_hardware_power_and_security_actions() {
+        let _language_guard = crate::i18n::language_test_guard();
+        let spanish = [
+            "Estado del hardware",
+            "Estado y planes de energía",
+            "Estado del firewall y seguridad",
+            "Analizadores de código y CI",
+        ];
+        for language in crate::i18n::SUPPORTED {
+            crate::i18n::set(language);
+            let labels = windows_menu_labels(1);
+            assert_eq!(labels.len(), 22);
+            for expected in [
+                crate::i18n::system_page_text("native_hardware_status"),
+                crate::i18n::system_page_text("native_power_status"),
+                crate::i18n::system_page_text("native_security_status"),
+                crate::i18n::system_page_text("native_security_scanners"),
+            ] {
+                assert!(labels.iter().any(|label| label == expected));
+            }
+            if *language != "es" {
+                for expected in spanish {
+                    assert!(!labels.iter().any(|label| label == expected));
                 }
             }
-            crate::i18n::set("es");
         }
+        crate::i18n::set("es");
+    }
+
+    #[test]
+    fn account_menu_uses_selected_locale_for_title_and_actions() {
+        let _language_guard = crate::i18n::language_test_guard();
+        for language in crate::i18n::SUPPORTED {
+            crate::i18n::set(language);
+            let title = windows_menu_title(8).expect("account page title");
+            let labels = windows_menu_labels(8);
+            assert_eq!(title, crate::i18n::gui_account_text("title"));
+            assert_eq!(labels.len(), 18);
+            assert_eq!(labels[0], crate::i18n::gui_account_text("list"));
+            assert_eq!(labels[7], crate::i18n::gui_account_text("password"));
+            assert_eq!(labels[17], crate::i18n::gui_account_text("admin_groups"));
+            if *language != "es" {
+                assert_ne!(labels[0], "Listar cuentas locales");
+                assert_ne!(labels[7], "Cambiar contraseña");
+            }
+        }
+        crate::i18n::set("es");
     }
 
     #[test]
@@ -10665,6 +11121,32 @@ mod windows_menu_tests {
         assert!(settings
             .iter()
             .any(|label| label == "Descargar actualización verificada"));
+    }
+
+    #[test]
+    fn windows_storage_menu_exposes_all_safe_volume_queries() {
+        let _language_guard = crate::i18n::language_test_guard();
+        crate::i18n::set("es");
+        let labels = windows_menu_labels(1);
+        for expected in [
+            "Uso de espacio por volumen",
+            "Espacios de almacenamiento y discos virtuales",
+            "Estado de BitLocker",
+            "Interfaces y direcciones",
+            "Tabla de rutas",
+            "DNS y resolutores",
+            "Puertos escuchando",
+            "Conexiones de red",
+            "Estado del hardware",
+            "Estado y planes de energía",
+            "Estado del firewall y seguridad",
+            "Analizadores de código y CI",
+        ] {
+            assert!(
+                labels.iter().any(|label| label == expected),
+                "Windows storage menu lacks {expected}"
+            );
+        }
     }
 
     #[test]
@@ -10695,6 +11177,16 @@ mod windows_menu_tests {
             .iter()
             .any(|label| label == "Ver grupo y miembros administradores"));
     }
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn guide_menu_labels(page: usize) -> Vec<String> {
+    linux::menu_labels(page)
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn guide_page_title(page: usize) -> Option<String> {
+    linux::page_title(page)
 }
 
 #[cfg(target_os = "linux")]

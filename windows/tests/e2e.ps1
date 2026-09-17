@@ -11,6 +11,17 @@ New-Item -ItemType Directory -Force -Path (Join-Path $fixtureRoot 'Steam\steamap
 Set-Content -Encoding UTF8 (Join-Path $fixtureRoot 'Steam\steamapps\appmanifest_123.acf') '"name" "Native Example"'
 New-Item -ItemType Directory -Force -Path (Join-Path $fixtureRoot '.wine\drive_c') | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $fixtureRoot 'Lutris\games') | Out-Null
+$reparseTarget = Join-Path $fixtureRoot 'junction-target'
+$junctionPath = Join-Path $fixtureRoot 'junction-to-target'
+New-Item -ItemType Directory -Force -Path $reparseTarget | Out-Null
+Set-Content -Encoding UTF8 (Join-Path $reparseTarget 'keep.txt') 'junction target data'
+$junctionCreated = $false
+try {
+    New-Item -ItemType Junction -Path $junctionPath -Target $reparseTarget -ErrorAction Stop | Out-Null
+    $junctionCreated = $true
+} catch {
+    Write-Host '  [SKIP] no se pudo crear una junction para la regresión de reanálisis.'
+}
 $oldUserProfile = $env:USERPROFILE
 $oldHome = $env:HOME
 $oldAppData = $env:APPDATA
@@ -56,21 +67,148 @@ function Run-WithInput([string[]]$Arguments, [string]$InputText) {
     }
     Write-Host ([string](([string]$result.Stdout).Trim()))
 }
+function Get-NativeHelpArguments([string]$ToolName) {
+    switch -CaseSensitive ($ToolName) {
+        'adb' { return @('help') }
+        'git' { return @('help', '-a') }
+        'git-lfs' { return @('--help') }
+        'gh' { return @('--help') }
+        'ssh' { return @() }
+        'scp' { return @() }
+        'sftp' { return @() }
+        'ssh-keygen' { return @('-?') }
+        'ssh-keyscan' { return @('-?') }
+        'kubectl' { return @('help') }
+        'helm' { return @('help') }
+        '7z.exe' { return @('-h') }
+        'powershell' { return @('-?') }
+        'dotnet.exe' { return @('--help') }
+        'curl.exe' { return @('--help') }
+        'tar.exe' { return @('--help') }
+        'wsl.exe' { return @('--help') }
+        'python.exe' { return @('--help') }
+        'node.exe' { return @('--help') }
+        'npm.cmd' { return @('--help') }
+        'java.exe' { return @('-help') }
+        'winget' { return @('--help') }
+        'choco' { return @('--help') }
+        'scoop' { return @('help') }
+        'docker' { return @('--help') }
+        'docker-compose' { return @('--help') }
+        'podman' { return @('--help') }
+        'podman-compose' { return @('--help') }
+        'nerdctl' { return @('--help') }
+        'containerd' { return @('--help') }
+        'kubeadm' { return @('help') }
+        'kubelet' { return @('--help') }
+        'kind' { return @('--help') }
+        'minikube' { return @('--help') }
+        'k3d' { return @('--help') }
+        'k9s' { return @('--help') }
+        'nsudo' { return @('-?') }
+        'nslookup.exe' { return @('/?') }
+        'certutil.exe' { return @('-?') }
+        'hostname.exe' { return @() }
+        default { return @('/?') }
+    }
+}
+
 function Test-NativeHelp([string]$ToolName, [string[]]$Arguments) {
+    if ($ToolName -match '\.msc$' -or $ToolName -in @(
+        'msiexec.exe', 'trash', 'nsudo', 'msinfo32.exe', 'perfmon.exe', 'taskmgr.exe'
+    )) {
+        Write-Host ("  [SKIP] {0}: interfaz gráfica, integración o lanzador de elevación sin consulta segura" -f $ToolName)
+        return $false
+    }
+    if ($ToolName -eq 'hostname.exe') {
+        $command = Get-Command $ToolName -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($null -eq $command -or [string]::IsNullOrWhiteSpace([string]$command.Source)) {
+            throw 'El catálogo marca hostname.exe disponible, pero no se resuelve a un ejecutable.'
+        }
+        $result = Invoke-NativeProcess -FileName $command.Source -TimeoutSeconds 12
+        if ($result.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace([string]$result.Stdout)) {
+            throw 'hostname.exe no completó su consulta inocua sin argumentos.'
+        }
+        Write-Host '  [OK] consulta nativa inocua: hostname.exe (sin página de ayuda)'
+        return $true
+    }
+    if ($ToolName -match '^Get-[A-Za-z0-9]+$') {
+        $shell = Get-Command powershell.exe, pwsh.exe -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($null -eq $shell) { throw "No hay PowerShell para consultar la sintaxis de $ToolName." }
+        $syntax = Invoke-NativeProcess -FileName $shell.Source -Arguments @(
+            '-NoProfile', '-NonInteractive', '-Command', "Get-Command -Name '$ToolName' -Syntax"
+        ) -TimeoutSeconds 12
+        $syntaxOutput = [string]$syntax.Stdout + [string]$syntax.Stderr
+        if ($syntax.ExitCode -ne 0 -or $syntaxOutput -notmatch [regex]::Escape($ToolName)) {
+            throw "PowerShell no publicó la sintaxis nativa de $ToolName."
+        }
+        Write-Host ("  [OK] sintaxis nativa PowerShell: {0}" -f $ToolName)
+        return $true
+    }
+
+    $arguments = @($Arguments)
     $command = Get-Command $ToolName -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($null -eq $command) { return }
-    $result = Invoke-NativeProcess -FileName $command.Source -Arguments $Arguments -TimeoutSeconds 12
+    if ($ToolName -eq 'docker-compose' -and $null -eq $command) {
+        $command = Get-Command docker -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($null -ne $command) { $arguments = @('compose') + $arguments }
+    }
+    if ($null -eq $command -or [string]::IsNullOrWhiteSpace([string]$command.Source)) {
+        throw "El catálogo marca $ToolName disponible, pero no se resuelve a un ejecutable en la E2E."
+    }
+    $extension = [IO.Path]::GetExtension([string]$command.Source)
+    if ($extension -in @('.cmd', '.bat', '.ps1')) {
+        $shell = Get-Command powershell.exe, pwsh.exe -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($null -eq $shell) { throw "No hay PowerShell para consultar el wrapper $ToolName." }
+        $literalPath = ([string]$command.Source).Replace("'", "''")
+        $argumentText = ($arguments | ForEach-Object { " '$_'" }) -join ''
+        $result = Invoke-NativeProcess -FileName $shell.Source -Arguments @(
+            '-NoProfile', '-NonInteractive', '-Command', "& '$literalPath'$argumentText"
+        ) -TimeoutSeconds 12
+    } else {
+        $result = Invoke-NativeProcess -FileName $command.Source -Arguments $arguments -TimeoutSeconds 12
+    }
     $output = [string]$result.Stdout + [string]$result.Stderr
+    $helpLabels = @(
+        'usage', 'syntax', 'options', 'commands', 'available commands', 'parameters',
+        'uso', 'sintaxis', 'opciones', 'comandos', 'parámetros',
+        'utilisation', 'syntaxe', 'commandes', 'paramètres',
+        'verwendung', 'optionen', 'befehle', 'utilizzo', 'sintassi', 'opzioni', 'comandi', 'parametri',
+        'utilização', 'opções', 'opcions', 'ordres', 'paràmetres',
+        'gebruik', 'syntaxis', 'opties', 'opdrachten', 'użycie', 'składnia', 'opcje', 'polecenia',
+        'parametry', 'الاستخدام', 'استخدام', 'بناء الجملة', 'خيارات', 'أوامر', 'معلمات',
+        'उपयोग', 'वाक्य रचना', 'विकल्प', 'कमांड', 'पैरामीटर',
+        '使用法', '使用方法', '構文', 'オプション', 'コマンド', 'パラメーター', 'パラメータ',
+        '사용법', '구문', '옵션', '명령', '매개 변수',
+        'utilizare', 'sintaxă', 'opțiuni', 'comenzi', 'parametri',
+        'использование', 'синтаксис', 'параметры', 'опции', 'команды',
+        'використання', 'параметри', 'опції', 'команди',
+        '用法', '语法', '选项', '命令', '参数'
+    )
+    $helpPattern = '(?im)^\s*(' + (($helpLabels | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')\b'
     if ([string]::IsNullOrWhiteSpace($output)) {
         throw "La herramienta Windows $ToolName está instalada pero no devuelve ayuda."
     }
-    if ($output -notmatch '(?i)usage|options|commands|help|opciones|comandos|syntax|parameter') {
-        throw "La consulta de Windows $ToolName no parece una página de ayuda válida (código $($result.ExitCode))."
+    # Algunos clientes OpenSSH imprimen su uso en stderr y devuelven 1 o 255
+    # cuando se invocan sin destino (la forma segura que usamos aquí). Esos
+    # códigos son una excepción documentada; una herramienta distinta debe
+    # terminar correctamente para que una salida de error no se contabilice
+    # como ayuda válida.
+    $nonZeroHelpTools = @('ssh', 'scp', 'sftp', 'ssh-keygen', 'ssh-keyscan')
+    $helpExitAccepted = $result.ExitCode -eq 0 -or
+        ($ToolName -in $nonZeroHelpTools -and $result.ExitCode -in @(1, 255))
+    if (-not $helpExitAccepted) {
+        throw "La consulta de Windows $ToolName terminó con código $($result.ExitCode); no se acepta salida parcial como ayuda."
+    }
+    if ($output -notmatch $helpPattern) {
+        throw "La consulta de Windows $ToolName no muestra uso/opciones nativos reconocibles (código $($result.ExitCode))."
     }
     if ($output -match '(?i)unknown command|unrecognized command|invalid choice|not a valid command|unknown option|unrecognized option|invalid option|illegal option|bad option|invalid parameter|incorrect parameter|incorrect syntax') {
         throw "La ayuda Windows de $ToolName rechazó la consulta solicitada (código $($result.ExitCode))."
     }
-    Write-Host ("  [OK] ayuda nativa Windows: {0} ({1})" -f $ToolName, ($Arguments -join ' '))
+    Write-Host ("  [OK] ayuda nativa Windows: {0} ({1})" -f $ToolName, ($arguments -join ' '))
+    return $true
 }
 
 try {
@@ -126,6 +264,61 @@ try {
         $capabilities -match 'Heroic|Lutris|UMU') {
         throw 'El contrato JSON Windows anuncia o mezcla funciones Linux/Wine.'
     }
+    $actionCatalogText = Run @('actions', 'list', '--format', 'json')
+    $actionCatalog = $actionCatalogText | ConvertFrom-Json
+    if ($actionCatalog.schema -ne 'ltools-actions-v1' -or
+        $actionCatalog.platform -ne 'windows' -or
+        $null -eq $actionCatalog.actions) {
+        throw 'El catálogo JSON Windows de acciones no devuelve esquema, plataforma o acciones válidos.'
+    }
+    $actionEntries = @($actionCatalog.actions)
+    if ($actionEntries.Count -eq 0) {
+        throw 'El catálogo JSON Windows de acciones está vacío.'
+    }
+    $actionIds = @($actionEntries | ForEach-Object { [string]$_.id })
+    if (($actionIds | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -ne 0 -or
+        (@($actionIds | Sort-Object -Unique).Count -ne $actionIds.Count)) {
+        throw 'El catálogo JSON Windows contiene IDs de acciones vacíos o duplicados.'
+    }
+    $knownActionBackends = @(
+        'audit', 'packages', 'games', 'storage', 'native', 'system', 'accounts',
+        'defaults', 'clean', 'diagnostics', 'automation', 'boot', 'wine'
+    )
+    foreach ($action in $actionEntries) {
+        if ([string]::IsNullOrWhiteSpace([string]$action.category) -or
+            [string]::IsNullOrWhiteSpace([string]$action.command) -or
+            $knownActionBackends -notcontains [string]$action.command -or
+            [string]::IsNullOrWhiteSpace([string]$action.target) -or
+            [string]::IsNullOrWhiteSpace([string]$action.profile) -or
+            [string]::IsNullOrWhiteSpace([string]$action.confirmation) -or
+            $action.mutating -isnot [bool]) {
+            throw "La acción Windows $($action.id) carece de backend, política o metadatos válidos."
+        }
+        $invalidActionArgs = @($action.args | Where-Object { $_ -isnot [string] })
+        if ($invalidActionArgs.Count -ne 0) {
+            throw "La acción Windows $($action.id) contiene argumentos que no son cadenas."
+        }
+        if ([string]$action.target -ne 'none' -and
+            [string]$action.targetPolicy -ne 'explicit-only') {
+            throw "La acción Windows $($action.id) no exige objetivo explícito."
+        }
+        if ([bool]$action.mutating -and [string]$action.confirmation -eq 'none') {
+            throw "La acción Windows mutadora $($action.id) no tiene confirmación."
+        }
+    }
+    Write-Host ("  [OK] catálogo Windows de acciones: {0} IDs, backends, argumentos y políticas verificados" -f $actionEntries.Count)
+    foreach ($nativeActionId in @('native-network', 'native-hardware', 'native-security')) {
+        $nativeActions = @($capabilityJson.actions | Where-Object { $_.id -eq $nativeActionId })
+        if ($nativeActions.Count -ne 1 -or @($nativeActions[0].requiresCommands).Count -ne 0) {
+            throw "El contrato Windows marca $nativeActionId como dependiente de una herramienta opcional pese a disponer de fallbacks nativos."
+        }
+    }
+    $powerAction = @($capabilityJson.actions | Where-Object { $_.id -eq 'native-power' })
+    if ($powerAction.Count -ne 1 -or
+        @($powerAction[0].requiresCommands) -notcontains 'powercfg') {
+        throw 'El contrato Windows no conserva powercfg como dependencia nativa de energía.'
+    }
+    Write-Host '  [OK] contrato Windows distingue fallbacks nativos de dependencias opcionales'
     $updateHelp = Run @('update', '--help')
     foreach ($marker in @('check', 'download', '--repository OWNER/REPO')) {
         if ($updateHelp -notmatch [regex]::Escape($marker)) {
@@ -159,12 +352,140 @@ try {
     if ($storageStatus -notmatch 'Almacenamiento Windows') { throw 'El estado de almacenamiento Windows falló.' }
     $storagePartitions = Run @('storage', 'partitions')
     if ($storagePartitions -notmatch 'Discos y particiones Windows') { throw 'El inventario de particiones Windows falló.' }
-    $nativeTools = Run @('native', 'tools', 'status')
-    foreach ($toolName in @('ssh', 'scp', 'sftp', 'adb', 'docker', 'kubectl')) {
-        if ($nativeTools -notmatch [regex]::Escape($toolName)) {
-            throw "El inventario Windows de herramientas nativas no mostró $toolName."
+    foreach ($storageQuery in @('usage', 'pools', 'bitlocker')) {
+        $storageQueryOutput = Run @('storage', $storageQuery)
+        if ([string]::IsNullOrWhiteSpace($storageQueryOutput)) {
+            throw "La consulta Windows de almacenamiento $storageQuery no devolvió salida."
         }
     }
+    $storageMapJson = Run @('storage', 'map', '--path', $fixtureRoot, '--depth', '1', '--format', 'json')
+    $storageMap = $storageMapJson | ConvertFrom-Json
+    if ($storageMap.schema -ne 'ltools-storage-map-v1' -or
+        $storageMap.platform -ne 'windows' -or $storageMap.roots.Count -ne 1) {
+        throw 'El mapa Windows no devuelve su esquema, plataforma y raíz esperados.'
+    }
+    $mappedVolume = $storageMap.roots[0]
+    if ($null -eq $mappedVolume.filesystem_total -or
+        $null -eq $mappedVolume.filesystem_used -or
+        $null -eq $mappedVolume.filesystem_free -or
+        $null -eq $mappedVolume.filesystem_available -or
+        [uint64]$mappedVolume.filesystem_total -ne
+        ([uint64]$mappedVolume.filesystem_used + [uint64]$mappedVolume.filesystem_free) -or
+        [uint64]$mappedVolume.filesystem_available -gt [uint64]$mappedVolume.filesystem_free) {
+        throw 'El mapa Windows no informa espacio total, ocupado, libre y disponible de forma coherente.'
+    }
+    $tarCommand = Get-Command tar.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -ne $tarCommand) {
+        $archiveSource = Join-Path $temp 'safe archive source'
+        New-Item -ItemType Directory -Force -Path $archiveSource | Out-Null
+        Set-Content -Encoding UTF8 (Join-Path $archiveSource 'inside.txt') 'archive fixture'
+        $safeArchive = Join-Path $temp 'safe-archive.tar'
+        $archiveResult = Invoke-NativeProcess -FileName $Binary -Arguments @(
+            'storage', 'manage', 'tar', '--source', $archiveSource,
+            '--destination', $safeArchive, '--yes'
+        )
+        if ($archiveResult.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $safeArchive -PathType Leaf)) {
+            throw 'El archivador Windows no pudo publicar un TAR completo.'
+        }
+        $archiveListing = Invoke-NativeProcess -FileName $tarCommand.Source -Arguments @('-tf', $safeArchive)
+        if ($archiveListing.ExitCode -ne 0 -or [string]$archiveListing.Stdout -notmatch 'inside\.txt') {
+            throw 'El TAR Windows publicado no contiene el archivo esperado.'
+        }
+        $existingArchive = Join-Path $temp 'existing-archive.tar'
+        Set-Content -Encoding ASCII $existingArchive 'preserve existing archive'
+        $existingResult = Invoke-NativeProcess -FileName $Binary -Arguments @(
+            'storage', 'manage', 'tar', '--source', $archiveSource,
+            '--destination', $existingArchive, '--yes'
+        )
+        if ($existingResult.ExitCode -eq 0 -or
+            (Get-Content -Raw -LiteralPath $existingArchive).Trim() -ne 'preserve existing archive') {
+            throw 'El archivador Windows sobrescribió un destino preexistente.'
+        }
+        if (@(Get-ChildItem -LiteralPath $temp -Directory -Force |
+            Where-Object { $_.Name -like '.ltools-stage-*' }).Count -gt 0) {
+            throw 'El gestor de archivos Windows dejó un directorio temporal de staging.'
+        }
+        Write-Host '  [OK] TAR Windows: staging publicado completo, destino existente preservado y staging retirado'
+    } else {
+        Write-Host '  [SKIP] TAR Windows no está instalado; no se valida publicación de archivos.'
+    }
+    if ($junctionCreated) {
+        $junctionNode = @($mappedVolume.children | Where-Object { $_.path -ieq $junctionPath }) |
+            Select-Object -First 1
+        if ($null -eq $junctionNode -or
+            $junctionNode.kind -notin @('symlink', 'reparse-point') -or
+            $junctionNode.size -ne 0 -or @($junctionNode.children).Count -ne 0) {
+            throw 'El mapa Windows atravesó una junction o no la identificó como punto de reanálisis.'
+        }
+        $junctionDelete = Invoke-NativeProcess -FileName $Binary -Arguments @(
+            'storage', 'manage', 'delete', '--path', $junctionPath, '--yes'
+        )
+        if ($junctionDelete.ExitCode -eq 0 -or
+            -not (Test-Path -LiteralPath $junctionPath) -or
+            -not (Test-Path -LiteralPath (Join-Path $reparseTarget 'keep.txt'))) {
+            throw 'La papelera Windows no rechazó la junction o alteró su destino.'
+        }
+        $junctionArchivePath = Join-Path $temp 'junction-tree.zip'
+        $junctionArchive = Invoke-NativeProcess -FileName $Binary -Arguments @(
+            'storage', 'manage', 'zip', '--source', $fixtureRoot,
+            '--destination', $junctionArchivePath, '--yes'
+        )
+        if ($junctionArchive.ExitCode -eq 0 -or (Test-Path -LiteralPath $junctionArchivePath)) {
+            throw 'El archivador Windows atravesó una junction dentro del árbol.'
+        }
+        $cleanerLocalAppData = Join-Path $fixtureRoot 'cleaner-local-appdata'
+        $cleanerTempRoot = Join-Path $cleanerLocalAppData 'Temp'
+        $cleanerSystemRoot = Join-Path $fixtureRoot 'cleaner-windows-root'
+        $cleanerJunction = Join-Path $cleanerTempRoot 'external-junction'
+        New-Item -ItemType Directory -Force -Path $cleanerTempRoot, (Join-Path $cleanerSystemRoot 'Temp') | Out-Null
+        Set-Content -Encoding UTF8 (Join-Path $cleanerTempRoot 'ordinary.tmp') 'preserve incomplete cleanup'
+        New-Item -ItemType Junction -Path $cleanerJunction -Target $reparseTarget -ErrorAction Stop | Out-Null
+        $savedCleanerLocalAppData = $env:LOCALAPPDATA
+        $savedCleanerTemp = $env:TEMP
+        $savedCleanerSystemRoot = $env:SystemRoot
+        try {
+            $env:LOCALAPPDATA = $cleanerLocalAppData
+            $env:TEMP = $cleanerTempRoot
+            $env:SystemRoot = $cleanerSystemRoot
+            $cleanerResult = Invoke-NativeProcess -FileName $Binary -Arguments @('clean', '--automatic') `
+                -InputText ("y{0}y{0}" -f [Environment]::NewLine) -TimeoutSeconds 30
+            $cleanerOutput = [string]$cleanerResult.Stdout + [string]$cleanerResult.Stderr
+        } finally {
+            $env:LOCALAPPDATA = $savedCleanerLocalAppData
+            $env:TEMP = $savedCleanerTemp
+            $env:SystemRoot = $savedCleanerSystemRoot
+        }
+        if ($cleanerResult.ExitCode -eq 0 -or
+            $cleanerOutput -notmatch '(?i)punto de reanálisis' -or
+            -not (Test-Path -LiteralPath $cleanerJunction) -or
+            -not (Test-Path -LiteralPath (Join-Path $reparseTarget 'keep.txt')) -or
+            -not (Test-Path -LiteralPath (Join-Path $cleanerTempRoot 'ordinary.tmp'))) {
+            throw 'El limpiador Windows no informó el fallo o borró contenido antes de detectar la junction.'
+        }
+        Write-Host '  [OK] limpiador Windows rechaza junctions antes de borrar contenido y nunca toca su destino'
+        Write-Host '  [OK] mapa/papelera/archivo Windows no atraviesan ni borran el destino de una junction'
+    }
+    Write-Host '  [OK] mapa Windows: total, ocupado, libre total y disponible para la cuenta coherentes'
+    $nativeTools = Run @('native', 'tools', 'status')
+    foreach ($toolName in @('ssh', 'scp', 'sftp', 'adb', 'docker', 'kubectl', 'shellcheck.exe', 'actionlint.exe', 'zizmor.exe', 'gitleaks.exe', 'osv-scanner.exe', 'codeql.exe', 'scorecard.exe', 'cargo-audit.exe', 'cargo-deny.exe')) {
+        if ($nativeTools -notmatch "(?im)^$([regex]::Escape($toolName))[\t ]{2,}") {
+            throw "El inventario Windows de herramientas nativas no mostró la fila de $toolName.`nSalida recibida:`n$nativeTools"
+        }
+    }
+    foreach ($networkAction in @('status', 'interfaces', 'routes', 'dns', 'listening', 'connections')) {
+        $networkOutput = Run @('native', 'network', $networkAction)
+        if ([string]::IsNullOrWhiteSpace($networkOutput)) {
+            throw "La consulta nativa Windows de red $networkAction no devolvió salida."
+        }
+    }
+    Write-Host '  [OK] red Windows: interfaces, rutas, DNS, escucha y conexiones por separado'
+    foreach ($nativeQuery in @('hardware', 'power', 'security')) {
+        $nativeQueryOutput = Run @('native', $nativeQuery, 'status')
+        if ([string]::IsNullOrWhiteSpace($nativeQueryOutput)) {
+            throw "La consulta nativa Windows de $nativeQuery no devolvió salida."
+        }
+    }
+    Write-Host '  [OK] hardware, energía y seguridad Windows: herramientas nativas o fallbacks integrados'
     $accountsGuide = Run @('guide', 'gui', 'accounts')
     foreach ($adminMarker in @('Conceder permisos de administrador', 'Ver grupo y miembros administradores', 'S-1-5-32-544', 'TrustedInstaller es una identidad de servicio')) {
         if ($accountsGuide -notmatch [regex]::Escape($adminMarker)) {
@@ -175,31 +496,45 @@ try {
     if ($adminDryRun -notmatch 'S-1-5-32-544' -or $adminDryRun -notmatch 'Add-LocalGroupMember') {
         throw 'La concesión de administrador Windows no prepara el grupo integrado correcto en modo simulación.'
     }
-    $nativeHelpSpecs = @(
-        [pscustomobject]@{ Tool = 'adb'; Args = @('help') }
-        [pscustomobject]@{ Tool = 'git'; Args = @('help', '-a') }
-        [pscustomobject]@{ Tool = 'gh'; Args = @('--help') }
-        # OpenSSH clients print usage without a destination and return a
-        # nonzero status; -h is not a portable help flag for these tools.
-        [pscustomobject]@{ Tool = 'ssh'; Args = @() }
-        [pscustomobject]@{ Tool = 'scp'; Args = @() }
-        [pscustomobject]@{ Tool = 'sftp'; Args = @() }
-        [pscustomobject]@{ Tool = 'docker'; Args = @('--help') }
-        [pscustomobject]@{ Tool = 'podman'; Args = @('--help') }
-        [pscustomobject]@{ Tool = 'kubectl'; Args = @('help') }
-        [pscustomobject]@{ Tool = 'curl'; Args = @('--help') }
-        [pscustomobject]@{ Tool = 'winget'; Args = @('--help') }
-        [pscustomobject]@{ Tool = 'choco'; Args = @('--help') }
-        [pscustomobject]@{ Tool = 'sc.exe'; Args = @('/?') }
-        [pscustomobject]@{ Tool = 'reg.exe'; Args = @('/?') }
-    )
-    foreach ($spec in $nativeHelpSpecs) {
-        Test-NativeHelp $spec.Tool $spec.Args
+    $nativeHelpTested = 0
+    $nativeHelpSkipped = 0
+    foreach ($tool in $capabilityJson.host_tools) {
+        if (-not $tool.available) { continue }
+        $arguments = @(Get-NativeHelpArguments ([string]$tool.command))
+        if (Test-NativeHelp ([string]$tool.command) $arguments) {
+            $nativeHelpTested++
+        } else {
+            $nativeHelpSkipped++
+        }
     }
+    if ($nativeHelpTested -eq 0) { throw 'La E2E no ejecutó ayudas ni sintaxis de herramientas Windows disponibles.' }
+    Write-Host ("  [OK] catálogo nativo Windows: {0} ayudas, sintaxis o consultas inocuas probadas; {1} GUI/integraciones/lanzadores privilegiados omitidos" -f $nativeHelpTested, $nativeHelpSkipped)
     $diskGuide = Run @('storage', 'guide')
     foreach ($guideMarker in @('list disk', 'select disk', 'detail disk', 'clean all', 'C:')) {
         if ($diskGuide -notmatch [regex]::Escape($guideMarker)) {
             throw "La guía DiskPart Windows no contiene el paso protegido esperado: $guideMarker"
+        }
+    }
+    if (-not (($capabilityJson.host_tools | ForEach-Object { [string]$_.id }) -contains 'git-lfs')) {
+        throw 'El catálogo Windows omite Git LFS como dependencia instalable de Git for Windows.'
+    }
+    $gitLfsTool = @($capabilityJson.host_tools | Where-Object { $_.id -eq 'git-lfs' }) | Select-Object -First 1
+    if ([string]$gitLfsTool.install_package -ne 'Git.Git') {
+        throw 'Git LFS Windows no está vinculado al paquete Git.Git.'
+    }
+    if ($gitLfsTool.available) {
+        $gitLfsVersion = Run @('git', 'lfs', 'version')
+        if ($gitLfsVersion -notmatch 'git-lfs') {
+            throw 'Git LFS está marcado como disponible, pero `git lfs version` no respondió.'
+        }
+        Write-Host '  [OK] Git LFS Windows disponible y ejecutable mediante Git for Windows'
+    } else {
+        Write-Host '  [SKIP] Git LFS no está instalado en este anfitrión Windows; catálogo e instalación sí están verificados.'
+    }
+    $windowsGitGuide = Run @('guide', 'cli', 'git')
+    foreach ($gitLfsMarker in @('git-lfs.exe', 'ltools git lfs status', 'git lfs native')) {
+        if ($windowsGitGuide -notmatch [regex]::Escape($gitLfsMarker)) {
+            throw "La guía Git Windows omite la integración de Git LFS: $gitLfsMarker"
         }
     }
     $windowsGuideTopics = @('audit','packages','software','git','aliases','automation','automation-register','clean','storage','storage-partitions','storage-filesystems','storage-volumes','system','services','accounts','native','network','boot','registry','diagnostics','defaults','installable','settings','updates','containers','containers-lifecycle','containers-images','containers-volumes','containers-compose','kubernetes','ssh','connectivity','adb','utilities','privileges','wine','prefix','winslim')
@@ -312,13 +647,20 @@ try {
     foreach ($nativeOption in @(
         'Resumen de espacio y montajes', 'Discos y particiones',
         'Abrir gestor nativo de particiones', 'Estado del sistema',
-        'Arranque, EFI y cargador del sistema', 'Inspeccionar el Registro de Windows', 'Volver'
+        'Arranque, EFI y cargador del sistema', 'Inspeccionar el Registro de Windows', 'Volver',
+        'Estado del hardware', 'Estado y planes de energía',
+        'Estado del firewall y seguridad', 'Analizadores de código y CI'
     )) {
         if ($nativeGuiGuide -notmatch [regex]::Escape($nativeOption)) {
             throw "La guía de herramientas nativas Windows no refleja su botón: $nativeOption"
         }
     }
     $windowsStorageGuiGuide = Run @('guide', 'gui', 'storage')
+    foreach ($storageGuiOption in @('Uso de espacio por volumen', 'Espacios de almacenamiento y discos virtuales', 'Estado de BitLocker')) {
+        if ($windowsStorageGuiGuide -notmatch [regex]::Escape($storageGuiOption)) {
+            throw "La guía gráfica Windows no refleja la consulta disponible: $storageGuiOption"
+        }
+    }
     if ($windowsStorageGuiGuide -notmatch 'no está integrado en la\s+GUI Windows' -or
         $windowsStorageGuiGuide -match 'Mapa desplegable de discos y rutas') {
         throw 'La guía gráfica de almacenamiento Windows afirma que existe un mapa interactivo que no está en esta GUI.'

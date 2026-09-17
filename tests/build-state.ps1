@@ -36,6 +36,12 @@ Assert-Impact 'cambio de tests Rust' $rustTestChange @('CargoTests') @('RustComp
 $rustTestDeletion = Get-LToolsBuildImpact ([ordered]@{ 'rust/tests/cli.rs' = 'old' }) ([ordered]@{})
 Assert-Impact 'eliminación de tests Rust' $rustTestDeletion @('CargoTests') @('RustCompile', 'Package', 'WindowsSmoke', 'WindowsE2E')
 
+$fuzzPolicyChange = Get-LToolsBuildImpact ([ordered]@{ 'fuzz/deny.toml' = 'old' }) ([ordered]@{ 'fuzz/deny.toml' = 'new' })
+Assert-Impact 'cambio de la política del fuzzer' $fuzzPolicyChange @() @('RustCompile', 'Package', 'CargoTests', 'WindowsSmoke', 'WindowsE2E')
+
+$rustSharedLibraryChange = Get-LToolsBuildImpact ([ordered]@{ 'rust/crates/native-argv/src/lib.rs' = 'old' }) ([ordered]@{ 'rust/crates/native-argv/src/lib.rs' = 'new' })
+Assert-Impact 'cambio de biblioteca Rust compartida' $rustSharedLibraryChange @('RustCompile', 'Package', 'CargoTests', 'WindowsSmoke', 'WindowsE2E') @()
+
 $distributionChange = Get-LToolsBuildImpact ([ordered]@{ 'distribution/ltools-project.json' = 'old' }) ([ordered]@{ 'distribution/ltools-project.json' = 'new' })
 Assert-Impact 'cambio del descriptor de distribución' $distributionChange @('Package') @('RustCompile', 'CargoTests', 'WindowsSmoke', 'WindowsE2E')
 
@@ -44,6 +50,9 @@ Assert-Impact 'cambio del README empaquetado' $readmeChange @('Package') @('Rust
 
 $windowsE2EChange = Get-LToolsBuildImpact ([ordered]@{ 'windows/tests/e2e.ps1' = 'old' }) ([ordered]@{ 'windows/tests/e2e.ps1' = 'new' })
 Assert-Impact 'cambio de E2E Windows' $windowsE2EChange @('WindowsE2E') @('RustCompile', 'Package', 'CargoTests', 'WindowsSmoke')
+
+$nativeProcessHelperChange = Get-LToolsBuildImpact ([ordered]@{ 'windows/tests/native-process.ps1' = 'old' }) ([ordered]@{ 'windows/tests/native-process.ps1' = 'new' })
+Assert-Impact 'cambio del helper de procesos Windows' $nativeProcessHelperChange @('WindowsSmoke', 'WindowsE2E', 'ReleaseTests') @('RustCompile', 'Package', 'CargoTests')
 
 $builderChange = Get-LToolsBuildImpact ([ordered]@{ 'scripts/build.ps1' = 'old' }) ([ordered]@{ 'scripts/build.ps1' = 'new' })
 Assert-Impact 'cambio de builder Windows' $builderChange @('Package', 'BuildStateTests', 'PublishTests') @('RustCompile', 'CargoTests', 'WindowsSmoke', 'WindowsE2E')

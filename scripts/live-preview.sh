@@ -24,7 +24,8 @@ fi
 source_fingerprint() {
     local path
     {
-        find "$ROOT_DIR/rust/src" "$ROOT_DIR/rust/.cargo" -type f -print0 2>/dev/null || true
+        find "$ROOT_DIR/rust/src" "$ROOT_DIR/rust/crates" "$ROOT_DIR/rust/.cargo" \
+            -type f -print0 2>/dev/null || true
         for path in "$ROOT_DIR/rust/Cargo.toml" "$ROOT_DIR/rust/Cargo.lock" "$ROOT_DIR/rust/build.rs" \
             "$ROOT_DIR/rust/rust-toolchain" "$ROOT_DIR/rust/rust-toolchain.toml"; do
             [[ ! -f "$path" ]] || printf '%s\0' "$path"

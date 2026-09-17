@@ -365,7 +365,7 @@ function Get-Relative([string]$Path) {
 }
 function Get-Inputs {
     $files = @()
-    foreach ($base in @("rust/src", "rust/tests", "rust/.cargo", "windows", "appimage", "distribution", "tests", "docs", "scripts", ".cargo")) {
+    foreach ($base in @("rust/src", "rust/crates", "rust/tests", "rust/.cargo", "windows", "appimage", "distribution", "tests", "docs", "scripts", ".cargo")) {
         $dir = Join-Path $Root $base
         if (Test-Path -LiteralPath $dir -PathType Container) {
             $files += Get-ChildItem -LiteralPath $dir -Recurse -File -Force
@@ -374,7 +374,8 @@ function Get-Inputs {
     foreach ($relative in @(
         "rust\Cargo.toml", "rust\Cargo.lock", "rust\build.rs",
         "rust\rust-toolchain", "rust\rust-toolchain.toml",
-        ".cargo\config", ".cargo\config.toml", "README.md"
+        ".cargo\config", ".cargo\config.toml", "README.md",
+        "deny.toml", "fuzz\Cargo.toml", "fuzz\Cargo.lock", "fuzz\deny.toml"
     )) {
         $path = Join-Path $Root $relative
         if (Test-Path -LiteralPath $path -PathType Leaf) { $files += Get-Item -LiteralPath $path -Force }
@@ -460,29 +461,29 @@ function Write-RustAutofixChanges([hashtable]$Before) {
     if (-not $reported) { Write-Log '[AUTO-FIX] no persistieron cambios de archivo.' }
 }
 function Invoke-RustQualityChecks {
-    $formatCheck = @('fmt', '--manifest-path', $CargoManifest, '--', '--check')
+    $formatCheck = @('fmt', '--manifest-path', $CargoManifest, '--all', '--', '--check')
     $formatExit = Invoke-NativeCommand 'cargo' $formatCheck
     if ($formatExit -ne 0) {
         if (-not $AutoFix) {
             throw 'rustfmt detectó diferencias; corrígelas o vuelve a ejecutar con -AutoFix para aplicar formato y reescanear.'
         }
         $rustFixBefore = Get-RustSourceHashes
-        Invoke-Cargo @('fmt', '--manifest-path', $CargoManifest)
+        Invoke-Cargo @('fmt', '--manifest-path', $CargoManifest, '--all')
         Write-Log '[AUTO-FIX] rustfmt aplicó el formato; se repite el escaneo antes de continuar.'
         Write-RustAutofixChanges $rustFixBefore
         Invoke-Cargo $formatCheck
     }
 
-    $clippyCheck = @('clippy', '--locked', '--manifest-path', $CargoManifest, '--all-targets', '--target', $Target, '--', '-D', 'warnings')
+    $clippyCheck = @('clippy', '--all-features', '--locked', '--manifest-path', $CargoManifest, '--workspace', '--all-targets', '--target', $Target, '--', '-D', 'warnings')
     $clippyExit = Invoke-NativeCommand 'cargo' $clippyCheck
     if ($clippyExit -ne 0) {
         if (-not $AutoFix) {
             throw 'Clippy encontró avisos; corrígelos o vuelve a ejecutar con -AutoFix para aplicar solo sugerencias mecánicas y reescanear.'
         }
         $rustFixBefore = Get-RustSourceHashes
-        Invoke-Cargo @('clippy', '--fix', '--allow-dirty', '--allow-staged', '--locked', '--manifest-path', $CargoManifest, '--all-targets', '--target', $Target)
+        Invoke-Cargo @('clippy', '--fix', '--allow-dirty', '--allow-staged', '--all-features', '--locked', '--manifest-path', $CargoManifest, '--workspace', '--all-targets', '--target', $Target)
         Write-Log '[AUTO-FIX] Clippy aplicó sugerencias mecánicas; se volverán a ejecutar formato y Clippy estricto.'
-        Invoke-Cargo @('fmt', '--manifest-path', $CargoManifest)
+        Invoke-Cargo @('fmt', '--manifest-path', $CargoManifest, '--all')
         Write-Log '[AUTO-FIX] rustfmt normalizó el resultado de Clippy antes del reescaneo.'
         Write-RustAutofixChanges $rustFixBefore
         Invoke-Cargo $formatCheck
@@ -502,12 +503,14 @@ function Invoke-RustSecurityAudit {
     else {
         Invoke-Step 'Actualizando y auditando advisories Rust' {
             Invoke-Cargo @('audit', '--file', (Join-Path $Root 'rust\Cargo.lock'))
+            Invoke-Cargo @('audit', '--file', (Join-Path $Root 'fuzz\Cargo.lock'))
         }
     }
     if (-not $denyAvailable) { Write-Log 'AVISO: cargo-deny no está instalado; se omite la revisión de licencias y fuentes.' }
     else {
         Invoke-Step 'Revisando advisories, licencias y fuentes Rust' {
             Invoke-Cargo @('deny', '--manifest-path', $CargoManifest, '--config', (Join-Path $Root 'deny.toml'), 'check')
+            Invoke-Cargo @('deny', '--manifest-path', (Join-Path $Root 'fuzz\Cargo.toml'), '--config', (Join-Path $Root 'fuzz\deny.toml'), 'check')
         }
     }
 }
@@ -556,7 +559,15 @@ function Invoke-StaticSecurityReview {
     } else { Write-Log '[REVIEW][SKIP] actionlint no está instalado; no se considera superado.' }
     if ($zizmor) {
         Invoke-Step 'zizmor de workflows y automatizaciones GitHub' {
-            $exitCode = Invoke-NativeCommand 'zizmor' @('--offline', (Join-Path $Root '.github'))
+            $zizmorInput = Join-Path $Root '.github'
+            $hasGitHubToken = $env:GH_TOKEN -or $env:GITHUB_TOKEN -or $env:ZIZMOR_GITHUB_TOKEN
+            if ($hasGitHubToken) {
+                Write-Log '[REVIEW] zizmor online: se verifican también referencias remotas de acciones.'
+                $exitCode = Invoke-NativeCommand 'zizmor' @($zizmorInput)
+            } else {
+                Write-Log '[REVIEW][PARTIAL] zizmor offline: no se verifican referencias remotas; el workflow de GitHub ejecuta la auditoría online.'
+                $exitCode = Invoke-NativeCommand 'zizmor' @('--offline', $zizmorInput)
+            }
             if ($exitCode -ne 0) { throw "zizmor terminó con código $exitCode." }
         }
     } else { Write-Log '[REVIEW][SKIP] zizmor no está instalado; GitHub Actions lo ejecuta en el workflow de seguridad.' }
@@ -835,7 +846,7 @@ if ($needPublishTests) {
     }
 }
 if ($needCargoTests) {
-    Invoke-Step "Ejecutando tests Rust" { Invoke-Cargo @('test', '--locked', '--manifest-path', $CargoManifest, '--target', $Target) }
+    Invoke-Step "Ejecutando tests Rust (todas las features y targets)" { Invoke-Cargo @('test', '--all-features', '--all-targets', '--locked', '--manifest-path', $CargoManifest, '--workspace', '--target', $Target) }
 }
 if ($Target -match 'windows') {
     $smoke = Join-Path $Root 'windows\tests\smoke.ps1'

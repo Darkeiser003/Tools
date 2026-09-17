@@ -375,6 +375,32 @@ EOF
 
     PATH="$REAL_PATH" "$BIN" --dry-run git release --repo example/example --tag e2e-v1 --title 'E2E' --notes 'Prueba' --yes > "$TMP_DIR/gh-release.out"
     grep -Fq 'gh release create' "$TMP_DIR/gh-release.out" || die 'gh release no mostró su plan'
+    LFS_STUB_DIR="$TMP_DIR/git-lfs-stub"
+    mkdir -p "$LFS_STUB_DIR"
+    cat > "$LFS_STUB_DIR/git-lfs" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+printf '%s\n' "$@" >> "${LTOOLS_LFS_ARGV_LOG:?}"
+printf 'Git LFS test stub: %s\n' "$*"
+EOF
+    chmod +x "$LFS_STUB_DIR/git-lfs"
+    LFS_ARGV_LOG="$TMP_DIR/git-lfs-argv.log"
+    : > "$LFS_ARGV_LOG"
+    env PATH="$LFS_STUB_DIR:$REAL_PATH" LTOOLS_LFS_ARGV_LOG="$LFS_ARGV_LOG" \
+        "$BIN" git lfs status --repo "$REPO" > "$TMP_DIR/git-lfs-status.out"
+    grep -Fqx 'status' "$LFS_ARGV_LOG" || die 'Git LFS status no conservó el subcomando nativo'
+    env PATH="$LFS_STUB_DIR:$REAL_PATH" LTOOLS_LFS_ARGV_LOG="$LFS_ARGV_LOG" \
+        "$BIN" --dry-run git lfs native push --include 'large file' --repo "$REPO" --yes > "$TMP_DIR/git-lfs-push.out"
+    grep -Fq 'git -C' "$TMP_DIR/git-lfs-push.out" || die 'Git LFS native dry-run no mostró el repositorio'
+    grep -Fq 'push' "$TMP_DIR/git-lfs-push.out" || die 'Git LFS native dry-run no conservó push'
+    set +e
+    env PATH="$LFS_STUB_DIR:$REAL_PATH" LTOOLS_LFS_ARGV_LOG="$LFS_ARGV_LOG" \
+        "$BIN" git lfs env --repo "$REPO" > "$TMP_DIR/git-lfs-env.out" 2>&1
+    LFS_ENV_STATUS=$?
+    set -e
+    [[ "$LFS_ENV_STATUS" -ne 0 ]] || die 'Git LFS env permitió exponer el entorno'
+    grep -Fq 'bloquea `git lfs env`' "$TMP_DIR/git-lfs-env.out" || die 'Git LFS env no explicó el bloqueo de seguridad'
+    ok 'Git LFS detectado, status/passthrough conservan argumentos y env protege credenciales'
     ok 'Git status/log/fetch/clone/add/commit/push/branch/tag/release con planes de prueba'
 else
     printf '  SKIP  Git no está instalado en el entorno de prueba\n'

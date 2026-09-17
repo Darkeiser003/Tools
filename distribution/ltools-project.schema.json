@@ -115,6 +115,16 @@
         "artifact_kinds": { "type": "array", "minItems": 1, "items": { "type": "string" } },
         "preferred_kind": { "type": "string", "minLength": 1 },
         "asset_patterns": { "type": "object", "minProperties": 1, "additionalProperties": { "type": "string" } },
+        "runtime": {
+          "type": "object",
+          "required": ["appimage_requires_fuse", "appimage_extract_override"],
+          "properties": {
+            "appimage_requires_fuse": { "type": "boolean" },
+            "appimage_extract_override": { "const": "APPIMAGE_EXTRACT_AND_RUN=1" },
+            "note": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
         "install": {
           "type": "object",
           "required": ["portable", "recommended_directory", "executable", "entrypoint", "gui_entrypoint", "cli_entrypoint", "update_strategy"],

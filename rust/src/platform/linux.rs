@@ -241,15 +241,18 @@ pub fn critical_path(path: &Path) -> bool {
 }
 
 pub fn move_to_trash(path: &Path, dry_run: bool) -> io::Result<bool> {
-    if !path.exists() {
-        eprintln!("No existe: {}", path.display());
-        return Ok(false);
+    match fs::symlink_metadata(path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            eprintln!("No existe: {}", path.display());
+            return Ok(false);
+        }
+        Err(error) => return Err(error),
     }
     if critical_path(path) {
         eprintln!("Bloqueado por seguridad: {}", path.display());
         return Ok(false);
     }
-    let path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if dry_run {
         println!("Simulación: se movería a la papelera: {}", path.display());
         return Ok(true);
@@ -257,12 +260,12 @@ pub fn move_to_trash(path: &Path, dry_run: bool) -> io::Result<bool> {
     if command_exists("gio") {
         return Ok(Command::new("gio")
             .args(["trash", "--"])
-            .arg(&path)
+            .arg(path)
             .status()?
             .success());
     }
     if command_exists("trash-put") {
-        return Ok(Command::new("trash-put").arg(&path).status()?.success());
+        return Ok(Command::new("trash-put").arg(path).status()?.success());
     }
     eprintln!("No se encontró gio ni trash-put.");
     Ok(false)
@@ -1973,6 +1976,81 @@ static HOST_TOOLS: &[super::HostTool] = &[
         false,
         true,
         "cosign",
+    ),
+    // Analizadores usados por la CI y por revisiones locales del repositorio.
+    // Se enumeran para que `native tools status` muestre el alcance real sin
+    // tratarlos como dependencias necesarias para ejecutar LTools.
+    tool(
+        "shellcheck",
+        "security",
+        "Bash-static-analysis",
+        false,
+        true,
+        "shellcheck",
+    ),
+    tool(
+        "actionlint",
+        "security",
+        "GitHub-Actions-static-analysis",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "zizmor",
+        "security",
+        "GitHub-Actions-security-review",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "gitleaks",
+        "security",
+        "secret-and-history-scanning",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "osv-scanner",
+        "security",
+        "dependency-vulnerability-scanning",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "codeql",
+        "security",
+        "CodeQL-source-analysis",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "scorecard",
+        "security",
+        "OpenSSF-repository-posture",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "cargo-audit",
+        "security",
+        "Rust-dependency-advisory-scanning",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "cargo-deny",
+        "security",
+        "Rust-license-and-advisory-policy",
+        false,
+        false,
+        "",
     ),
 ];
 

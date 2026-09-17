@@ -35,6 +35,11 @@ mkdir "$active_dir"
 active_created=1
 
 ltools_temp_name_is_owned ltools-native-help.Abc123 || { echo 'No reconoció un directorio de prueba permitido.' >&2; exit 1; }
+ltools_temp_name_is_owned ltools-smoke.Abc123 || { echo 'No reconoció el temporal de smoke LTools.' >&2; exit 1; }
+ltools_temp_name_is_owned ltools-e2e.Abc123 || { echo 'No reconoció el temporal de E2E LTools.' >&2; exit 1; }
+legacy_prefix='cachy'
+legacy_prefix+='os-smoke'
+! ltools_temp_name_is_owned "$legacy_prefix.Abc123" || { echo 'Aceptó un nombre de la identidad antigua.' >&2; exit 1; }
 ltools_temp_name_is_owned ltools-storage-map-123-456-2 || { echo 'No reconoció el formato temporal del mapa.' >&2; exit 1; }
 ltools_temp_name_is_owned "ltools-third-party-licenses-$$-Abc123" || { echo 'No reconoció el temporal del bundle legal.' >&2; exit 1; }
 ltools_temp_name_is_owned "ltools-registry-dry-run-$((900000000 + $$)).reg" || { echo 'No reconoció el informe temporal Wine.' >&2; exit 1; }

@@ -115,12 +115,25 @@ Flujo recomendado:
 
 Opciones cubiertas por la GUI y la CLI:
   status, log, clone, fetch, pull, add, commit, push, branch, tag, release,
-  diagnose y repair del índice. `diagnose` informa del estado y `repair` solo
+  lfs, diagnose y repair del índice. `diagnose` informa del estado y `repair` solo
   reconstruye un índice ausente/ilegible desde un HEAD íntegro.
   `branch` permite listar/crear/cambiar/eliminar; `tag` permite crear y
   publicar etiquetas; `release` prepara una release con tag, título y notas.
   Las acciones destructivas o remotas piden confirmación y admiten `--yes`
   únicamente cuando una interfaz ya confirmó la operación.
+
+Git LFS:
+  `ltools git lfs status --repo RUTA` consulta los objetos grandes pendientes.
+  `ltools git lfs version` y `ltools git lfs help` identifican la integración
+  instalada. Para descargar/subir o configurar patrones, usa el passthrough
+  `ltools git lfs native <subcomando> [opciones]`; por ejemplo `fetch`, `pull`,
+  `push`, `track`, `untrack`, `prune` o `install`. LTools conserva las opciones
+  nativas de la versión instalada, retira solo `--repo` y `--yes`, y confirma
+  operaciones mutables. `git lfs env` queda bloqueado porque puede revelar
+  endpoints o credenciales; usa `status`, `help` y `version` para diagnosticar.
+  La GUI ofrece la consulta de estado de LFS sobre el repositorio indicado; las
+  operaciones avanzadas se ejecutan desde la CLI con la misma confirmación y
+  separación de argumentos.
 
 GitHub CLI (`gh`):
   `ltools git gh auth-status` comprueba la sesión sin mostrar tokens.
@@ -287,8 +300,11 @@ revisión visual adicional.
 const SYSTEM: &str = r#"GUÍA: SISTEMA Y HERRAMIENTAS NATIVAS
 
 Empieza por `native tools status` y `doctor`: muestran qué existe, versión,
-alternativas y limitaciones. Después usa la familia adecuada: red, arranque,
-servicios, usuarios, almacenamiento, SSH/ADB o contenedores.
+alternativas y limitaciones. `native security scanners` enumera los analizadores
+locales y de CI (ShellCheck, actionlint, zizmor, Gitleaks, OSV-Scanner, CodeQL,
+Scorecard, cargo-audit y cargo-deny), sin ejecutar análisis ni modificar el
+repositorio. Después usa la familia adecuada: red, arranque, servicios,
+usuarios, almacenamiento, SSH/ADB o contenedores.
 
 Las consultas no mutan el sistema. Suspender, apagar, firewall, conexiones,
 instalaciones, procesos y contenedores sí requieren objetivo/confirmación.
@@ -545,7 +561,7 @@ y privileges.
 
 fn cli_guide(topic: &str) -> String {
     if topic == "all" {
-        return CLI_INDEX.to_owned();
+        return cli_all_index();
     }
     if topic == "updates" {
         return UPDATES.to_owned();
@@ -615,6 +631,13 @@ fn cli_guide(topic: &str) -> String {
             "--context, --namespace, --manifest, --resource, --replicas y --local-port",
             "contexto, recursos, rollout, sesión activa y resultado",
         ),
+        "native" => (
+            "HERRAMIENTAS NATIVAS",
+            "network status|interfaces|routes|dns|listening|connections; hardware status; power status|plans; security status|scanners; tools status|install",
+            "red modificadora, instalación explícita de dependencias y operaciones de SSH/ADB, contenedores y Kubernetes según disponibilidad",
+            "--interface, --state, --connection, --tool, --engine, --container, --image, --manifest, --dry-run y --yes; security scanners no admite objetivos ni muta el sistema",
+            "consulta nativa, disponibilidad de herramientas, analizadores de código/CI, plan y resultado compatible con la plataforma",
+        ),
         "clean" => (
             "LIMPIEZA",
             "preview de paquetes, huérfanos, cachés, Flatpak y rutas",
@@ -622,12 +645,103 @@ fn cli_guide(topic: &str) -> String {
             "--automatic, --preview, --include-personal, --all-known, --ask-each; limpieza clásica: --package, --manager, --scope user|system|INSTALACIÓN (Flatpak), --path y --cascade (solo Pacman)",
             "candidatos, rutas protegidas, plan y elementos retirados",
         ),
-        "automation" | "automation-register" | "actions" => (
+        "automation" | "automation-register" => (
             "AUTOMATIZACIÓN Y ACCIONES",
             "list del registro y del catálogo declarativo",
             "add, modify, run, remove y ejecución por identificador estable",
             "--name, --program, --args, --cwd, --id, --target, --format y --dry-run",
             "acción, compatibilidad, requisitos, plan y salida registrada",
+        ),
+        "actions" => (
+            "CATÁLOGO DE ACCIONES",
+            "list en text o JSON para conocer ID, categoría, objetivo, perfil, mutación y compatibilidad",
+            "run ID [OBJETIVO] después de validar la entrada; las acciones mutadoras generan plan y confirmación",
+            "--format text|json, --target y --dry-run; los argumentos del objetivo se mantienen separados",
+            "acción publicada, protección aplicable, plan y resultado reutilizable por una GUI o terminal",
+        ),
+        "audit" => (
+            "AUDITORÍA E INVENTARIO",
+            "audit de discos, aplicaciones, archivos grandes, duplicados y cachés; games para juegos y prefijos; packages para gestores",
+            "exportar informes y abrir la gestión específica de paquetes, limpieza, archivos o prefijos",
+            "--format, --full, --no-mounts, --depth, --max-children, --path y --out según el informe",
+            "inventario, tamaños, rutas protegidas, duplicados y candidatos sin modificar el sistema",
+        ),
+        "packages" => (
+            "PAQUETES Y ALMACENES",
+            "inventario de gestores, versiones, paquetes instalados, cachés y artefactos",
+            "revisar candidatos de limpieza; la desinstalación e instalación se hacen mediante software y el gestor nativo",
+            "--format text|tsv|json, --full, --manager, --scope y --out; no se acepta un gestor inventado",
+            "inventario compacto, TSV por gestor, errores de consulta y espacio potencial de limpieza",
+        ),
+        "software" => (
+            "BÚSQUEDA E INSTALACIÓN DE SOFTWARE",
+            "search NAME para localizar candidatos y sus gestores compatibles",
+            "install NAME tras seleccionar un candidato y confirmar la operación nativa",
+            "--manager, --candidate, --limit, --format text|json, --yes y --dry-run",
+            "candidatos con versión/origen, comando nativo elegido y resultado de instalación",
+        ),
+        "installable" => (
+            "HERRAMIENTAS INSTALABLES",
+            "status y búsqueda de utilidades, Git/GitHub, SSH/ADB, contenedores y Kubernetes",
+            "install TOOL solo cuando existe un paquete fiable y el usuario confirma; después doctor vuelve a comprobarlo",
+            "--tool, --manager, --format, --limit, --yes y --dry-run",
+            "herramienta, versión, gestor, ámbito de instalación y alternativas disponibles",
+        ),
+        "system" => (
+            "SISTEMA Y SERVICIOS",
+            "system status, failed, services, processes, journal, dependencies y export",
+            "service status|start|stop|restart|enable|disable|mask|unmask|daemon-reload",
+            "--scope system|user|both, --filter, --unit, --operation, --sort, --hours, --limit, --format y --out",
+            "salud, servicio, estado, ámbito, origen, dependencias, eventos y exportación verificable",
+        ),
+        "diagnostics" => (
+            "DIAGNÓSTICO",
+            "doctor, diagnostics health y comprobaciones de red, hardware, usuarios y dependencias",
+            "diagnóstico detallado, exportación y propuesta de instalación explícita para una dependencia ausente",
+            "--format human|tsv|json, --out, --limit y --install TOOL; la consulta no muta el equipo",
+            "herramientas disponibles, versiones, códigos de salida, stderr, permisos y limitaciones explicadas",
+        ),
+        "utilities" => (
+            "UTILIDADES NATIVAS",
+            "status de curl, wget, file, tree, htop, lsof, strace, tcpdump, dig, nmap, openssl, gpg, 7z, zip y otras",
+            "install TOOL únicamente con paquete conocido y confirmación; ejecutar después la operación que necesita la herramienta",
+            "--tool, --manager, --format, --yes y --dry-run",
+            "disponibilidad, versión, gestor nativo, instalación posible y motivo de una omisión",
+        ),
+        "defaults" => (
+            "VALORES PREDETERMINADOS",
+            "defaults para rutas efectivas de Wine, Proton, juegos, gestores y configuración de la plataforma",
+            "seleccionar explícitamente una ruta o revisar sus usos desde la GUI; la consulta CLI no reescribe preferencias",
+            "--format text|json|tsv, --path, --include-missing y --out cuando estén disponibles",
+            "ruta efectiva, fuente, existencia, prioridad, propietario y advertencias de compatibilidad",
+        ),
+        "settings" => (
+            "AJUSTES Y PREFERENCIAS",
+            "consultar idioma, tema, color, visibilidad y elevación predeterminada",
+            "cambiar preferencias desde la GUI o el registro de configuración del usuario, sin elevar consultas ni escribir en el sistema",
+            "--lang, --theme, --color auto|always|never, --no-color, --elevate y --no-elevate",
+            "preferencias activas y clasificación de las acciones que podrán elevarse",
+        ),
+        "registry" => (
+            "CONFIGURACIÓN Y REGISTROS",
+            "consultar rutas de configuración, alternativas y registro nativo de la plataforma",
+            "abrir el gestor nativo o aplicar una operación contextual confirmada; LTools no modifica claves arbitrarias",
+            "--path, --format, --scope, --target, --dry-run y --yes",
+            "fuente de configuración, ruta, valor permitido, protección y resultado de la operación",
+        ),
+        "ssh" => (
+            "SSH, SCP Y SFTP",
+            "status, configuración y ayuda de ssh, scp y sftp instalados",
+            "conexión, copia y sesión interactiva mediante la herramienta nativa, sin guardar contraseñas ni elevar la sesión",
+            "host, usuario, puerto, origen, destino y argumentos nativos separados; --dry-run si la operación lo admite",
+            "destino, identidad seleccionada, comando seguro y salida del cliente nativo",
+        ),
+        "adb" => (
+            "ANDROID Y ADB",
+            "version, devices y help de adb; estado de dispositivos conectados",
+            "operaciones de shell, pull, push, install o logcat solo con objetivo explícito y confirmación cuando modifican el dispositivo",
+            "--device, --serial, --path, --destination, --package, --format y argumentos nativos separados",
+            "dispositivo, estado, permisos USB, operación elegida y salida de adb sin mezclar comandos del host",
         ),
         "privileges" => (
             "ELEVACIÓN Y PERMISOS",
@@ -642,14 +756,6 @@ fn cli_guide(topic: &str) -> String {
             "ensure crea el registro base y el lanzador; add, enable, disable y remove gestionan alias personalizados",
             "add NOMBRE COMANDO [ARG...]; los argumentos se conservan separados y solo se permiten comandos LTools conocidos",
             "registro persistente, alias activos, lanzador gestionado y estado de PATH",
-        ),
-        "diagnostics" | "utilities" | "defaults" | "settings" | "audit" | "packages" | "software" | "installable" | "system"
-        | "registry" | "ssh" | "adb" => (
-            "SISTEMA Y HERRAMIENTAS",
-            "status, list, inspect, health, report, capabilities y export",
-            "consulta, selección, instalación explícita, exportación y gestión contextual",
-            "--format, --limit, --scope, --path, --target, --manager y --dry-run",
-            "capacidades, versiones, límites, informe y compatibilidad de plataforma",
         ),
         _ => (
             "FAMILIA",
@@ -670,6 +776,51 @@ fn cli_guide(topic: &str) -> String {
          dependen de la plataforma; no se ejecutan cadenas de shell ni se\n\
          inventan equivalencias entre Linux y Windows."
     )
+}
+
+fn cli_all_index() -> String {
+    // La portada breve sigue siendo útil para localizar una familia, pero la
+    // guía completa debe ser autosuficiente cuando se consulta desde una
+    // terminal o desde un frontend que no muestra el menú padre.
+    let topics = [
+        "audit",
+        "packages",
+        "software",
+        "installable",
+        "git",
+        "aliases",
+        "automation",
+        "clean",
+        "storage",
+        "system",
+        "services",
+        "accounts",
+        "native",
+        "network",
+        "boot",
+        "registry",
+        "diagnostics",
+        "wine",
+        "defaults",
+        "settings",
+        "updates",
+        "containers",
+        "kubernetes",
+        "ssh",
+        "adb",
+        "utilities",
+        "actions",
+        "privileges",
+    ];
+    let mut output = CLI_INDEX.to_owned();
+    output.push_str("\n\nÍNDICE DETALLADO DE FAMILIAS CLI\n");
+    for topic in topics {
+        output.push_str("\n\n");
+        output.push_str(&cli_guide(topic));
+        output.push_str("\n\n");
+        output.push_str(cli_platform_summary(topic));
+    }
+    output
 }
 
 #[cfg(not(windows))]
@@ -713,6 +864,53 @@ La CLI tiene una guía separada con sus propias opciones: guide cli <familia>.
 "#;
 
 #[cfg(not(windows))]
+fn linux_gui_index() -> String {
+    // El resumen histórico sigue siendo útil como portada, pero por sí solo
+    // no bastaba para responder a «¿qué ofrece cada menú?». Añadir aquí las
+    // guías generadas desde los catálogos reales mantiene una única entrada
+    // navegable y evita que guide gui all quede desfasada al crecer un
+    // submenú.
+    let topics = [
+        "native",
+        "diagnostics",
+        "installable",
+        "automation",
+        "storage",
+        "storage-partitions",
+        "storage-filesystems",
+        "storage-volumes",
+        "accounts",
+        "system",
+        "network",
+        "services",
+        "boot",
+        "connectivity",
+        "git",
+        "ssh",
+        "adb",
+        "utilities",
+        "packages",
+        "containers",
+        "containers-lifecycle",
+        "containers-images",
+        "containers-volumes",
+        "containers-compose",
+        "kubernetes",
+        "defaults",
+        "settings",
+        "updates",
+        "wine",
+    ];
+    let mut result = GUI_INDEX.to_owned();
+    result.push_str("\n\nÍNDICE DETALLADO DE MENÚS Y SUBMENÚS\n");
+    for topic in topics {
+        result.push_str("\n\n");
+        result.push_str(&gui_guide(topic));
+    }
+    result
+}
+
+#[cfg(not(windows))]
 fn gui_storage_guide() -> String {
     r#"GUÍA GRÁFICA: ALMACENAMIENTO Y PARTICIONES (LINUX)
 
@@ -751,11 +949,21 @@ confirmación antes de ejecutarse.
   • «Explicar ruta y permisos»: explica el propósito, propietario, permisos
     y protección de la ruta seleccionada antes de modificarla.
   • «Borrar a la papelera»: mueve un archivo o carpeta a la papelera del
-    usuario; no elimina silenciosamente ni eleva la acción.
+    usuario; no elimina silenciosamente ni eleva la acción. En Linux se mueve
+    el enlace simbólico seleccionado, no su destino; Windows rechaza enlaces,
+    junctions y demás puntos de reanálisis.
   • «Copiar archivo o carpeta» y «Mover archivo o carpeta»: piden origen y
     destino explícitos, muestran el plan y conservan la protección de rutas.
+    Copiar no sigue enlaces simbólicos ni puntos de reanálisis; mover dentro del
+    mismo volumen conserva el enlace. En Unix la copia mantiene los permisos
+    normales de lectura/escritura/ejecución, pero descarta SUID, SGID y sticky
+    para no propagar privilegios al copiar como administrador; esto también se
+    aplica al movimiento entre volúmenes. Si debe cruzar volúmenes, el
+    movimiento rechaza enlaces y conserva el origen cuando no puede completar.
   • «Crear archivo ZIP» y «Crear archivo TAR»: empaquetan la selección en un
-    destino indicado y verifican el archivo resultante.
+    destino indicado y verifican el archivo resultante; rechazan un enlace
+    simbólico o punto de reanálisis tanto en la raíz como dentro del árbol para
+    no recorrer destinos inadvertidamente.
   • «Abrir con el gestor nativo»: abre el explorador/gestor de archivos del
     sistema para revisar la ruta con sus propias garantías.
   • «Abrir gestor nativo de particiones»: abre el gestor gráfico externo
@@ -948,6 +1156,12 @@ En «Herramientas nativas»:
   • «Resumen de espacio y montajes» revisa espacio y volúmenes.
   • «Discos y particiones» lista discos, particiones, volúmenes y letras.
   • «Montajes activos» revisa las rutas y letras actualmente disponibles.
+  • «Uso de espacio por volumen» muestra espacio total y restante de cada
+    volumen sin modificarlo.
+  • «Espacios de almacenamiento y discos virtuales» consulta grupos de
+    almacenamiento y discos virtuales detectados.
+  • «Estado de BitLocker» muestra el cifrado y la protección de cada volumen;
+    esta consulta no activa, desactiva ni modifica BitLocker.
   • El mapa desplegable de archivos y rutas todavía no está integrado en la
     GUI Windows. No se presenta como un botón disponible; esta pantalla ofrece
     las consultas de volúmenes y particiones enumeradas arriba.
@@ -1081,21 +1295,19 @@ fn gui_updates_guide() -> String {
 }
 
 #[cfg(windows)]
-fn windows_gui_topic_page(topic: &str) -> Option<(usize, &'static str, &'static str)> {
+fn windows_gui_topic_page(topic: &str) -> Option<(usize, &'static str)> {
     match topic {
-        "audit" | "packages" => Some((0, "audit_inventory", "AUDITORÍA E INVENTARIO")),
-        "native" | "system" | "network" | "boot" | "registry" => {
-            Some((1, "native_tools", "HERRAMIENTAS NATIVAS"))
-        }
-        "diagnostics" => Some((2, "dependencies", "DEPENDENCIAS")),
-        "defaults" => Some((3, "defaults", "RUTAS PREDETERMINADAS")),
+        "audit" | "packages" => Some((0, "audit_inventory")),
+        "native" | "system" | "network" | "boot" | "registry" => Some((1, "native_tools")),
+        "diagnostics" => Some((2, "dependencies")),
+        "defaults" => Some((3, "defaults")),
         "installable" | "software" | "git" | "containers" | "kubernetes" | "adb" => {
-            Some((4, "installable_tools", "HERRAMIENTAS INSTALABLES"))
+            Some((4, "installable_tools"))
         }
-        "automation" | "automation-register" => Some((5, "automation", "AUTOMATIZACIÓN")),
-        "accounts" => Some((8, "accounts", "USUARIOS, GRUPOS Y SESIONES")),
-        "winslim" => Some((7, "winslim", "WINSLIM")),
-        "updates" => Some((6, "settings", "ACTUALIZACIONES")),
+        "automation" | "automation-register" => Some((5, "automation")),
+        "accounts" => Some((8, "accounts")),
+        "winslim" => Some((7, "winslim")),
+        "updates" => Some((6, "settings")),
         _ => None,
     }
 }
@@ -1128,11 +1340,12 @@ fn windows_gui_page_guide(topic: &str) -> Option<String> {
     if topic == "winslim" && !crate::platform::winslim_available() {
         return None;
     }
-    let (page, category, title) = windows_gui_topic_page(topic)?;
+    let (page, category) = windows_gui_topic_page(topic)?;
     let title = if topic == "accounts" {
-        crate::i18n::accounts_label()
+        crate::i18n::accounts_label().to_owned()
     } else {
-        title
+        crate::gui::windows_menu_title(page)
+            .unwrap_or_else(|| crate::i18n::category_text(category).to_owned())
     };
     let menu = crate::gui::windows_menu_title(page)
         .unwrap_or_else(|| crate::i18n::category_text(category).to_owned());
@@ -1209,7 +1422,7 @@ fn windows_gui_index() -> String {
         "GUÍA GRÁFICA COMPLETA DE WINSLIM-TOOLS\n\nCada categoría abre un menú propio. Las guías contextuales enumeran las opciones de la interfaz Windows y no sustituyen sus botones por comandos.\n\nPanel principal:\n",
     );
     for (topic, page) in pages {
-        let Some((_, category, _)) = windows_gui_topic_page(topic) else {
+        let Some((_, category)) = windows_gui_topic_page(topic) else {
             continue;
         };
         let title = crate::gui::windows_menu_title(page)
@@ -1237,9 +1450,54 @@ fn windows_gui_index() -> String {
     result
 }
 
+#[cfg(target_os = "linux")]
+fn gui_linux_catalog_page(page: usize, fields: &str, process: &str) -> String {
+    let title = crate::gui::guide_page_title(page)
+        .unwrap_or_else(|| crate::i18n::category_text("native_tools").to_owned());
+    let menu = title.clone();
+    let mut options = crate::gui::guide_menu_labels(page);
+    options.push(crate::i18n::text("menu.back").to_owned());
+    let listed = options
+        .iter()
+        .enumerate()
+        .map(|(index, option)| format!("  {}. «{}»", index + 1, option))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "GUÍA GRÁFICA: {title}\n\nMenú completo «{menu}» (opciones obtenidas del catálogo real de la GUI):\n{listed}\n\nCampos y argumentos de la GUI:\n  {fields}\n\nProceso simple:\n  Consulta primero el estado, inventario o diagnóstico y revisa el objetivo.\n\nProceso complejo:\n  {process}\n\nTodas las opciones visibles se enumeran aquí. Las acciones mutables muestran confirmación y deben verificarse repitiendo la consulta correspondiente. «{}» vuelve a la pantalla anterior.",
+        crate::i18n::text("menu.back")
+    )
+}
+
 fn gui_catalog_guide(topic: &str) -> String {
     if topic == "settings" {
         return gui_settings_guide();
+    }
+    #[cfg(target_os = "linux")]
+    if let Some((page, fields, process)) = match topic {
+        "native" => Some((
+            1,
+            "Esta página no pide campos directamente; red, arranque, servicios, cuentas, Registro y almacenamiento abren sus propios formularios o guías.",
+            "Elige la familia visible, consulta primero el estado y continúa al submenú correspondiente. Para una acción modificadora, revisa el objetivo, la elevación y la confirmación; vuelve a consultar después.",
+        )),
+        "diagnostics" => Some((
+            2,
+            "«Instalar herramienta nativa» pide el identificador de la herramienta; las demás opciones son consultas o abren un submenú.",
+            "Ejecuta Doctor y Estado antes de instalar. Selecciona una herramienta, revisa disponibilidad, gestor y ámbito, y confirma solo la instalación explícita.",
+        )),
+        "installable" => Some((
+            4,
+            "Esta página solo contiene submenús; cada familia documenta sus argumentos y operaciones.",
+            "Elige una familia, comprueba herramientas disponibles y abre su guía contextual antes de ejecutar una acción.",
+        )),
+        "automation" => Some((
+            5,
+            "Registrar/editar solicita nombre, ejecutable, directorio de trabajo y argumentos separados; no se evalúa una cadena de shell.",
+            "Abre Scripts registrados para ejecutar, editar o retirar una entrada, o Registrar nuevo script para completar sus campos. Recarga el listado y prueba el flujo sin ocultar errores.",
+        )),
+        _ => None,
+    } {
+        return gui_linux_catalog_page(page, fields, process);
     }
     if topic == "accounts" {
         let options = [
@@ -1286,19 +1544,22 @@ fn gui_catalog_guide(topic: &str) -> String {
     }
     let (title, menu, options, fields, process) = match topic {
         "storage-partitions" => (
-            "PARTICIONADO Y TABLAS", "Particionado y tablas",
+            crate::i18n::gui_family_text("storage_partitions"),
+            crate::i18n::gui_family_text("storage_partitions"),
             &["Consultar tabla de un disco", "Consultar espacio libre", "Inspeccionar dispositivo", "Crear tabla GPT", "Crear tabla MBR / msdos", "Crear partición", "Borrar partición", "Redimensionar partición", "Nombrar partición GPT", "Activar / desactivar flag", "Buscar y rescatar partición", "Comprobar alineación", "Cambiar flag del disco", "Alternar flag del disco", "Retirar firmas de almacenamiento", "Descartar bloques", "Guía de particionado", "Volver"][..],
             "Disco o dispositivo; las operaciones avanzadas añaden número de partición, tipo, inicio/fin, etiqueta, flag o rango de rescate.",
             "Consulta tabla, espacio libre e inspección del dispositivo; confirma el objetivo y conserva una copia antes de crear, borrar, redimensionar, cambiar marcas o retirar firmas.",
         ),
         "storage-filesystems" => (
-            "SISTEMAS DE ARCHIVOS", "Sistemas de archivos",
+            crate::i18n::gui_family_text("storage_filesystems"),
+            crate::i18n::gui_family_text("storage_filesystems"),
             &["Crear / formatear sistema de archivos", "Cambiar etiqueta", "Comprobar sin reparar", "Comprobar y reparar automáticamente", "Redimensionar sistema de archivos", "Montar partición", "Desmontar dispositivo o ruta", "Activar swap", "Desactivar swap", "Guía de sistemas de archivos", "Volver"][..],
             "Partición/dispositivo, tipo de sistema de archivos, etiqueta, montaje, tamaño y ruta según la operación.",
             "Comprueba el dispositivo, decide si la operación es destructiva, confirma el tipo y verifica después el montaje, tamaño o estado.",
         ),
         "storage-volumes" => (
-            "CIFRADO Y VOLÚMENES", "Cifrado y volúmenes",
+            crate::i18n::gui_family_text("storage_volumes"),
+            crate::i18n::gui_family_text("storage_volumes"),
             &["Crear contenedor LUKS", "Abrir contenedor LUKS", "Cerrar contenedor LUKS", "Copiar cabecera LUKS", "Restaurar cabecera LUKS", "Gestionar volúmenes LVM", "Gestionar volúmenes Btrfs", "Gestionar volúmenes ZFS", "Gestionar conjuntos RAID", "Guía de cifrado y volúmenes", "Volver"][..],
             concat!(
                 "Campos: dispositivo, nombre del mapeo, archivo de cabecera, conjunto/grupo, volumen, tamaño, miembros, sustituto, propiedad, valor y nombre nuevo. Selector LVM: ",
@@ -1317,9 +1578,9 @@ fn gui_catalog_guide(topic: &str) -> String {
         ),
         "system" => (
             "SISTEMA, RED Y SEGURIDAD", "Sistema",
-            &["Estado del sistema", "Usuarios, grupos y sesiones", "Red, rutas, DNS y puertos escuchando", "Arranque, EFI y cargador del sistema", crate::i18n::registry_label(), crate::i18n::diagnostics_label(), "Servicios del sistema", "Guía del sistema", "Volver"][..],
-            "Los submenús tienen sus campos: servicios (ámbito, unidad, operación), red (interfaz/estado o conexión), arranque (entrada GRUB), cuentas (usuario/grupo) y Registro (clave/acción).",
-            "Abre Estado del sistema y Diagnóstico; entra en el submenú de gestión, completa el objetivo exacto y verifica con una consulta posterior.",
+            &["Estado del sistema", "Usuarios, grupos y sesiones", "Red, rutas, DNS y puertos escuchando", "Arranque, EFI y cargador del sistema", crate::i18n::registry_label(), crate::i18n::diagnostics_label(), crate::i18n::system_page_text("native_security_status"), crate::i18n::system_page_text("native_security_scanners"), "Servicios del sistema", "Guía del sistema", "Volver"][..],
+            "Los submenús tienen sus campos: servicios (ámbito, unidad, operación), red (interfaz/estado o conexión), arranque (entrada GRUB), cuentas (usuario/grupo) y Registro (clave/acción). Seguridad consulta firewall; analizadores enumera herramientas de código/CI sin ejecutar análisis.",
+            "Abre Estado del sistema y Diagnóstico; consulta la seguridad y el inventario de analizadores, entra en el submenú de gestión, completa el objetivo exacto y verifica con una consulta posterior.",
         ),
         "native" => (
             "HERRAMIENTAS NATIVAS", "Herramientas nativas",
@@ -1414,11 +1675,11 @@ fn gui_catalog_guide(topic: &str) -> String {
         "automation" => (
             "AUTOMATIZACIÓN", "Automatización, scripts registrados y registro",
             &[
-                "Scripts registrados",
-                "Registrar nuevo script",
-                "Guía de automatización",
-                "Guía de scripts y automatización",
-                "Volver",
+                crate::i18n::gui_catalog_text("registered_scripts"),
+                crate::i18n::gui_catalog_text("register_script"),
+                crate::i18n::gui_catalog_text("automation_guide"),
+                crate::i18n::gui_catalog_text("scripts_guide"),
+                crate::i18n::text("menu.back"),
             ][..],
             "Esta pantalla no pide campos; sus submenús contienen el registro y los scripts existentes.",
             "Abre Scripts registrados para ejecutar/editar/retirar o Registrar nuevo script para completar sus campos.",
@@ -1445,7 +1706,7 @@ fn gui_guide(topic: &str) -> String {
         #[cfg(windows)]
         return windows_gui_index();
         #[cfg(not(windows))]
-        return GUI_INDEX.to_owned();
+        return linux_gui_index();
     }
     if topic == "updates" {
         #[cfg(windows)]
@@ -1716,7 +1977,7 @@ cualquier fuente.
 
 #[cfg(not(windows))]
 fn linux_git_gui_guide() -> String {
-    let labels = [
+    let mut labels = vec![
         crate::i18n::git_action_text("guide"),
         crate::i18n::tools_text("git_status"),
         crate::i18n::tools_text("git_clone"),
@@ -1730,6 +1991,11 @@ fn linux_git_gui_guide() -> String {
         crate::i18n::tools_text("git_tag"),
         crate::i18n::tools_text("git_release"),
         crate::i18n::tools_text("git_login"),
+    ];
+    if crate::common::command_exists("git-lfs") {
+        labels.push(crate::i18n::tools_text("git_lfs"));
+    }
+    labels.extend([
         crate::i18n::tools_text("gh_repo"),
         crate::i18n::tools_text("gh_prs"),
         crate::i18n::tools_text("gh_releases"),
@@ -1741,7 +2007,7 @@ fn linux_git_gui_guide() -> String {
         crate::i18n::git_action_text("repair_index"),
         crate::i18n::git_action_text("repair_remote"),
         crate::i18n::text("menu.back"),
-    ];
+    ]);
     let options = labels
         .iter()
         .enumerate()
@@ -1857,6 +2123,11 @@ argumentos por separado. `gh native` admite comandos nuevos y extensiones que
 ofrezca esa versión; no convierte rutas Linux a Windows. El diagnóstico y la
 reparación del índice usan rutas Windows; si falta `.git`, la recuperación
 requiere URL HTTPS/SSH explícita, clona sin checkout y no sobrescribe archivos.
+Git LFS usa `git-lfs.exe` de Git for Windows: `ltools git lfs status
+--repo C:\\src\\proyecto` consulta el estado y `ltools git lfs native <comando>`
+conserva las opciones nativas de la versión instalada. Si falta, el catálogo
+de herramientas propone reinstalar o actualizar Git for Windows mediante el
+gestor Windows disponible; no se instala un binario suelto sin confirmación.
 No se usa `sudo`; la red y las credenciales las gestiona Git for Windows/
 Windows.
 "#
@@ -1879,8 +2150,14 @@ de LTools.
 Los objetivos son nombres Windows (`Ethernet`, `Wi-Fi`) y perfiles de
 Network Connections, no `eth0` ni NetworkManager. La inspección corresponde a
 `Get-NetAdapter`, `Get-NetIPConfiguration`, `Get-NetRoute`,
-`Get-DnsClientServerAddress` y `Get-NetTCPConnection`. La GUI solicita el
-adaptador o perfil exacto; `--dry-run` muestra la acción PowerShell/netsh.
+`Get-DnsClientServerAddress` y `Get-NetTCPConnection`. Desde la CLI y la
+pantalla de Herramientas nativas también puedes separar la consulta en
+interfaces, rutas, DNS, puertos escuchando y conexiones. Si faltan los
+cmdlets NetTCPIP, LTools usa los equivalentes integrados `ipconfig`, `route`,
+`netstat` y `netsh`. La GUI no muestra una opción si no existe su acción
+Windows correspondiente; las consultas son de solo lectura y `flush-dns` es
+la única acción de este bloque que modifica el estado, con confirmación y UAC
+cuando el sistema lo exige.
 "#
         }
         "boot" => {
@@ -1942,7 +2219,12 @@ que usar el ejecutable Linux o una máquina Linux. No se interpretan rutas
 La disponibilidad se comprueba con PowerShell, `Get-Command`, `Get-CimInstance`
 y `Get-WindowsOptionalFeature` cuando procede. No se presupone `systemd`,
 procfs ni utilidades GNU; las capacidades no disponibles se marcan como tales
-y no se sustituyen silenciosamente por una orden Linux.
+y no se sustituyen silenciosamente por una orden Linux. En Herramientas nativas,
+`hardware status` consulta CIM; si CIM no existe, usa `systeminfo`, WMIC o la
+consulta mínima `cmd.exe /c ver`, identificando claramente el fallback.
+`security status` consulta Firewall y Defender por cmdlets independientes; si
+PowerShell o los módulos no están disponibles, usa `netsh advfirewall show
+allprofiles`. Las consultas no cambian el sistema.
 "#
         }
         "containers" => {
@@ -2125,7 +2407,8 @@ pub fn run(_ctx: &Context, args: &[String]) -> Result<(), String> {
     let topic = match requested.as_str() {
         "all" | "list" | "help" => "all",
         "audit" | "inventory" | "games" => "audit",
-        "packages" | "software" | "package" => "packages",
+        "packages" | "package" => "packages",
+        "software" => "software",
         "installable" | "installable-tools" => "installable",
         "git" => "git",
         "gh" | "github" => "gh",
@@ -2139,12 +2422,11 @@ pub fn run(_ctx: &Context, args: &[String]) -> Result<(), String> {
         "storage-partitions" | "partition-guide" => "storage-partitions",
         "storage-filesystems" | "filesystem-guide" => "storage-filesystems",
         "storage-volumes" | "volume-guide" => "storage-volumes",
-        // «native» es el índice contextual de la página «Herramientas
-        // nativas» en la GUI. En CLI conserva la guía general de sistema
-        // para no romper el alias histórico `guide native`.
+        // «native» comparte el catálogo de herramientas nativas entre CLI y
+        // GUI; no debe degradarse a la guía genérica de sistema porque sus
+        // opciones y límites son distintos.
         "system" => "system",
-        "native" if mode == "gui" => "native",
-        "native" => "system",
+        "native" => "native",
         "services" | "service" => "services",
         "accounts" | "users" => "accounts",
         "network" | "red" => "network",
@@ -2174,6 +2456,8 @@ pub fn run(_ctx: &Context, args: &[String]) -> Result<(), String> {
         }
     };
     if mode == "gui" {
+        // This guide is assembled only from fixed localized UI text; no account data or secrets.
+        // codeql[rust/cleartext-logging]
         print!("{}", gui_guide(topic));
     } else {
         print!("{}\n\n{}", cli_guide(topic), cli_platform_summary(topic));
@@ -2196,6 +2480,46 @@ mod tests {
             CLI_INDEX.contains("updates"),
             "falta updates en el índice de CLI"
         );
+    }
+
+    #[test]
+    fn cli_all_includes_the_detailed_family_guides() {
+        let _language_guard = crate::i18n::language_test_guard();
+        crate::i18n::set("es");
+        let guide = cli_guide("all");
+        for marker in [
+            "ÍNDICE DETALLADO DE FAMILIAS CLI",
+            "GUÍA CLI: GIT Y GITHUB",
+            "GUÍA CLI: ALMACENAMIENTO",
+            "GUÍA CLI: SERVICIOS",
+            "GUÍA CLI: ELEVACIÓN Y PERMISOS",
+            "--include-personal",
+            "--scope system|user|both",
+        ] {
+            assert!(guide.contains(marker), "falta {marker} en guide cli all");
+        }
+        crate::i18n::set("es");
+    }
+
+    #[test]
+    fn cli_all_does_not_repeat_aliases_as_duplicate_family_guides() {
+        let _language_guard = crate::i18n::language_test_guard();
+        crate::i18n::set("es");
+        let guide = cli_guide("all");
+        for heading in [
+            "GUÍA CLI: GIT Y GITHUB",
+            "GUÍA CLI: ALMACENAMIENTO",
+            "GUÍA CLI: SISTEMA Y SERVICIOS",
+            "GUÍA CLI: AUDITORÍA E INVENTARIO",
+        ] {
+            assert_eq!(
+                guide.matches(heading).count(),
+                1,
+                "guide cli all repite la familia {heading}"
+            );
+        }
+        assert!(guide.contains("GUÍA CLI: BÚSQUEDA E INSTALACIÓN DE SOFTWARE"));
+        assert!(guide.contains("GUÍA CLI: ANDROID Y ADB"));
     }
 
     #[test]
@@ -2264,6 +2588,28 @@ mod tests {
         ] {
             assert!(guide.contains(option), "falta la acción GUI {option}");
         }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn linux_gui_all_includes_the_detailed_contextual_menus() {
+        let _language_guard = crate::i18n::language_test_guard();
+        crate::i18n::set("es");
+        let guide = gui_guide("all");
+        assert!(guide.contains("ÍNDICE DETALLADO DE MENÚS Y SUBMENÚS"));
+        for marker in [
+            "Vaciar caché DNS",
+            "Entradas EFI / NVRAM",
+            "Gestionar servicio",
+            "Crear tabla GPT",
+            "Restaurar cabecera LUKS",
+            "Comando nativo de gh",
+            "Construir imagen",
+            "Aplicar manifiesto",
+        ] {
+            assert!(guide.contains(marker), "guide gui all lacks {marker}");
+        }
+        crate::i18n::set("es");
     }
 
     #[cfg(not(windows))]
@@ -2428,6 +2774,65 @@ mod tests {
 
     #[cfg(not(windows))]
     #[test]
+    fn linux_root_gui_guides_match_the_live_menu_catalog_in_every_language() {
+        let _language_guard = crate::i18n::language_test_guard();
+        for language in crate::i18n::SUPPORTED {
+            crate::i18n::set(language);
+            for (topic, page) in [
+                ("native", 1_usize),
+                ("diagnostics", 2),
+                ("installable", 4),
+                ("automation", 5),
+            ] {
+                let guide = gui_guide(topic);
+                let title = crate::gui::guide_page_title(page).expect("título raíz Linux");
+                assert!(
+                    guide.starts_with(&format!("GUÍA GRÁFICA: {title}")),
+                    "{language}: título desfasado en {topic}"
+                );
+                for (index, label) in crate::gui::guide_menu_labels(page).iter().enumerate() {
+                    assert!(
+                        guide.contains(&format!("{}. «{label}»", index + 1)),
+                        "{language}: falta la opción {index} de {topic}: {label}"
+                    );
+                }
+                assert!(
+                    guide.contains(crate::i18n::text("menu.back")),
+                    "{language}: falta volver en {topic}"
+                );
+            }
+        }
+        crate::i18n::set("es");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn linux_storage_guides_keep_the_nested_page_title_localized() {
+        let _language_guard = crate::i18n::language_test_guard();
+        for language in crate::i18n::SUPPORTED {
+            crate::i18n::set(language);
+            for (topic, family) in [
+                ("storage-partitions", "storage_partitions"),
+                ("storage-filesystems", "storage_filesystems"),
+                ("storage-volumes", "storage_volumes"),
+            ] {
+                let label = crate::i18n::gui_family_text(family);
+                let guide = gui_guide(topic);
+                assert!(
+                    guide.starts_with(&format!("GUÍA GRÁFICA: {label}")),
+                    "{language}: título desfasado en {topic}"
+                );
+                assert!(
+                    guide.contains(&format!("Menú completo «{label}»")),
+                    "{language}: índice desfasado en {topic}"
+                );
+            }
+        }
+        crate::i18n::set("es");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
     fn network_boot_and_services_guides_match_each_localized_menu() {
         let _language_guard = crate::i18n::language_test_guard();
         let page_keys = [
@@ -2526,7 +2931,7 @@ mod tests {
         for language in crate::i18n::SUPPORTED {
             crate::i18n::set(language);
             let guide = gui_guide("git");
-            let expected = [
+            let mut expected = vec![
                 crate::i18n::git_action_text("guide"),
                 crate::i18n::tools_text("git_status"),
                 crate::i18n::tools_text("git_clone"),
@@ -2540,6 +2945,11 @@ mod tests {
                 crate::i18n::tools_text("git_tag"),
                 crate::i18n::tools_text("git_release"),
                 crate::i18n::tools_text("git_login"),
+            ];
+            if crate::common::command_exists("git-lfs") {
+                expected.push(crate::i18n::tools_text("git_lfs"));
+            }
+            expected.extend([
                 crate::i18n::tools_text("gh_repo"),
                 crate::i18n::tools_text("gh_prs"),
                 crate::i18n::tools_text("gh_releases"),
@@ -2551,7 +2961,7 @@ mod tests {
                 crate::i18n::git_action_text("repair_index"),
                 crate::i18n::git_action_text("repair_remote"),
                 crate::i18n::text("menu.back"),
-            ];
+            ]);
             for (index, label) in expected.iter().enumerate() {
                 assert!(
                     guide.contains(&format!("{:>2}. «{label}»", index + 1)),
@@ -2678,6 +3088,10 @@ mod tests {
                 assert!(
                     guide.contains(&format!("Menú completo «{title}»")),
                     "guía Windows/{topic} ({language}) no coincide con el título de la GUI «{title}»"
+                );
+                assert!(
+                    guide.starts_with(&format!("GUÍA GRÁFICA: {title}")),
+                    "guía Windows/{topic} ({language}) tiene un encabezado desfasado de la GUI «{title}»"
                 );
                 let options = crate::gui::windows_menu_labels(page)
                     .into_iter()

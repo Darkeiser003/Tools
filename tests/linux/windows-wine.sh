@@ -181,6 +181,9 @@ cleanup_prefix() {
 }
 
 cleanup_e2e_staging() {
+    if [[ -n "${windows_disabled_alias_log:-}" && -f "$windows_disabled_alias_log" ]]; then
+        rm -f -- "$windows_disabled_alias_log" 2>/dev/null || true
+    fi
     if [[ -n "$PACKAGE_TEST_DIR" && -d "$PACKAGE_TEST_DIR" ]]; then
         rm -rf -- "$PACKAGE_TEST_DIR" 2>/dev/null || true
     fi
@@ -209,7 +212,7 @@ fi
 if [[ -z "$LOG_PATH" ]]; then
     log_directory="${ARTIFACT_DIR:-$ROOT_DIR/dist}"
     mkdir -p -- "$log_directory"
-    LOG_PATH="$log_directory/windows-wine-$$.log"
+    LOG_PATH="$(mktemp "$log_directory/windows-wine.XXXXXX.log")"
 else
     mkdir -p -- "$(dirname -- "$LOG_PATH")"
 fi
@@ -445,14 +448,28 @@ EOF
     local package_gui_windows='C:\ltools-package-e2e-'"$$"'\ltools.exe'
     local package_cli_windows='C:\ltools-package-e2e-'"$$"'\ltools-cli.exe'
     local package_version package_help gui_package_version
-    package_version="$(run_windows_executable_timeout "$package_cli_windows" --version 2>>"$LOG_PATH")" ||
+    if package_version="$(run_windows_executable_timeout "$package_cli_windows" --version 2>>"$LOG_PATH")"; then
+        :
+    else
+        local package_status=$?
+        printf 'El CLI extraído del ZIP terminó con estado %s.\n%s\n' \
+            "$package_status" "$package_version" >&2
+        tail -n 30 "$LOG_PATH" >&2 || true
         die 'el perfil CLI extraído del ZIP no responde a --version'
+    fi
     grep -Fq 'ltools-rs' <<<"$package_version" || die 'el perfil CLI del ZIP devolvió una versión inesperada'
     package_help="$(run_windows_executable_timeout "$package_cli_windows" 2>>"$LOG_PATH")" ||
         die 'el perfil CLI extraído del ZIP no muestra ayuda sin argumentos'
     grep -Fq 'Uso: ltools' <<<"$package_help" || die 'el perfil CLI del ZIP no muestra la ayuda nativa'
-    gui_package_version="$(run_windows_executable_timeout "$package_gui_windows" --version 2>>"$LOG_PATH")" ||
+    if gui_package_version="$(run_windows_executable_timeout "$package_gui_windows" --version 2>>"$LOG_PATH")"; then
+        :
+    else
+        local package_status=$?
+        printf 'El GUI extraído del ZIP terminó con estado %s.\n%s\n' \
+            "$package_status" "$gui_package_version" >&2
+        tail -n 30 "$LOG_PATH" >&2 || true
         die 'el perfil GUI extraído del ZIP no responde a --version'
+    fi
     grep -Fq 'ltools-rs' <<<"$gui_package_version" || die 'el perfil GUI del ZIP devolvió una versión inesperada'
     rm -rf -- "$PACKAGE_TEST_DIR"
     PACKAGE_TEST_DIR=""
@@ -494,6 +511,42 @@ run_windows_timeout() {
     else
         timeout "$WINE_TIMEOUT_SECONDS" "$RUNNER" "$WINEXE" "$@"
     fi
+}
+
+# Wine puede perder el socket del wineserver después de una ráfaga larga de
+# procesos cortos. Solo se usa para consultas explícitamente idempotentes; no
+# se deben reintentar acciones que puedan cambiar el equipo o el registro.
+run_windows_readonly_timeout() {
+    local attempt output status
+    for attempt in 1 2 3; do
+        if output="$(run_windows_timeout "$@" 2>&1)"; then
+            printf '%s\n' "$output"
+            return 0
+        fi
+        status=$?
+        if (( attempt < 3 )) && grep -Eiq 'wine client error|connection reset by peer|wineserver.*(socket|connect)' <<<"$output"; then
+            printf 'AVISO Wine perdió la conexión durante una consulta de solo lectura; reintentando (%s/3).\n' \
+                "$attempt" >&2
+            sleep 1
+            continue
+        fi
+        printf '%s\n' "$output"
+        return "$status"
+    done
+}
+
+run_windows_guide() {
+    local topic="$1" output status
+    if output="$(run_windows_timeout guide "$topic" 2>>"$LOG_PATH")"; then
+        printf '%s' "$output"
+        return 0
+    else
+        status=$?
+    fi
+    printf 'La guía Windows «%s» terminó con estado %s.\n' "$topic" "$status" >&2
+    printf '%s\n' "$output" >&2
+    tail -n 30 "$LOG_PATH" >&2 || true
+    return "$status"
 }
 
 run_wine_host_timeout() {
@@ -570,10 +623,15 @@ else
     fi
 
     run_case() {
-        local name="$1"
+        local name="$1" status
         shift
         printf '\n--- %s ---\n' "$name" | tee -a "$LOG_PATH"
-        run_windows_timeout "$@" 2>&1 | tee -a "$LOG_PATH"
+        if run_windows_timeout "$@" 2>&1 | tee -a "$LOG_PATH"; then
+            return 0
+        else
+            status=$?
+            die "$name Windows bajo Wine terminó con estado $status"
+        fi
     }
 
     run_case 'version' --version
@@ -595,8 +653,12 @@ else
     # Validación real del gestor de alias dentro del prefijo Wine. Las rutas
     # son Windows deliberadamente: el registro y el lanzador deben respetar
     # APPDATA/LOCALAPPDATA y no reutilizar rutas POSIX.
-    windows_alias_home='C:\ltools-alias-config'
-    windows_alias_bin='C:\ltools-alias-bin'
+    # Un prefijo explícito puede reutilizarse entre ejecuciones. Aísla el
+    # registro de esta pasada para que los alias que quedaron de un intento
+    # anterior no conviertan `aliases add` en un falso fallo de regresión.
+    windows_alias_run_id="${BASHPID}-${RANDOM}-${RANDOM}"
+    windows_alias_home="C:\\ltools-alias-config-${windows_alias_run_id}"
+    windows_alias_bin="C:\\ltools-alias-bin-${windows_alias_run_id}"
     windows_alias_ensure="$(LTOOLS_ALIAS_HOME="$windows_alias_home" \
         LTOOLS_ALIAS_BIN="$windows_alias_bin" run_cli_timeout aliases ensure 2>>"$LOG_PATH")" ||
         die 'aliases ensure Windows bajo Wine falló'
@@ -618,11 +680,13 @@ else
         die 'aliases disable Windows bajo Wine falló'
     set +e
     windows_disabled_status=0
-    LTOOLS_ALIAS_HOME="$windows_alias_home" run_cli_timeout tguide >/tmp/ltools-windows-disabled-alias-$$.log 2>&1 ||
+    windows_disabled_alias_log="$(mktemp "$TEMP_ROOT/ltools-windows-disabled-alias.XXXXXX.log")"
+    LTOOLS_ALIAS_HOME="$windows_alias_home" run_cli_timeout tguide >"$windows_disabled_alias_log" 2>&1 ||
         windows_disabled_status=$?
     set -e
     (( windows_disabled_status != 0 )) || die 'un alias Windows desactivado se ejecutó inesperadamente'
-    rm -f -- "/tmp/ltools-windows-disabled-alias-$$.log"
+    rm -f -- "$windows_disabled_alias_log"
+    windows_disabled_alias_log=""
     ok 'gestor de alias Windows bajo Wine: registro, expansión y desactivación'
     windows_map_output="$(LTOOLS_ALIAS_HOME="$windows_alias_home" run_cli_timeout storage map --path 'C:\Windows' --depth 0 2>>"$LOG_PATH")" ||
         die 'storage map Windows bajo Wine falló'
@@ -709,29 +773,58 @@ else
         die 'el descriptor terminal Windows no usa ltools.exe'
     ok 'descriptor declarativo WinSlim Terminal'
     ok 'contrato JSON Windows'
+    ACTIONS_JSON="$(run_windows_timeout actions list --format json 2>>"$LOG_PATH")" ||
+        die 'actions list --format json falló bajo Wine'
+    printf '%s\n' "$ACTIONS_JSON" | tee -a "$LOG_PATH" >/dev/null
+    grep -Fq '"schema":"ltools-actions-v1"' <<<"$ACTIONS_JSON" ||
+        die 'el catálogo de acciones Windows no declara su esquema'
+    grep -Fq '"platform":"windows"' <<<"$ACTIONS_JSON" ||
+        die 'el catálogo de acciones Windows no declara la plataforma correcta'
+    grep -Fq 'native.security-scanners' <<<"$ACTIONS_JSON" ||
+        die 'el catálogo de acciones Windows omite el inventario de analizadores nativos'
+    if command -v jq >/dev/null 2>&1; then
+        printf '%s\n' "$ACTIONS_JSON" | jq -e '
+            (.schema == "ltools-actions-v1") and
+            (.platform == "windows") and
+            (([.actions[].id] | length) > 0) and
+            (([.actions[].id] | unique | length) == ([.actions[].id] | length)) and
+            all(.actions[];
+                (.category | type == "string" and length > 0) and
+                (.command | IN("audit", "packages", "games", "storage", "native", "system", "accounts", "defaults", "clean", "diagnostics", "automation", "boot", "wine")) and
+                (.args | type == "array" and all(.[]; type == "string")) and
+                (.target | type == "string" and length > 0) and
+                (.profile | type == "string" and length > 0) and
+                (.confirmation | type == "string" and length > 0) and
+                (.mutating | type == "boolean") and
+                ((.target == "none") or .targetPolicy == "explicit-only") and
+                ((.mutating == false) or .confirmation != "none")
+            )
+        ' >/dev/null || die 'el catálogo de acciones Windows contiene IDs, backends, argumentos o políticas inválidos'
+    fi
+    ok 'catálogo Windows de acciones: IDs, backends, argumentos y políticas verificados'
     run_case 'defaults' defaults
-    windows_network_guide="$(run_windows_timeout guide network 2>>"$LOG_PATH")" ||
-        die 'guide network Windows bajo Wine falló'
+    windows_network_guide="$(run_windows_guide network)" ||
+        die 'guide network Windows bajo Wine falló; revisa estado, salida y log'
     grep -Fq 'PERFIL WINDOWS' <<<"$windows_network_guide" ||
         die 'guide network Windows no identificó el perfil Windows'
     grep -Fq 'adaptadores' <<<"$windows_network_guide" ||
         die 'guide network Windows no documentó sus objetivos nativos'
     ! grep -Fq 'systemctl' <<<"$windows_network_guide" ||
         die 'guide network Windows mezcló conceptos Linux'
-    windows_boot_guide="$(run_windows_timeout guide boot 2>>"$LOG_PATH")" ||
-        die 'guide boot Windows bajo Wine falló'
+    windows_boot_guide="$(run_windows_guide boot)" ||
+        die 'guide boot Windows bajo Wine falló; revisa estado, salida y log'
     grep -Fq 'BCD/UEFI' <<<"$windows_boot_guide" ||
         die 'guide boot Windows no documentó BCD/UEFI'
     grep -Fq 'EFI/GRUB de Linux no aplican' <<<"$windows_boot_guide" ||
         die 'guide boot Windows no marcó las opciones Linux como no aplicables'
-    windows_wine_guide="$(run_windows_timeout guide wine 2>>"$LOG_PATH")" ||
-        die 'guide wine Windows bajo Wine falló'
+    windows_wine_guide="$(run_windows_guide wine)" ||
+        die 'guide wine Windows bajo Wine falló; revisa estado, salida y log'
     grep -Fq 'NO APLICA' <<<"$windows_wine_guide" ||
         die 'guide wine Windows no marcó la incompatibilidad nativa'
-    windows_winslim_guide="$(run_windows_timeout guide gui winslim 2>>"$LOG_PATH")" ||
-        die 'guide gui winslim Windows bajo Wine falló'
-    windows_gui_index="$(run_windows_timeout guide gui all 2>>"$LOG_PATH")" ||
-        die 'guide gui all Windows bajo Wine falló'
+    windows_winslim_guide="$(run_windows_guide gui winslim)" ||
+        die 'guide gui winslim Windows bajo Wine falló; revisa estado, salida y log'
+    windows_gui_index="$(run_windows_guide gui all)" ||
+        die 'guide gui all Windows bajo Wine falló; revisa estado, salida y log'
     if grep -Eq '^WinSlim:[[:space:]]*$' <<<"$windows_gui_index"; then
         grep -Fq 'Estado de WSCore y NSudo' <<<"$windows_winslim_guide" ||
             die 'la guía WinSlim no enumera la pantalla activa'
@@ -739,7 +832,7 @@ else
         grep -Fq 'no tiene disponible la pantalla WinSlim/NSudo' <<<"$windows_winslim_guide" ||
             die 'la guía WinSlim no explica por qué el menú condicional no aparece'
     fi
-    windows_winslim_status="$(run_windows_timeout winslim status 2>>"$LOG_PATH")" ||
+    windows_winslim_status="$(run_windows_readonly_timeout winslim status 2>>"$LOG_PATH")" ||
         die 'winslim status Windows bajo Wine falló'
     grep -Fq 'NSudo' <<<"$windows_winslim_status" || die 'winslim status no informa la detección de NSudo'
     windows_nsudo_guide="$(run_windows_timeout winslim guide 2>>"$LOG_PATH")" ||
@@ -770,8 +863,8 @@ else
     fi
     ! grep -Fq 'Crear prefijo' <<<"$windows_gui_index" ||
         die 'el índice GUI Windows anuncia gestión de prefijos Wine/Proton'
-    windows_native_gui_guide="$(run_windows_timeout guide gui native 2>>"$LOG_PATH")" ||
-        die 'guide gui native Windows bajo Wine falló'
+    windows_native_gui_guide="$(run_windows_guide gui native)" ||
+        die 'guide gui native Windows bajo Wine falló; revisa estado, salida y log'
     grep -Fq 'Abrir gestor nativo de particiones' <<<"$windows_native_gui_guide" ||
         die 'la guía GUI nativa Windows no coincide con los botones reales'
     ok 'guías Windows usan opciones nativas y rechazan supuestos Linux'
@@ -781,14 +874,39 @@ else
     if grep -Fq 'Elevación: native' <<<"$native_tools_output"; then
         die 'el inventario de herramientas, que es de solo lectura, intentó elevarse'
     fi
-    for tool_name in ssh scp sftp adb docker kubectl chkdsk.exe fsutil.exe netsh.exe; do
-        if ! grep -Fqi "$tool_name" <<<"$native_tools_output"; then
+    for tool_name in ssh scp sftp adb docker kubectl chkdsk.exe fsutil.exe netsh.exe shellcheck.exe actionlint.exe zizmor.exe gitleaks.exe osv-scanner.exe codeql.exe scorecard.exe cargo-audit.exe cargo-deny.exe; do
+        if ! grep -Eiq "^${tool_name}[[:space:]]{2,}" <<<"$native_tools_output"; then
             printf 'Salida incompleta de «native tools» (se esperaba %s):\n%s\n' \
                 "$tool_name" "$native_tools_output" >&2
             die "native tools Windows no mostró $tool_name"
         fi
     done
     ok 'inventario Windows de SSH, ADB, Docker y Kubernetes'
+    for network_action in status interfaces routes dns listening connections; do
+        network_output="$(run_windows_readonly_timeout native network "$network_action" 2>>"$LOG_PATH")" ||
+            die "native network $network_action Windows bajo Wine falló"
+        printf '%s\n' "$network_output" | tee -a "$LOG_PATH" >/dev/null
+        [[ -n "${network_output//[$'\r\n\t ']/}" ]] ||
+            die "native network $network_action Windows bajo Wine no devolvió salida"
+    done
+    ok 'consultas de red Windows separadas: interfaces, rutas, DNS, escucha y conexiones'
+    for native_query in hardware power security; do
+        native_query_output="$(run_windows_readonly_timeout native "$native_query" status 2>>"$LOG_PATH")" ||
+            die "native $native_query status Windows bajo Wine falló"
+        printf '%s\n' "$native_query_output" | tee -a "$LOG_PATH" >/dev/null
+        [[ -n "${native_query_output//[$'\r\n\t ']/}" ]] ||
+            die "native $native_query status Windows bajo Wine no devolvió salida"
+    done
+    ok 'consultas de hardware, energía y seguridad Windows con herramientas nativas o fallbacks integrados'
+    scanner_output="$(run_windows_readonly_timeout native security scanners 2>>"$LOG_PATH")" ||
+        die 'native security scanners Windows bajo Wine falló'
+    grep -Fq 'Analizadores de código y CI' <<<"$scanner_output" ||
+        die 'native security scanners Windows bajo Wine no mostró su sección'
+    for scanner in shellcheck.exe actionlint.exe zizmor.exe gitleaks.exe osv-scanner.exe codeql.exe scorecard.exe cargo-audit.exe cargo-deny.exe; do
+        grep -Fq "$scanner" <<<"$scanner_output" ||
+            die "native security scanners Windows no enumeró $scanner"
+    done
+    ok 'inventario Windows bajo Wine de analizadores de código y CI, sin elevación'
     disk_guide_output="$(run_windows_timeout storage guide 2>>"$LOG_PATH")" ||
         die 'storage guide Windows bajo Wine falló'
     printf '%s\n' "$disk_guide_output" | tee -a "$LOG_PATH" >/dev/null
@@ -797,8 +915,17 @@ else
             die "storage guide Windows no mostró $guide_marker"
     done
     ok 'guía DiskPart Windows con protección de objetivos'
-    registry_dry_run_output="/tmp/ltools-registry-dry-run-$$.reg"
-    registry_output="$(run_windows_timeout registry export --key 'HKCU\\Software' --out "$registry_dry_run_output" --dry-run 2>>"$LOG_PATH")" ||
+    for storage_query in usage pools bitlocker; do
+        storage_query_output="$(run_windows_readonly_timeout storage "$storage_query" 2>>"$LOG_PATH")" ||
+            die "storage $storage_query Windows bajo Wine falló"
+        printf '%s\n' "$storage_query_output" | tee -a "$LOG_PATH" >/dev/null
+        [[ -n "${storage_query_output//[$'\r\n\t ']/}" ]] ||
+            die "storage $storage_query Windows bajo Wine no devolvió salida"
+    done
+    ok 'consultas Windows de uso, Storage Spaces y BitLocker bajo Wine'
+    registry_dry_run_output="$PREFIX/drive_c/windows/temp/ltools-registry-dry-run.reg"
+    registry_dry_run_windows='C:\windows\temp\ltools-registry-dry-run.reg'
+    registry_output="$(run_windows_timeout registry export --key 'HKCU\\Software' --out "$registry_dry_run_windows" --dry-run 2>>"$LOG_PATH")" ||
         die 'registry export --dry-run Windows bajo Wine falló'
     printf '%s\n' "$registry_output" | tee -a "$LOG_PATH" >/dev/null
     grep -Fq 'no se modificaría el Registro' <<<"$registry_output" ||
@@ -806,7 +933,9 @@ else
     [[ ! -e "$registry_dry_run_output" ]] ||
         die 'registry export --dry-run creó un archivo inesperadamente'
     ok 'exportación del Registro Windows respeta dry-run y no escribe archivos'
-    menu_output="$(printf 'q\n' | run_windows_timeout menu 2>&1)" || {
+    # Interactive console menus need the console-subsystem profile so that
+    # Wine attaches stdin/stdout; the GUI-subsystem EXE has no console streams.
+    menu_output="$(printf 'q\n' | run_cli_timeout menu 2>&1)" || {
         die 'el menú Windows no se abrió correctamente'
     }
     printf '%s\n' "$menu_output" | tee -a "$LOG_PATH" >/dev/null
@@ -815,9 +944,9 @@ else
     fi
     ok 'menú Windows abre y sale con q'
 
-    if command -v xvfb-run >/dev/null 2>&1 && command -v xdotool >/dev/null 2>&1 &&
-        command -v import >/dev/null 2>&1 &&
-        timeout 10 xvfb-run -a -s '-screen 0 1280x900x24' true >/dev/null 2>&1; then
+    if command -v xvfb-run >/dev/null 2>&1 && command -v xdpyinfo >/dev/null 2>&1 &&
+        command -v xdotool >/dev/null 2>&1 && command -v import >/dev/null 2>&1 &&
+        timeout 10 xvfb-run -a -s '-screen 0 1280x900x24' xdpyinfo >/dev/null 2>&1; then
         gui_output="$(mktemp "$TEMP_ROOT/ltools-windows-gui.XXXXXX.log")"
         gui_marker_name="ltools-gui-smoke-$$.marker"
         gui_marker="$PREFIX/drive_c/windows/temp/$gui_marker_name"
@@ -896,11 +1025,11 @@ else
         ok "GUI Windows bajo Wine espera a que aparezcan los controles antes de mostrar la ventana, abre con clic real las categorías ${gui_pages[*]} y el submenú de cuentas, y valida títulos/capturas"
     else
         if [[ "$REQUIRE_GUI" -eq 1 ]]; then
-            if command -v xvfb-run >/dev/null 2>&1 && command -v xdotool >/dev/null 2>&1 &&
-                command -v import >/dev/null 2>&1; then
+            if command -v xvfb-run >/dev/null 2>&1 && command -v xdpyinfo >/dev/null 2>&1 &&
+                command -v xdotool >/dev/null 2>&1 && command -v import >/dev/null 2>&1; then
                 die 'GUI Windows bajo Wine requerida, pero Xvfb no pudo iniciar un display aislado'
             fi
-            die 'GUI Windows bajo Wine requerida, pero falta xvfb-run, xdotool o ImageMagick import'
+            die 'GUI Windows bajo Wine requerida, pero falta xvfb-run, xdpyinfo, xdotool o ImageMagick import'
         fi
         warn 'GUI Windows bajo Wine omitida: faltan herramientas gráficas o Xvfb no pudo iniciar un display aislado'
     fi

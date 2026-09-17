@@ -35,7 +35,7 @@ if ! command -v gio >/dev/null 2>&1 && ! command -v trash-put >/dev/null 2>&1; t
     exit 0
 fi
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/cachyos-e2e.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ltools-e2e.XXXXXX")"
 if [[ "$KEEP_TEMP" -eq 0 ]]; then
     trap 'rm -rf -- "$TMP_DIR"' EXIT
 else

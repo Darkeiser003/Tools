@@ -3,7 +3,7 @@
 
 ltools_temp_name_is_owned() {
     local name="$1"
-    [[ "$name" =~ ^(cachyos-(e2e|smoke)|ltools-(native-help|tarball-e2e|publish-release|menu-e2e|software-git-e2e|windows-wine))\.[[:alnum:]]{6}$ ]] ||
+    [[ "$name" =~ ^(ltools-(e2e|smoke|native-help|tarball-e2e|publish-release|menu-e2e|software-git-e2e|windows-wine))\.[[:alnum:]]{6}$ ]] ||
         [[ "$name" =~ ^ltools-windows-gui\.[[:alnum:]]{6}\.log$ ]] ||
         [[ "$name" =~ ^ltools-(windows-disabled-alias-[0-9]+\.log|registry-dry-run-[0-9]+\.reg|alias-test-[0-9]+\.tsv)$ ]] ||
         [[ "$name" =~ ^ltools-(timestamped-reports|identity-failures|linux-cross-tools|windows-cross-tools|broad-install|host-catalog-forbidden|windows-cross-catalog|shell-backend|windows-fragile-runner|windows-array-match|wine-tests)\.txt$ ]] ||

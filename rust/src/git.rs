@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub fn help() -> &'static str {
-    "git status|log|clone|fetch|pull|add|commit|push|branch|tag|release|diagnose|repair|gh|login [opciones seguras]"
+    crate::i18n::help_extra("git")
 }
 
 struct PushOptions {
@@ -61,6 +61,7 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
         "release" => release(ctx, args.get(1..).unwrap_or_default()),
         "diagnose" | "doctor" => diagnose(ctx, args.get(1..).unwrap_or_default()),
         "repair" => repair(ctx, args.get(1..).unwrap_or_default()),
+        "lfs" => lfs(ctx, args.get(1..).unwrap_or_default()),
         "gh" | "github" => gh(ctx, args.get(1..).unwrap_or_default()),
         "login" | "auth" => login(ctx),
         _ => Err(format!("operación git desconocida: {operation}")),
@@ -1101,6 +1102,111 @@ fn gh(ctx: &Context, args: &[String]) -> Result<(), String> {
     )
 }
 
+/// Ejecuta Git LFS mediante la integración oficial `git lfs`.
+///
+/// LFS añade subcomandos y opciones con frecuencia; por eso se conserva un
+/// passthrough nativo, pero LTools retira únicamente sus metadatos (`--repo` y
+/// `--yes`), mantiene los argumentos separados y confirma cualquier operación
+/// que pueda descargar, subir o cambiar el estado del repositorio.
+fn lfs(ctx: &Context, raw_args: &[String]) -> Result<(), String> {
+    require_git(ctx)?;
+    let (native_args, repo, yes) = parse_lfs_args(raw_args)?;
+    // La sintaxis y las restricciones de seguridad deben validarse antes de
+    // ofrecer la instalación de Git LFS. Una petición inválida o bloqueada no
+    // debe provocar efectos secundarios ni un diálogo de dependencias.
+    require_lfs(ctx)?;
+    let command = native_args.first().map(String::as_str).unwrap_or("help");
+    let read_only = matches!(command, "help" | "version" | "status" | "ls-files");
+    let mut command_args = vec!["lfs".to_owned()];
+    command_args.extend(native_args);
+    let repo = repo.as_deref();
+    run_command_mutation(
+        ctx,
+        "git-lfs",
+        "git",
+        repo,
+        &command_args,
+        yes || read_only,
+        "¿Ejecutar esta operación de Git LFS?",
+    )
+}
+
+fn require_lfs(ctx: &Context) -> Result<(), String> {
+    if common::command_exists("git-lfs") || common::command_exists("git-lfs.exe") {
+        Ok(())
+    } else if ctx.dry_run {
+        println!("Simulación: Git LFS se prepararía antes de ejecutar esta acción.");
+        Ok(())
+    } else {
+        println!("Git LFS no está instalado; LTools puede ofrecer su instalación desde el gestor disponible.");
+        if crate::common::ensure_tool(ctx, "git-lfs")?
+            && (common::command_exists("git-lfs") || common::command_exists("git-lfs.exe"))
+        {
+            Ok(())
+        } else {
+            Err("Git LFS sigue sin estar disponible; la instalación fue cancelada o falló.".into())
+        }
+    }
+}
+
+fn parse_lfs_args(raw_args: &[String]) -> Result<(Vec<String>, Option<PathBuf>, bool), String> {
+    let mut native = Vec::new();
+    let mut repo = None;
+    let mut yes = false;
+    let mut index = usize::from(raw_args.first().is_some_and(|value| value == "native"));
+    while index < raw_args.len() {
+        match raw_args[index].as_str() {
+            "--repo" => {
+                if repo.is_some() {
+                    return Err("git lfs solo acepta un --repo".into());
+                }
+                let value = raw_args.get(index + 1).ok_or("--repo requiere una ruta")?;
+                if value.starts_with('-') || value.chars().any(char::is_control) {
+                    return Err("--repo requiere una ruta válida".into());
+                }
+                repo = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--yes" => {
+                yes = true;
+                index += 1;
+            }
+            value if value.chars().any(char::is_control) || value.len() > 4_096 => {
+                return Err(
+                    "los argumentos de Git LFS contienen controles o superan el límite".into(),
+                )
+            }
+            value => {
+                native.push(value.to_owned());
+                index += 1;
+            }
+        }
+    }
+    if native.is_empty() {
+        native.push("help".into());
+    }
+    if native.first().is_some_and(|value| value == "env") {
+        return Err("ltools bloquea `git lfs env` porque puede mostrar endpoints o credenciales; usa status, help o version".into());
+    }
+    if native.len() > 64 {
+        return Err("Git LFS admite como máximo 64 argumentos en el passthrough".into());
+    }
+    let command = native[0].as_str();
+    let needs_repo = !matches!(
+        command,
+        "help" | "version" | "install" | "uninstall" | "update"
+    );
+    let repo = if needs_repo {
+        Some(repo.unwrap_or_else(|| PathBuf::from(".")))
+    } else {
+        repo
+    };
+    if let Some(path) = &repo {
+        verify_repo(path)?;
+    }
+    Ok((native, repo, yes))
+}
+
 /// Acceso al CLI nativo de `gh` para subcomandos/extensiones que cambian entre
 /// versiones. Ejecuta argumentos separados, no una cadena de shell. La salida
 /// y los argumentos completos no se guardan en el plan porque pueden contener
@@ -1220,64 +1326,7 @@ fn gh_native_is_read_only(args: &[String]) -> bool {
 /// comodines, tuberías ni sustituciones.
 #[cfg(any(unix, test))]
 pub(crate) fn split_native_argument_line(input: &str) -> Result<Vec<String>, String> {
-    if input.len() > 32_768 || input.chars().any(char::is_control) {
-        return Err(
-            "los argumentos de gh superan el límite permitido o contienen controles".into(),
-        );
-    }
-    let mut result = Vec::new();
-    let mut token = String::new();
-    let mut quote = None;
-    let mut escaped = false;
-    let mut started = false;
-    for character in input.chars() {
-        if escaped {
-            token.push(character);
-            escaped = false;
-            started = true;
-            continue;
-        }
-        match quote {
-            Some('\'') if character != '\'' => token.push(character),
-            Some('"') if character == '\\' => escaped = true,
-            Some(active) if character == active => quote = None,
-            Some(_) => token.push(character),
-            None if character == '\\' => {
-                escaped = true;
-                started = true;
-            }
-            None if character == '\'' || character == '"' => {
-                quote = Some(character);
-                started = true;
-            }
-            None if character.is_whitespace() => {
-                if started {
-                    result.push(std::mem::take(&mut token));
-                    started = false;
-                }
-            }
-            None => {
-                token.push(character);
-                started = true;
-            }
-        }
-        if token.len() > 4_096 {
-            return Err("un argumento de gh supera el máximo de 4096 bytes".into());
-        }
-    }
-    if escaped {
-        return Err("los argumentos de gh terminan con una barra invertida sin escapar".into());
-    }
-    if quote.is_some() {
-        return Err("las comillas de los argumentos de gh no están cerradas".into());
-    }
-    if started {
-        result.push(token);
-    }
-    if result.len() > 63 {
-        return Err("la GUI admite como máximo 63 argumentos nativos de gh".into());
-    }
-    Ok(result)
+    ltools_argv::split_native_argument_line(input)
 }
 
 /// Construye argv para el formulario GUI de `gh` y evita duplicar el ámbito
@@ -2362,6 +2411,32 @@ mod tests {
             "github.example/OWNER/REPO".into()
         ])
         .is_ok());
+    }
+
+    #[test]
+    fn lfs_parser_separates_ltools_metadata_and_blocks_environment_dump() {
+        let (args, repo, yes) = parse_lfs_args(&[
+            "native".into(),
+            "push".into(),
+            "--include".into(),
+            "large file".into(),
+            "--repo".into(),
+            ".".into(),
+            "--yes".into(),
+        ])
+        .expect("valid Git LFS passthrough");
+        assert_eq!(args, ["push", "--include", "large file"]);
+        assert_eq!(repo, Some(PathBuf::from(".")));
+        assert!(yes);
+        assert!(parse_lfs_args(&["env".into(), "--repo".into(), ".".into()]).is_err());
+        assert!(parse_lfs_args(&[
+            "push".into(),
+            "--repo".into(),
+            ".".into(),
+            "--repo".into(),
+            ".".into(),
+        ])
+        .is_err());
     }
 
     #[test]

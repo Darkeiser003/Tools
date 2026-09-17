@@ -1,6 +1,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
 
 pub fn home_dir() -> PathBuf {
     std::env::var_os("USERPROFILE")
@@ -232,10 +233,23 @@ pub fn critical_path(path: &Path) -> bool {
         .any(|suffix| trimmed.ends_with(suffix))
 }
 
+fn is_reparse_point(metadata: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
 pub fn move_to_trash(path: &Path, dry_run: bool) -> io::Result<bool> {
-    if !path.exists() {
-        eprintln!("No existe: {}", path.display());
-        return Ok(false);
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if is_reparse_point(&metadata) => {
+            eprintln!("No se envían enlaces simbólicos ni puntos de reanálisis a la papelera Windows por seguridad.");
+            return Ok(false);
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            eprintln!("No existe: {}", path.display());
+            return Ok(false);
+        }
+        Err(error) => return Err(error),
     }
     if critical_path(path) {
         eprintln!("Bloqueado por seguridad: {}", path.display());
@@ -255,7 +269,7 @@ pub fn move_to_trash(path: &Path, dry_run: bool) -> io::Result<bool> {
     };
     let escaped = path.to_string_lossy().replace('\'', "''");
     let script = format!(
-        r#"Add-Type -AssemblyName Microsoft.VisualBasic; $p='{escaped}'; if ([IO.Directory]::Exists($p)) {{ [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($p, [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs, [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin) }} elseif ([IO.File]::Exists($p)) {{ [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($p, [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs, [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin) }} else {{ exit 2 }}; if (Test-Path -LiteralPath $p) {{ exit 1 }}"#
+        r#"Add-Type -AssemblyName Microsoft.VisualBasic; $p='{escaped}'; $item=Get-Item -LiteralPath $p -Force -ErrorAction Stop; if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {{ exit 3 }}; if ($item.PSIsContainer) {{ [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($p, [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs, [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin) }} else {{ [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($p, [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs, [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin) }}; if (Test-Path -LiteralPath $p) {{ exit 1 }}"#
     );
     let status = Command::new(shell)
         .args([
@@ -336,6 +350,14 @@ static HOST_TOOLS: &[super::HostTool] = &[
         "OpenSSH.Client",
     ),
     tool("git", "git", "Git-version-control", false, true, "Git.Git"),
+    tool(
+        "git-lfs",
+        "git",
+        "Git-large-file-storage",
+        false,
+        true,
+        "Git.Git",
+    ),
     tool("gh", "git", "GitHub-CLI", false, true, "GitHub.cli"),
     tool(
         "adb",
@@ -1078,6 +1100,78 @@ static HOST_TOOLS: &[super::HostTool] = &[
         true,
         "Microsoft.DotNet.SDK.8",
     ),
+    tool(
+        "shellcheck.exe",
+        "security",
+        "Bash-static-analysis",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "actionlint.exe",
+        "security",
+        "GitHub-Actions-static-analysis",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "zizmor.exe",
+        "security",
+        "GitHub-Actions-security-review",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "gitleaks.exe",
+        "security",
+        "secret-and-history-scanning",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "osv-scanner.exe",
+        "security",
+        "dependency-vulnerability-scanning",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "codeql.exe",
+        "security",
+        "CodeQL-source-analysis",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "scorecard.exe",
+        "security",
+        "OpenSSF-repository-posture",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "cargo-audit.exe",
+        "security",
+        "Rust-dependency-advisory-scanning",
+        false,
+        false,
+        "",
+    ),
+    tool(
+        "cargo-deny.exe",
+        "security",
+        "Rust-license-and-advisory-policy",
+        false,
+        false,
+        "",
+    ),
 ];
 
 const fn tool(
@@ -1227,6 +1321,9 @@ fn package_for(tool: &super::HostTool, manager: &str) -> &'static str {
         ("git", "winget") => "Git.Git",
         ("git", "choco") => "git",
         ("git", "scoop") => "git",
+        ("git-lfs", "winget") => "Git.Git",
+        ("git-lfs", "choco") => "git",
+        ("git-lfs", "scoop") => "git",
         ("gh", "winget") => "GitHub.cli",
         ("gh", "choco") => "gh",
         ("gh", "scoop") => "gh",

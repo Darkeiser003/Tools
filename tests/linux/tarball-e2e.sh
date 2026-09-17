@@ -25,6 +25,16 @@ done
 [[ -s "$TARBALL" ]] || die "no existe el tarball: $TARBALL"
 command -v tar >/dev/null 2>&1 || die 'tar no está disponible'
 command -v timeout >/dev/null 2>&1 || die 'timeout no está disponible'
+GUI_XVFB_READY=0
+if command -v xvfb-run >/dev/null 2>&1 && command -v xdpyinfo >/dev/null 2>&1; then
+    if timeout 10 xvfb-run -a xdpyinfo >/dev/null 2>&1; then
+        GUI_XVFB_READY=1
+    elif (( REQUIRE_GUI )); then
+        die 'Xvfb está presente, pero no acepta clientes X11; no se puede validar la GUI del tarball'
+    fi
+elif (( REQUIRE_GUI )); then
+    die '--require-gui exige xvfb-run y xdpyinfo (x11-utils)'
+fi
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ltools-tarball-e2e.XXXXXX")"
 if (( KEEP_TEMP )); then
@@ -91,7 +101,7 @@ if command -v jq >/dev/null 2>&1; then
     ok 'descriptores JSON del tarball válidos'
 fi
 
-if command -v xvfb-run >/dev/null 2>&1; then
+if (( GUI_XVFB_READY )); then
     GUI_LOG="$TMP_DIR/gui.log"
     if ! timeout 35 xvfb-run -a -s "-screen 0 1280x900x24" env GDK_BACKEND=x11 LTOOLS_GUI_REQUIRED=1 \
         LTOOLS_GUI_SMOKE=1 LTOOLS_GUI_SMOKE_HOLD_MS=1200 LTOOLS_DISABLE_GUI=0 \
@@ -100,10 +110,8 @@ if command -v xvfb-run >/dev/null 2>&1; then
         die 'el backend empaquetado no pudo abrir y cerrar la GUI bajo Xvfb'
     fi
     ok 'GUI del backend extraído abre y cierra desde un entorno gráfico virtual'
-elif (( REQUIRE_GUI )); then
-    die '--require-gui exige xvfb-run'
 else
-    printf '  SKIP  no hay xvfb-run; se validó CLI y ejecución del tarball\n'
+    printf '  SKIP  no hay un display Xvfb utilizable; se validó CLI y ejecución del tarball\n'
 fi
 
 printf 'E2E del tarball completada correctamente: %s\n' "$TARBALL"

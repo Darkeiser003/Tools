@@ -266,6 +266,29 @@ fn terminal_actions_json(platform: &str) -> String {
     } else {
         &["ip"]
     };
+    // Estas acciones tienen rutas integradas de compatibilidad. No deben
+    // bloquearse en una GUI solo porque falte PowerShell: en Windows pueden
+    // usar ipconfig/route/netstat/netsh, systeminfo/WMIC/cmd o netsh.
+    let native_network_requirements: &[&str] = if platform == "windows" {
+        &[]
+    } else {
+        native_requirements
+    };
+    let native_hardware_requirements: &[&str] = if platform == "windows" {
+        &[]
+    } else {
+        native_requirements
+    };
+    let native_power_requirements: &[&str] = if platform == "windows" {
+        &["powercfg"]
+    } else {
+        native_requirements
+    };
+    let native_security_requirements: &[&str] = if platform == "windows" {
+        &[]
+    } else {
+        native_requirements
+    };
     let mut actions = vec![
         action_json(
             "audit",
@@ -544,7 +567,7 @@ fn terminal_actions_json(platform: &str) -> String {
         "Consulta interfaces, rutas, DNS y puertos con las herramientas nativas de la plataforma.",
         command,
         &["native", "network", "status"],
-        native_requirements,
+        native_network_requirements,
         false,
         false,
         "none",
@@ -558,7 +581,7 @@ fn terminal_actions_json(platform: &str) -> String {
         "Consulta CPU, memoria y dispositivos con herramientas nativas, sin modificar el sistema.",
         command,
         &["native", "hardware", "status"],
-        native_requirements,
+        native_hardware_requirements,
         false,
         false,
         "none",
@@ -572,7 +595,7 @@ fn terminal_actions_json(platform: &str) -> String {
         "Muestra el perfil de energía y los dispositivos de batería disponibles.",
         command,
         &["native", "power", "status"],
-        native_requirements,
+        native_power_requirements,
         false,
         false,
         "none",
@@ -586,7 +609,21 @@ fn terminal_actions_json(platform: &str) -> String {
         "Consulta el estado del firewall y las protecciones nativas sin realizar cambios.",
         command,
         &["native", "security", "status"],
-        native_requirements,
+        native_security_requirements,
+        false,
+        false,
+        "none",
+        true,
+    ));
+    actions.push(action_json(
+        "native-security-scanners",
+        "Consultar analizadores de código y CI",
+        "Analizadores CI",
+        "Sistema",
+        "Enumera los analizadores locales y de CI disponibles, sin ejecutarlos ni modificar el repositorio.",
+        command,
+        &["native", "security", "scanners"],
+        &[],
         false,
         false,
         "none",
@@ -822,6 +859,20 @@ fn terminal_actions_json(platform: &str) -> String {
         false,
         false,
         "none",
+        true,
+    ));
+    actions.push(action_json(
+        "git-lfs",
+        "Consultar y gestionar Git LFS",
+        "Git LFS",
+        "Git",
+        "Usa la integración instalada de Git LFS con argumentos separados; las consultas son de solo lectura y las descargas/subidas requieren confirmación.",
+        command,
+        &["git", "lfs"],
+        &["git-lfs"],
+        true,
+        false,
+        "required",
         true,
     ));
     actions.push(action_json(

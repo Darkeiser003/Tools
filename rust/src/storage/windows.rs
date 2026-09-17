@@ -83,20 +83,34 @@ fn mounts() -> Result<(), String> {
 
 fn usage() -> Result<(), String> {
     require_powershell()?;
-    powershell("Get-Volume | Where-Object DriveLetter | Sort-Object DriveLetter | Format-Table DriveLetter,FileSystemLabel,FileSystem,HealthStatus,SizeRemaining,Size -AutoSize")
+    println!("=== Uso de espacio por volumen Windows ===");
+    powershell_table(
+        "Get-Volume | Where-Object DriveLetter | Sort-Object DriveLetter | Format-Table DriveLetter,FileSystemLabel,FileSystem,HealthStatus,SizeRemaining,Size -AutoSize",
+        "No se encontraron volúmenes con letra de unidad en este entorno.",
+    )
 }
 
 fn storage_pools() -> Result<(), String> {
     require_powershell()?;
     println!("=== Espacios de almacenamiento Windows ===");
-    powershell("Get-StoragePool -ErrorAction SilentlyContinue | Format-Table FriendlyName,HealthStatus,OperationalStatus,Size,AllocatedSize -AutoSize")?;
+    powershell_table(
+        "Get-StoragePool -ErrorAction SilentlyContinue | Format-Table FriendlyName,HealthStatus,OperationalStatus,Size,AllocatedSize -AutoSize",
+        "No se encontraron Storage Spaces administrados.",
+    )?;
     println!("\n=== Discos virtuales ===");
-    powershell("Get-VirtualDisk -ErrorAction SilentlyContinue | Format-Table FriendlyName,HealthStatus,OperationalStatus,ResiliencySettingName,Size,FootprintOnPool -AutoSize")
+    powershell_table(
+        "Get-VirtualDisk -ErrorAction SilentlyContinue | Format-Table FriendlyName,HealthStatus,OperationalStatus,ResiliencySettingName,Size,FootprintOnPool -AutoSize",
+        "No se encontraron discos virtuales administrados.",
+    )
 }
 
 fn bitlocker() -> Result<(), String> {
     require_powershell()?;
-    powershell("Get-BitLockerVolume -ErrorAction SilentlyContinue | Format-Table MountPoint,VolumeStatus,ProtectionStatus,EncryptionMethod,EncryptionPercentage -AutoSize")
+    println!("=== Estado de BitLocker Windows ===");
+    powershell_table(
+        "Get-BitLockerVolume -ErrorAction SilentlyContinue | Format-Table MountPoint,VolumeStatus,ProtectionStatus,EncryptionMethod,EncryptionPercentage -AutoSize",
+        "BitLocker no devolvió volúmenes administrables en este entorno.",
+    )
 }
 
 fn inspect(ctx: &Context, raw: &str) -> Result<(), String> {
@@ -409,6 +423,16 @@ fn powershell(script: &str) -> Result<(), String> {
     } else {
         Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
     }
+}
+
+fn powershell_table(script: &str, empty_message: &str) -> Result<(), String> {
+    let output = powershell_output(script)?;
+    if output.trim().is_empty() {
+        println!("{}", empty_message);
+    } else {
+        print!("{}", output);
+    }
+    Ok(())
 }
 
 fn powershell_output(script: &str) -> Result<String, String> {

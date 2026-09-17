@@ -148,7 +148,7 @@ fn usage() {
     println!("  audit       {}", i18n::text("help.audit"));
     println!("  games       {}", i18n::games_help());
     println!("  packages    {}", i18n::text("help.packages"));
-    println!("  report      Leer un informe con salida directa, paginador o editor");
+    println!("  report      {}", i18n::help_extra("report"));
     println!("  software    {}", software::help());
     println!("  git         {}", git::help());
     println!("  guide       {}", guides::help());
@@ -162,23 +162,35 @@ fn usage() {
     println!("  defaults    {}", i18n::defaults_help());
     println!("  system      {}", i18n::system_help());
     println!("  boot        {}", boot::help());
+    // This is a fixed translated menu label, never account data or credentials.
+    // codeql[rust/cleartext-logging]
     println!("  accounts    {}", i18n::accounts_label());
     println!("  native      {}", i18n::native_label());
     println!("              {}", native::help());
     println!("              {}", i18n::system_options());
     println!("  doctor      {}", i18n::text("help.doctor"));
     println!("  diagnostics {}", diagnostics::help());
-    println!("              doctor --install TOOL");
+    println!("              {}", i18n::help_extra("doctor_install"));
     println!("  rollback    {}", i18n::text("help.rollback"));
     println!("  storage     {}", i18n::storage_help());
     println!("              {}", storage_map::help());
     println!("  registry    {}", i18n::registry_help());
     println!("  capabilities  {}", i18n::text("help.capabilities"));
-    println!("  privileges    Política de elevación por acción y plataforma");
-    println!("  winslim       Detectar NSudo y lanzar procesos Windows con identidad explícita");
-    println!("  release-manifest  Genera el manifiesto verificable de una release de GitHub");
-    println!("  release-checksums  Genera SHA256SUMS.txt para los artefactos publicables");
-    println!("  release-signature  Firma o verifica SHA256SUMS.txt con Ed25519");
+    println!("  privileges    {}", i18n::help_extra("privileges"));
+    #[cfg(windows)]
+    println!("  winslim       {}", i18n::help_extra("winslim"));
+    println!(
+        "  release-manifest  {}",
+        i18n::help_extra("release_manifest")
+    );
+    println!(
+        "  release-checksums  {}",
+        i18n::help_extra("release_checksums")
+    );
+    println!(
+        "  release-signature  {}",
+        i18n::help_extra("release_signature")
+    );
     println!("  update      {}", updater::help());
     println!();
     println!(
@@ -189,10 +201,8 @@ fn usage() {
         "{}",
         theme::current().paint(theme::Role::Muted, i18n::visual_options())
     );
-    println!(
-        "Privilegios: --elevate | --no-elevate; la preferencia persistente se cambia en Ajustes."
-    );
-    println!("Las acciones obligatorias piden sudo/UAC; consultas, Git/Wine y la papelera del usuario no se elevan.");
+    println!("{}", i18n::help_extra("elevation_hint"));
+    println!("{}", i18n::help_extra("privilege_policy"));
     println!("{}", i18n::text("help.clean.options"));
     println!("{}", i18n::prefix_options());
     let prefix_flags = i18n::prefix_flags();
@@ -1189,6 +1199,8 @@ fn category_menu(ctx: &Context, category: MenuCategory) -> Result<(), String> {
                 println!("  1) {}", i18n::text("menu.system"));
                 println!("  2) {}", i18n::text("menu.doctor"));
                 println!("  3) {}", i18n::diagnostics_label());
+                // This is a fixed translated menu label, never account data or credentials.
+                // codeql[rust/cleartext-logging]
                 println!("  4) {}", i18n::accounts_label());
                 println!("  5) {}", i18n::native_action_text("tools_status"));
                 println!("  6) {}", i18n::native_label());
@@ -1217,11 +1229,12 @@ fn category_menu(ctx: &Context, category: MenuCategory) -> Result<(), String> {
                     i18n::settings_text("color")
                 );
                 println!(
-                    "  4) Elevar acciones modificadoras por defecto: {}",
+                    "  4) {}: {}",
+                    i18n::gui_text("elevation_default"),
                     if gui_preferences::load().elevate_by_default {
-                        "sí"
+                        i18n::gui_text("elevation_enabled")
                     } else {
-                        "no"
+                        i18n::gui_text("elevation_disabled")
                     }
                 );
                 println!("  5) {}", i18n::settings_text("update_check"));
@@ -1363,6 +1376,8 @@ fn dependencies_menu(ctx: &Context) -> Result<(), String> {
         clear_screen();
         cli_ui::header(Some("dependencies"));
         cli_ui::group(i18n::category_text("dependencies"));
+        // This menu entry is fixed localized UI text, not account data.
+        // codeql[rust/cleartext-logging]
         println!("  1) {}", i18n::gui_text("doctor"));
         println!("  2) {}", i18n::native_action_text("tools_status"));
         println!("  3) {}", i18n::native_action_text("tools_install"));
@@ -1409,6 +1424,8 @@ fn native_tools_menu(ctx: &Context) -> Result<(), String> {
         cli_ui::group(i18n::category_text("native_tools"));
         println!("  1) {}", i18n::storage_label());
         println!("  2) {}", i18n::text("menu.system"));
+        // This is a fixed translated menu label, never account data or credentials.
+        // codeql[rust/cleartext-logging]
         println!("  3) {}", i18n::accounts_label());
         println!("  4) {}", i18n::native_label());
         println!("  5) {}", i18n::boot_label());
@@ -1536,9 +1553,7 @@ fn settings_color_menu() -> bool {
 }
 
 fn settings_elevation_menu() -> bool {
-    println!(
-        "\nElevar acciones modificadoras por defecto con sudo/UAC? (s/n; las consultas, Git, Wine y la papelera del usuario nunca se elevan automáticamente)"
-    );
+    println!("\n{}", i18n::gui_text("elevation_prompt"));
     let Some(answer) = menu_input(i18n::text("menu.prompt")) else {
         return false;
     };
@@ -1548,10 +1563,15 @@ fn settings_elevation_menu() -> bool {
     );
     match gui_preferences::set_elevate_by_default(enabled) {
         Ok(()) => println!(
-            "Elevación por defecto: {}.",
-            if enabled { "activada" } else { "desactivada" }
+            "{}: {}.",
+            i18n::gui_text("elevation_default"),
+            if enabled {
+                i18n::gui_text("elevation_enabled")
+            } else {
+                i18n::gui_text("elevation_disabled")
+            }
         ),
-        Err(error) => eprintln!("No se pudo guardar la preferencia de elevación: {error}"),
+        Err(error) => eprintln!("{} {error}", i18n::gui_text("elevation_save_error")),
     }
     true
 }

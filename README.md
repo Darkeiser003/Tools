@@ -86,9 +86,9 @@ admiten `--dry-run` y generan planes reversibles cuando corresponde.
   siendo módulos separados para no mezclar sus dependencias con el anfitrión.
   El catálogo se publica también en `capabilities --format json` para
   frontends.
-- Genera AppImage con fallback por extracción si FUSE falta o el sistema
-  bloquea el montaje, aunque detecte el dispositivo y su helper; también genera
-  un ZIP portable nativo para Windows.
+- Genera AppImage para ejecución directa con FUSE y verifica también la ruta
+  oficial de extracción cuando el sistema bloquea el montaje; además genera un
+  ZIP portable nativo para Windows.
 
 ## Acciones guiadas y valores seguros
 
@@ -195,11 +195,12 @@ confirmación y registro de la operación.
 
 En CLI, `boot status`, `boot efi-entries`, `boot grub-entries`, `boot
 systemd-boot` y `boot secure-boot` son consultas. `boot set-next --entry
-"Título exacto"` usa `grub-reboot` para el siguiente arranque, exige elevación
+"Título exacto"` usa `grub-reboot` para programar el siguiente arranque, exige elevación
 y confirmación (o `--yes` desde una interfaz que ya confirmó); nunca reinicia
 el equipo automáticamente. `boot plan` explica el flujo protegido para una
-operación de arranque. Wine no se considera una prueba válida de firmware o
-arranque.
+operación de arranque. Wine no emula el firmware ni el arranque real del
+equipo, así que esas consultas no se consideran una prueba válida de EFI,
+Secure Boot o cargadores instalados en el anfitrión.
 
 ## Requisitos
 
@@ -265,7 +266,12 @@ Helmfile y Argo CD). También ofrece red avanzada (`ethtool`, `iw`, `mtr`,
 `nvidia-smi` y `radeontop`), seguridad de contenedores (`trivy`, `cosign`) y
 desarrollo (`jq`, `yq`, `git-lfs`, `git-filter-repo`, LazyGit, Delta, GLab,
 Python, Node, Go, Rustup, Java, Maven, Gradle, Make, CMake, GCC, GDB, Valgrind,
-Perf y BPFTrace).
+Perf y BPFTrace). Para auditar el propio código y la automatización también
+reconoce ShellCheck, actionlint, zizmor, Gitleaks, OSV-Scanner, CodeQL,
+Scorecard, cargo-audit y cargo-deny. Se muestran en `native tools status` con
+su estado; solo se ofrece instalación automática cuando el gestor nativo tiene
+un paquete fiable, y el resto queda identificado para instalación manual o
+para ejecutarse mediante la CI de GitHub.
 
 En Windows detecta PowerShell, DiskPart, Administración de discos, cmdlets de
 discos/red/Defender, `reg.exe`, `sc.exe`, `tasklist`, `taskkill`, `wevtutil`,
@@ -276,14 +282,19 @@ red (`netsh`, `arp`, `pathping`, `getmac`), tareas (`schtasks`, políticas de
 grupo), permisos (`icacls`, `takeown`, `auditpol`) y runtimes de desarrollo
 como Python, Node, Java y .NET.
 
+En Windows, los analizadores de código y CI se detectan por sus ejecutables
+nativos (`shellcheck.exe`, `actionlint.exe`, `zizmor.exe`, `gitleaks.exe`,
+`osv-scanner.exe`, `codeql.exe`, `scorecard.exe`, `cargo-audit.exe` y
+`cargo-deny.exe`) cuando están instalados. No se resuelven mediante Wine ni se
+sustituyen por comandos Linux; si falta una instalación nativa, la interfaz lo
+marca como no disponible y conserva la guía de instalación manual o de CI.
+
 Las herramientas instalables se ofrecen bajo demanda cuando la plataforma
 conoce un paquete fiable. Las herramientas integradas de Windows y las que no
 tienen un paquete universal se identifican como nativas o de instalación
 manual. El JSON publica `available`, `installable`, `install_package` y
 `version` para que una terminal pueda mostrar el estado sin ejecutar acciones
 inesperadas.
-El JSON publica `available`, `installable`, `install_package` y `version` para
-que una terminal pueda mostrar el estado sin ejecutar acciones inesperadas.
 
 ### Codificación de archivos
 
@@ -438,16 +449,22 @@ chmod +x "ltools-$VERSION-linux-x86_64.AppImage"
 "./ltools-$VERSION-linux-x86_64.AppImage"
 ```
 
-Si el AppImage se distribuye junto al lanzador auxiliar, este detecta FUSE y
-activa automáticamente la extracción temporal cuando haga falta:
+Si el sistema no permite montar AppImage con FUSE, usa directamente el
+mecanismo oficial de extracción del runtime:
 
 ```bash
-./run-ltools.sh
-./run-ltools.sh --doctor
-./run-ltools.sh games --full
+APPIMAGE_EXTRACT_AND_RUN=1 "./ltools-$VERSION-linux-x86_64.AppImage"
+APPIMAGE_EXTRACT_AND_RUN=1 "./ltools-$VERSION-linux-x86_64.AppImage" --doctor
+APPIMAGE_EXTRACT_AND_RUN=1 "./ltools-$VERSION-linux-x86_64.AppImage" games --full
 ```
 
-El lanzador auxiliar es opcional y no forma parte del tarball runtime.
+Para la distribución Linux autónoma, la release publica los AppImage y no un
+lanzador auxiliar. El tarball Linux y los artefactos Windows siguen siendo
+formatos independientes para sus respectivos usos. El builder y las pruebas
+ejecutan el AppImage directamente: usan FUSE cuando el host permite el montaje
+y el runtime oficial de extracción cuando se indica
+`APPIMAGE_EXTRACT_AND_RUN=1`; no se necesita ni se publica un lanzador
+auxiliar.
 
 ### Tarball Linux
 
@@ -585,6 +602,14 @@ siendo interactivo y LTools no lee, guarda ni imprime tokens. `git repair`
 puede reconstruir un índice desde HEAD íntegro o recuperar solo la metadata
 `.git` ausente desde un remoto explícito, sin checkout ni sobrescritura del
 árbol local.
+
+Git LFS se integra mediante `ltools git lfs`: `status`, `version` y `help` son
+consultas seguras, mientras que `native fetch|pull|push|track|untrack|prune`
+conserva las opciones de la versión instalada y pide confirmación para cambios,
+descargas o subidas. Se acepta `--repo RUTA` y `--yes` como metadatos de LTools;
+los demás argumentos se pasan separados a `git lfs`. `git lfs env` se rechaza
+para no imprimir endpoints o credenciales. La GUI Linux ofrece la consulta de
+estado de LFS y la guía explica cuándo usar el passthrough avanzado.
 
 Las acciones de red, EFI/GRUB, servicios, cuentas, almacenamiento, Wine/Proton,
 contenedores, Kubernetes, SSH/ADB, paquetes y automatización tienen la misma
@@ -776,13 +801,38 @@ Defender. Las consultas no cambian el estado.
 ./ltools.sh native hardware status
 ./ltools.sh native power status
 ./ltools.sh native security status
+./ltools.sh native security scanners
 ./ltools.sh --dry-run native network flush-dns
 ```
 
 `network flush-dns`, `set-interface`, `connection-up` y `connection-down` son
 acciones mutables: requieren confirmación y admiten `--dry-run`/`--yes` cuando
 la confirmación ya la ha realizado una interfaz. En Windows se usa
-`ltools.exe native network flush-dns`. Si falta una herramienta opcional, se
+`ltools.exe native network interfaces|routes|dns|listening|connections` para
+consultas separadas. Windows usa primero los cmdlets PowerShell disponibles y,
+en instalaciones reducidas o Wine, recurre a `ipconfig`, `route`, `netstat` y
+`netsh` integrados. `ltools.exe native network flush-dns` vacía la caché DNS.
+`ltools.exe native hardware status` usa CIM cuando el cmdlet está realmente
+disponible; en ediciones reducidas recurre, en este orden, a `systeminfo`, WMIC
+o una consulta mínima de `cmd.exe`, siempre indicando qué fuente se usó.
+`ltools.exe native security status` consulta Firewall y Defender de forma
+independiente y conserva una salida de Firewall mediante `netsh.exe` si faltan
+los módulos de PowerShell. Así una opción visible siempre tiene una ruta nativa
+compatible o explica por qué no puede ejecutarse.
+`native security scanners` es una consulta de solo lectura: enumera ShellCheck,
+actionlint, zizmor, Gitleaks, OSV-Scanner, CodeQL, Scorecard, cargo-audit y
+cargo-deny, indicando si están disponibles y para qué sirve cada uno. No ejecuta
+análisis ni modifica el repositorio; los escaneos completos se ejecutan en la
+CI o desde el menú de build con la herramienta instalada.
+En la GUI Win32, la página «Herramientas nativas» expone estas mismas consultas
+como botones independientes: «Estado del hardware», «Estado y planes de
+energía» y «Estado del firewall y seguridad», además de las cinco consultas de
+red y las consultas de almacenamiento. La guía `ltools.exe guide gui native`
+se genera del mismo catálogo, por lo que no debe quedar una acción sin explicar.
+El contrato de capacidades no marca PowerShell como requisito duro para esas
+consultas Windows; solo `power status` declara `powercfg`, porque los fallbacks
+se consideran parte del sistema operativo y no una dependencia instalable.
+Si falta una herramienta opcional, se
 informa y, cuando el catálogo conoce un paquete seguro, se ofrece instalar
 solo esa dependencia desde el gestor existente; LTools no instala Wine,
 juegos, virtualización ni una colección de terceros.
@@ -876,13 +926,33 @@ conservan los argumentos separados, `zip` y `tar` delegan en la herramienta
 nativa instalada y `open` usa el explorador/gestor de archivos de la
 plataforma. Las acciones admiten `--dry-run` y `--yes` cuando la confirmación
 ya fue realizada por una interfaz. Un destino que ya existe nunca se
-sobrescribe; para copiar tampoco se siguen enlaces simbólicos, y se retira la
-copia parcial si una lectura o escritura falla. Un movimiento dentro del mismo
-volumen es atómico y queda registrado para rollback. Entre volúmenes se copia
-primero y la fuente se envía a la papelera; si la papelera no está disponible,
-la copia completa se conserva en el destino y el programa informa que la
-fuente también permanece. Los archivos ZIP/TAR no pueden guardarse dentro de
-la carpeta que se está archivando.
+sobrescribe: las copias, movimientos y publicaciones ZIP/TAR rechazan también
+destinos que aparezcan durante la operación; en Linux, macOS y Windows se usa
+un movimiento atómico sin reemplazo. Las copias se preparan en un directorio
+temporal del mismo volumen y se publican cuando están completas. ZIP/TAR
+también se generan en staging junto al destino antes de publicarse; en Unix,
+estos directorios usan permisos `0700`, y en Windows heredan la ACL de la
+carpeta destino. En Unix, las copias (también las de movimientos entre
+volúmenes) conservan los bits normales `rwx`, pero eliminan SUID, SGID y
+sticky; así una copia elevada no convierte un ejecutable controlado por el
+usuario en un archivo especial propiedad de root. Copiar no sigue enlaces
+simbólicos ni puntos de reanálisis:
+si encuentra uno dentro del árbol, descarta el staging incompleto. ZIP/TAR
+inspeccionan el árbol antes de archivarlo; ZIP también ordena a Info-ZIP
+almacenar enlaces sin seguirlos como defensa adicional frente a cambios
+concurrentes del árbol.
+Mover conserva el propio enlace cuando es atómico.
+En Linux, borrar a papelera mueve el enlace
+seleccionado —también si está colgante—, no su destino; Windows rechaza todos
+los enlaces simbólicos, junctions y demás puntos de reanálisis para no borrar
+su destino accidentalmente. Se retira una copia parcial si una lectura o
+escritura falla. Un movimiento dentro del mismo volumen es atómico y queda
+registrado para rollback. Entre volúmenes se copia primero y la fuente se
+envía a la papelera; si el origen es un enlace, se rechaza el cruce y se
+conserva. Si la papelera no está disponible para un archivo normal, la copia
+completa se conserva en el destino y el programa informa que la fuente también
+permanece. Los archivos ZIP/TAR no pueden guardarse dentro de la carpeta que
+se está archivando.
 
 Ejemplos seguros de simulación:
 
@@ -1044,10 +1114,14 @@ fijada accidentalmente a pacman. Antes de retirar un paquete se comprueban
 dependencias y, si existen, se ofrece cancelar o resolverlas mediante el
 gestor correspondiente.
 
-Por defecto genera únicamente `summary.txt` e `inventory.tsv`, que reúnen la
-información esencial en un informe compacto. Si se necesita compatibilidad con
-flujos que esperan un fichero por gestor, `--full` conserva además los TSV
-detallados y `package-artifacts.tsv`.
+Por defecto genera `summary.txt`, `inventory.tsv` y `manager-errors.tsv`, que
+reúnen el inventario compacto y cualquier fallo de consulta con su gestor,
+argumentos, stderr/código de salida o timeout. Cada consulta se ejecuta una
+sola vez aunque se soliciten también los TSV detallados; un fallo queda
+señalado en el informe en vez de parecer una lista vacía. Si se necesita
+compatibilidad con flujos que esperan un fichero
+por gestor, `--full` conserva además los TSV detallados y
+`package-artifacts.tsv`.
 
 Desde el menú de inventario se ofrece leer el informe inmediatamente. También
 se puede abrir de forma explícita:
@@ -1075,6 +1149,11 @@ Ejemplos seguros:
 ./ltools.sh --dry-run rollback --plan /tmp/ltools-cache.tsv
 ./ltools.sh rollback --plan /tmp/ltools-cache.tsv
 ```
+
+La limpieza de una ruta busca referencias en la configuración conocida y solo
+continúa si `rg` termina con éxito indicando que no encontró ninguna. Si no
+puede leer alguna ubicación, la operación se bloquea; `--force` omite esa
+comprobación únicamente después de revisar manualmente la ruta y sus usos.
 
 El modo de limpieza no incluye automáticamente bibliotecas de juegos, máquinas
 virtuales, prefijos ni puntos de montaje. Esas rutas requieren selección
@@ -1112,8 +1191,15 @@ los datos personales se envían a la papelera; la papelera se puede revisar y
 vaciar de forma explícita. Las carpetas de aplicaciones nunca se borran como
 archivos: se muestran como espacio potencial y la desinstalación debe hacerse
 mediante `packages`/`software`, usando el gestor nativo de Linux o Windows.
+En la GUI Windows, además de espacio, discos, particiones y montajes, se pueden
+consultar el uso por volumen, Storage Spaces/discos virtuales y el estado de
+BitLocker; son consultas de solo lectura y no sustituyen la confirmación en la
+herramienta nativa para cambiar el almacenamiento.
 El resumen distingue espacio potencial, seleccionado y liberado/separado, y
 avisa de que lo enviado a la papelera sigue ocupando espacio hasta vaciarla.
+Los tamaños y borrados no atraviesan enlaces o puntos de reanálisis Windows;
+si una caché seleccionada contiene una junction, esa limpieza se bloquea antes
+de retirar su contenido.
 
 ### Búsqueda e instalación contextual
 
@@ -1197,6 +1283,10 @@ que se haya seleccionado para esa ejecución. Las salidas locales del menú se
 separan entre `dist/local/` (staging) y `dist/local-release/` (paquete local)
 y permiten una excepción sin firma; la release publicable conserva las firmas
 Ed25519 y SSH obligatorias en `release/`.
+El preview vigilado recompila y relanza únicamente el perfil debug aislado al
+cambiar Rust, Cargo o cualquiera de las bibliotecas compartidas bajo
+`rust/crates/`; nunca empaqueta ni modifica `release/`. En Windows se usa
+`scripts\live-preview.ps1` con el mismo alcance y un target separado.
 En Windows, `scripts/build.ps1` ofrece preview, pruebas sin recompilar,
 builds y limpieza para el ejecutable nativo y el ZIP portable. Su perfil rápido
 de desarrollo conserva las pruebas; solo la opción explícita de compilar
@@ -1287,6 +1377,15 @@ Los paquetes Linux y el ZIP portable Windows incluyen la carpeta
 originales, además de `LICENSE` con la licencia MIT del proyecto. La release Windows publica además
 `THIRD-PARTY-LICENSES-windows.zip` para quien descargue solo el `.exe`.
 
+Los AppImage requieren FUSE para montar su contenido durante el arranque
+normal. La build puede exigirlo con `--require-fuse`; las pruebas de entornos
+restringidos usan el mecanismo oficial del runtime directamente sobre el
+AppImage: `APPIMAGE_EXTRACT_AND_RUN=1 ./ltools-VERSION-linux-ARQUITECTURA.AppImage`.
+Ese override no crea ni necesita un lanzador adicional y no cambia el formato
+publicado. El requisito y el override también figuran en
+`ltools-project.json`, para que una terminal pueda detectarlos antes de
+intentar abrir la integración.
+
 Cada paquete incluye `ltools-capabilities.json`. Además, `ltools-terminal.json`
 es un tercer entregable lógico, exclusivo para integraciones como LTerminal:
 contiene el protocolo, los argumentos de apertura y la capacidad que debe
@@ -1325,9 +1424,10 @@ aislado, usa:
 
 El comprobador prioriza UMU-Wine, prueba la consola, el ejecutable, el JSON,
 defaults y el menú, y elimina el prefijo temporal al terminar. Si están
-disponibles Xvfb, `xdotool` e ImageMagick, abre cada categoría Win32 con clics
-reales, comprueba el título mostrado contra el índice de guías y guarda
-capturas del panel principal y de cada categoría en `dist/captures/`. También acepta
+disponibles Xvfb, `xdpyinfo` (`x11-utils`), `xdotool` e ImageMagick, abre cada
+categoría Win32 con clics reales, comprueba el título mostrado contra el índice
+de guías y guarda capturas del panel principal y de cada categoría en
+`dist/captures/`. También acepta
 `--runner RUTA`, `--prefix RUTA`, `--output DIR`, `--keep-prefix`,
 `--no-tests`, `--fast`, `--offline`, `--jobs N` y `--install-mono`. Wine Mono no
 se instala por defecto porque LTools no usa .NET; esa opción solo prepara el
@@ -1372,6 +1472,11 @@ release ni necesita una clave de firma:
   no sobre código no confiable de pull requests. zizmor y Scorecard pueden
   publicar en repositorios públicos; en repositorios privados se requiere
   GitHub Advanced Security.
+- `ClusterFuzzLite` prueba en pull requests y semanalmente el parser aislado de
+  argumentos nativos de `gh`, con AddressSanitizer y un informe SARIF
+  descargable. El fuzzer y `libfuzzer-sys` quedan fuera del ejecutable; sus
+  dependencias usan un lockfile y una política `cargo-deny` propios
+  (`fuzz/Cargo.lock` y `fuzz/deny.toml`) y también pasan las auditorías Rust.
 - `Dependency review` revisa los cambios de dependencias de cada pull request
   y falla el check si introducen vulnerabilidades moderadas, altas o críticas.
   Para que un check fallido impida fusionar, GitHub debe tenerlo marcado como
@@ -1379,13 +1484,27 @@ release ni necesita una clave de firma:
   actualizaciones de crates y GitHub Actions, con una espera de siete días para
   las actualizaciones de versión; las de seguridad no se retrasan por ese
   cooldown. Cada PR sigue pasando por las pruebas anteriores.
+- `OSV-Scanner dependency security` consulta la base OSV de forma independiente:
+  en pull requests compara la rama propuesta con la base y señala únicamente
+  vulnerabilidades nuevas; en `main`, ejecuciones manuales y semanalmente hace
+  un inventario completo, incluyendo los lockfiles de Rust y el árbol Git.
+  Publica el SARIF en Code Scanning con permisos mínimos. Está fijado a un
+  commit reproducible y Dependabot puede proponer su actualización. No sustituye
+  `cargo audit`, `cargo deny` ni Dependency Review: cada uno usa fuentes y
+  reglas distintas, por lo que un hallazgo se debe revisar en el contexto del
+  paquete y la versión afectados. La sintaxis y las opciones del workflow
+  siguen la [guía oficial de OSV-Scanner](https://google.github.io/osv-scanner/github-action/).
 
 Cada cambio de `rust/Cargo.toml` o `rust/Cargo.lock` vuelve a pasar por build y
 pruebas Linux/Wine y Windows nativo, además de `cargo audit`, `cargo deny` y
 Dependency Review. La build busca ShellCheck y actionlint para analizar scripts
-y workflows, y ejecuta zizmor offline tanto en Linux como en Windows si está
-instalado. Registra cada omisión como `[REVIEW][SKIP]`, nunca como una
-comprobación superada. `--security-review` (Linux) o `-SecurityReview`
+y workflows, y ejecuta zizmor en Linux y Windows si está instalado. Con
+`GH_TOKEN`, `GITHUB_TOKEN` o `ZIZMOR_GITHUB_TOKEN` usa las auditorías online;
+sin token funciona offline y marca la revisión como parcial porque no valida
+la procedencia remota de las referencias a acciones. El workflow de seguridad
+de GitHub ejecuta esa comprobación online. Registra cada omisión como
+`[REVIEW][SKIP]` y cada alcance parcial como `[REVIEW][PARTIAL]`, nunca como una
+comprobación completa. `--security-review` (Linux) o `-SecurityReview`
 (Windows) exigen ShellCheck y actionlint; `--strict-security` /
 `-StrictSecurity` también los exige junto con `cargo audit` y `cargo deny`.
 La CI Linux instala los analizadores y los ejecuta obligatoriamente dentro del
@@ -1728,8 +1847,11 @@ La retirada requiere `--plans-only --apply`; solo coincide con los nombres
 fechados o asociados a un PID de la implementación antigua y conserva los
 planes estables y los ficheros que el usuario haya nombrado explícitamente.
 
-El limpiador solo conoce carpetas de salida explícitas (`dist/`, `release/`,
-`rust/target/`, targets Windows y caches habituales de herramientas). Protege
+El limpiador solo conoce carpetas de salida explícitas (`dist/`, `rust/dist/`,
+`release/`, `rust/target/`, `fuzz/target/`, `fuzz/artifacts/`, `reports/`,
+targets Windows y caches habituales de herramientas).
+`rust/dist/` cubre residuos de versiones antiguas del builder que resolvían una
+salida relativa desde el directorio de Cargo. Protege
 carpetas que contengan archivos versionados, enlaces simbólicos y cualquier
 archivo no ignorado por Git. No borra fuentes, documentación, tests ni
 configuración. La simulación es el comportamiento predeterminado; para
@@ -1738,6 +1860,17 @@ retirar los candidatos confirmados:
 ```bash
 bash scripts/build.sh clean --apply
 ```
+
+Para conservar los artefactos publicables y retirar únicamente el trabajo
+regenerable del checkout, usa `--keep-release`:
+
+```bash
+bash scripts/build.sh clean --apply --keep-release --yes
+```
+
+Este modo puede retirar también los targets y resultados de fuzzing (`fuzz/`)
+y los informes de pruebas (`reports/`); no borra la release canónica ni ningún
+archivo protegido por Git.
 
 Para automatizaciones no interactivas, después de revisar previamente el plan:
 
@@ -1787,9 +1920,9 @@ si el transporte HTTP real no se puede ejercitar.
 Pruebas individuales:
 
 ```bash
-cargo test --manifest-path rust/Cargo.toml --all-targets
-cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings
-cargo fmt --manifest-path rust/Cargo.toml -- --check
+cargo test --manifest-path rust/Cargo.toml --workspace --all-targets
+cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets -- -D warnings
+cargo fmt --manifest-path rust/Cargo.toml --all -- --check
 ./tests/contracts.sh
 ./tests/linux/smoke.sh --binary rust/target/release/ltools
 ./tests/linux/e2e.sh --binary rust/target/release/ltools
@@ -1802,28 +1935,59 @@ tmp_dir="$(mktemp -d)"
   --tmp "$tmp_dir" --captures "$tmp_dir/captures"
 ```
 
+El parser de argumentos nativos usado por la GUI de GitHub CLI se prueba además
+con ClusterFuzzLite: al cambiar su biblioteca se ejecuta fuzzing diferencial
+durante 2 minutos en pull requests, y cada semana durante 10 minutos. El fuzzer
+comprueba que entradas arbitrarias válidas UTF-8 no provoquen pánicos ni
+resultados que superen los límites de tokens, argumentos o controles. Para
+ejecutarlo localmente hacen falta Rust nightly y `cargo-fuzz`:
+
+```bash
+LSAN_OPTIONS=detect_leaks=0 cargo +nightly fuzz run --fuzz-dir fuzz native-argv -- -max_total_time=60 -timeout=5
+```
+
+`LSAN_OPTIONS=detect_leaks=0` solo evita que LeakSanitizer use `ptrace` en
+hosts que lo restringen; AddressSanitizer sigue activo.
+
+Las dependencias del fuzzer tienen un `Cargo.lock` separado y también pasan
+`cargo-audit` y `cargo-deny`; no se incorporan al ejecutable de producción.
+
 La E2E del mapa abre la ventana GTK y comprueba Cancelar por defecto, Copiar,
 Mover y Papelera; usa un `XDG_DATA_HOME` temporal y guarda capturas de las
-confirmaciones en español. Requiere `xvfb-run`, `xdotool` y un gestor de papelera
-(`gio` o `trash-put`) para verificar también esa acción.
+confirmaciones en español. Requiere `xvfb-run`, `xdpyinfo` (`x11-utils`),
+`xdotool` y un gestor de papelera (`gio` o `trash-put`) para verificar también
+esa acción.
 
 `tarball-e2e.sh` extrae el paquete en un directorio temporal y ejecuta sus
-lanzadores, backend, ayuda y capacidades; si hay Xvfb, también abre y cierra
-la GUI empaquetada. La build lo ejecuta inmediatamente después de crear el
-tarball, además de verificar su lista de contenido, manifiesto y hashes.
+lanzadores, backend, ayuda y capacidades; si `xvfb-run` y `xdpyinfo`
+(`x11-utils`) pueden abrir un display real, también abre y cierra la GUI
+empaquetada. Con `--require-gui`, falla si falta cualquiera de las dos
+herramientas o el servidor no acepta conexiones. La build lo ejecuta
+inmediatamente después de crear el tarball, además de verificar su lista de
+contenido, manifiesto y hashes.
 
-`native-help-e2e.sh` ejecuta la ayuda real de cada herramienta disponible en el
-anfitrión. Para ADB usa expresamente `adb help`; para Git obtiene el catálogo
-con `git help -a`; para las herramientas con subcomandos consulta también la
-ayuda del subcomando. Contrasta las operaciones documentadas de Git y GitHub
-CLI, transferencia SSH/SCP/SFTP, ADB, Kubernetes y Docker/Podman con la ayuda
-nativa y la guía GUI. Para SSH/SCP/SFTP también verifica argumentos de
-conexión y dirección de transferencia. No afirma que todas las opciones de
-todas las herramientas estén cubiertas, ni inventa comandos Linux para el
-perfil Windows.
-Las herramientas ausentes se omiten y las diferencias de sintaxis de Linux y
-Windows se mantienen separadas; la E2E Windows aplica el mismo principio con
-`/?`, `-h` o `--help` según la herramienta nativa.
+`native-help-e2e.sh` obtiene de `capabilities --format json` todos los comandos
+instalados en el catálogo del anfitrión y valida la ayuda nativa de cada CLI;
+las herramientas exclusivamente gráficas, las consultas bloqueadas por el
+aislamiento del host y los inicializadores que podrían crear estado (como
+`wineboot`) se muestran como `SKIP` con motivo, no como pruebas superadas;
+para ADB usa expresamente `adb help`, para Git `git help -a` y para OpenSSH la
+forma de ayuda propia de cada cliente. También contrasta las operaciones
+expuestas en las guías GUI de Git/GitHub CLI, SSH/SCP/SFTP, ADB, Kubernetes y
+Docker/Podman contra las ayudas reales y sus argumentos. La GUI ofrece flujos
+guiados, no una réplica de cada flag de todas las versiones; el test no inventa
+una equivalencia numérica entre flags nativos y botones. Las herramientas
+ausentes se omiten y Linux y Windows se auditan por separado con su propia
+sintaxis y catálogo. El E2E Windows recorre también las herramientas marcadas
+disponibles en su contrato: usa `/?`, `-h`, `--help`, ayuda de subcomando o
+sintaxis PowerShell según corresponda, y marca explícitamente las herramientas
+gráficas, las integraciones sin ejecutable y los lanzadores que podrían elevar
+privilegios como omitidos, con un motivo visible.
+
+Las E2E Linux y Windows exigen que cada consulta de ayuda termine con código
+cero. La única excepción está enumerada en cada test: los clientes OpenSSH
+pueden devolver 1 o 255 al mostrar su uso cuando se invocan sin destino; en
+ese caso también se exige una cabecera de uso u opciones reconocible.
 
 En Windows nativo:
 

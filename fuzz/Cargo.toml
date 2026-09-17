@@ -1,0 +1,19 @@
+[package]
+name = "ltools-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+license = "MIT"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+ltools-argv = { path = "../rust/crates/native-argv", version = "1.0.0" }
+
+[[bin]]
+name = "native-argv"
+path = "fuzz_targets/native_argv.rs"
+test = false
+doc = false

@@ -8,6 +8,14 @@ updates:
     cooldown:
       default-days: 7
 
+  - package-ecosystem: cargo
+    directory: /fuzz
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 8
+    cooldown:
+      default-days: 7
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

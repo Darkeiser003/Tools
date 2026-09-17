@@ -702,10 +702,89 @@ pub fn storage_help() -> &'static str {
 /// Acciones cortas del gestor de discos. Se usan tanto en la GUI como en
 /// cualquier frontend que reutilice el catálogo de LTools.
 pub fn storage_action_text(key: &str) -> &'static str {
+    if matches!(
+        key,
+        "filesystem_format_check" | "mount_swap" | "luks_headers" | "volume_layers"
+    ) {
+        return match (current(), key) {
+            ("en", "filesystem_format_check") => "Formatting and checks",
+            ("en", "mount_swap") => "Mounting and swap",
+            ("en", "luks_headers") => "LUKS: encryption and headers",
+            ("en", "volume_layers") => "Volume layers",
+            ("de", "filesystem_format_check") => "Formatierung und Prüfungen",
+            ("de", "mount_swap") => "Mounts und Swap",
+            ("de", "luks_headers") => "LUKS: Verschlüsselung und Header",
+            ("de", "volume_layers") => "Volume-Ebenen",
+            ("fr", "filesystem_format_check") => "Formatage et vérifications",
+            ("fr", "mount_swap") => "Montages et swap",
+            ("fr", "luks_headers") => "LUKS : chiffrement et en-têtes",
+            ("fr", "volume_layers") => "Couches de volumes",
+            ("pt", "filesystem_format_check") => "Formatação e verificações",
+            ("pt", "mount_swap") => "Montagens e swap",
+            ("pt", "luks_headers") => "LUKS: encriptação e cabeçalhos",
+            ("pt", "volume_layers") => "Camadas de volume",
+            ("it", "filesystem_format_check") => "Formattazione e controlli",
+            ("it", "mount_swap") => "Mount e swap",
+            ("it", "luks_headers") => "LUKS: cifratura e intestazioni",
+            ("it", "volume_layers") => "Livelli dei volumi",
+            ("ca", "filesystem_format_check") => "Formatació i comprovacions",
+            ("ca", "mount_swap") => "Muntatges i swap",
+            ("ca", "luks_headers") => "LUKS: xifratge i capçaleres",
+            ("ca", "volume_layers") => "Capes de volum",
+            ("nl", "filesystem_format_check") => "Formatteren en controles",
+            ("nl", "mount_swap") => "Mounts en swap",
+            ("nl", "luks_headers") => "LUKS: versleuteling en headers",
+            ("nl", "volume_layers") => "Volumelagen",
+            ("pl", "filesystem_format_check") => "Formatowanie i sprawdzanie",
+            ("pl", "mount_swap") => "Montowania i swap",
+            ("pl", "luks_headers") => "LUKS: szyfrowanie i nagłówki",
+            ("pl", "volume_layers") => "Warstwy woluminów",
+            ("ar", "filesystem_format_check") => "التهيئة والفحوصات",
+            ("ar", "mount_swap") => "نقاط التحميل وSwap",
+            ("ar", "luks_headers") => "LUKS: التشفير والرؤوس",
+            ("ar", "volume_layers") => "طبقات وحدات التخزين",
+            ("hi", "filesystem_format_check") => "फ़ॉर्मेट और जाँच",
+            ("hi", "mount_swap") => "माउंट और स्वैप",
+            ("hi", "luks_headers") => "LUKS: एन्क्रिप्शन और हेडर",
+            ("hi", "volume_layers") => "वॉल्यूम परतें",
+            ("ja", "filesystem_format_check") => "フォーマットと検査",
+            ("ja", "mount_swap") => "マウントとスワップ",
+            ("ja", "luks_headers") => "LUKS: 暗号化とヘッダー",
+            ("ja", "volume_layers") => "ボリューム層",
+            ("ko", "filesystem_format_check") => "포맷 및 검사",
+            ("ko", "mount_swap") => "마운트 및 스왑",
+            ("ko", "luks_headers") => "LUKS: 암호화 및 헤더",
+            ("ko", "volume_layers") => "볼륨 계층",
+            ("ro", "filesystem_format_check") => "Formatare și verificare",
+            ("ro", "mount_swap") => "Montări și swap",
+            ("ro", "luks_headers") => "LUKS: criptare și antete",
+            ("ro", "volume_layers") => "Straturi de volume",
+            ("ru", "filesystem_format_check") => "Форматирование и проверка",
+            ("ru", "mount_swap") => "Подключение и swap",
+            ("ru", "luks_headers") => "LUKS: шифрование и заголовки",
+            ("ru", "volume_layers") => "Слои томов",
+            ("uk", "filesystem_format_check") => "Форматування та перевірка",
+            ("uk", "mount_swap") => "Монтування та swap",
+            ("uk", "luks_headers") => "LUKS: шифрування та заголовки",
+            ("uk", "volume_layers") => "Шари томів",
+            ("zh", "filesystem_format_check") => "格式化和检查",
+            ("zh", "mount_swap") => "挂载和交换空间",
+            ("zh", "luks_headers") => "LUKS：加密和头部",
+            ("zh", "volume_layers") => "卷层",
+            (_, "filesystem_format_check") => "Formato y comprobación",
+            (_, "mount_swap") => "Montaje y swap",
+            (_, "luks_headers") => "LUKS: cifrado y cabeceras",
+            (_, "volume_layers") => "Capas de volumen",
+            _ => "",
+        };
+    }
     match (current(), key) {
         ("en", "status") => "Space and mounts overview",
         ("en", "partitions") => "Disks and partitions",
         ("en", "mounts") => "Active mounts",
+        ("en", "usage") => "Space usage by volume",
+        ("en", "pools") => "Storage Spaces and virtual disks",
+        ("en", "bitlocker") => "BitLocker status",
         ("en", "tools") => "Detected storage tools",
         ("en", "manager") => "Open native partition manager",
         ("en", "clean") => "Review cleanup",
@@ -714,6 +793,9 @@ pub fn storage_action_text(key: &str) -> &'static str {
         ("de", "status") => "Übersicht über Speicher und Mounts",
         ("de", "partitions") => "Datenträger und Partitionen",
         ("de", "mounts") => "Aktive Mounts",
+        ("de", "usage") => "Speicherplatz nach Volume",
+        ("de", "pools") => "Speicherplätze und virtuelle Datenträger",
+        ("de", "bitlocker") => "BitLocker-Status",
         ("de", "tools") => "Erkannte Speicherwerkzeuge",
         ("de", "manager") => "Nativen Partitionsmanager öffnen",
         ("de", "clean") => "Bereinigung prüfen",
@@ -721,6 +803,9 @@ pub fn storage_action_text(key: &str) -> &'static str {
         ("fr", "status") => "Vue d’ensemble de l’espace et des montages",
         ("fr", "partitions") => "Disques et partitions",
         ("fr", "mounts") => "Montages actifs",
+        ("fr", "usage") => "Utilisation de l’espace par volume",
+        ("fr", "pools") => "Espaces de stockage et disques virtuels",
+        ("fr", "bitlocker") => "État de BitLocker",
         ("fr", "tools") => "Outils de stockage détectés",
         ("fr", "manager") => "Ouvrir le gestionnaire natif",
         ("fr", "clean") => "Vérifier le nettoyage",
@@ -728,6 +813,9 @@ pub fn storage_action_text(key: &str) -> &'static str {
         ("pt", "status") => "Resumo de espaço e montagens",
         ("pt", "partitions") => "Discos e partições",
         ("pt", "mounts") => "Montagens ativas",
+        ("pt", "usage") => "Uso de espaço por volume",
+        ("pt", "pools") => "Espaços de armazenamento e discos virtuais",
+        ("pt", "bitlocker") => "Estado do BitLocker",
         ("pt", "tools") => "Ferramentas de armazenamento detetadas",
         ("pt", "manager") => "Abrir gestor nativo de partições",
         ("pt", "clean") => "Rever limpeza",
@@ -735,6 +823,9 @@ pub fn storage_action_text(key: &str) -> &'static str {
         ("it", "status") => "Riepilogo spazio e mount",
         ("it", "partitions") => "Dischi e partizioni",
         ("it", "mounts") => "Mount attivi",
+        ("it", "usage") => "Uso dello spazio per volume",
+        ("it", "pools") => "Spazi di archiviazione e dischi virtuali",
+        ("it", "bitlocker") => "Stato di BitLocker",
         ("it", "tools") => "Strumenti di archiviazione rilevati",
         ("it", "manager") => "Apri il gestore nativo delle partizioni",
         ("it", "clean") => "Controlla pulizia",
@@ -742,6 +833,9 @@ pub fn storage_action_text(key: &str) -> &'static str {
         ("ca", "status") => "Resum d’espai i muntatges",
         ("ca", "partitions") => "Discs i particions",
         ("ca", "mounts") => "Muntatges actius",
+        ("ca", "usage") => "Ús de l’espai per volum",
+        ("ca", "pools") => "Espais d’emmagatzematge i discs virtuals",
+        ("ca", "bitlocker") => "Estat de BitLocker",
         ("ca", "tools") => "Eines d’emmagatzematge detectades",
         ("ca", "manager") => "Obrir el gestor natiu de particions",
         ("ca", "clean") => "Revisar la neteja",
@@ -749,6 +843,9 @@ pub fn storage_action_text(key: &str) -> &'static str {
         ("nl", "status") => "Overzicht van ruimte en mounts",
         ("nl", "partitions") => "Schijven en partities",
         ("nl", "mounts") => "Actieve mounts",
+        ("nl", "usage") => "Ruimtegebruik per volume",
+        ("nl", "pools") => "Opslagruimten en virtuele schijven",
+        ("nl", "bitlocker") => "BitLocker-status",
         ("nl", "tools") => "Gedetecteerde opslagtools",
         ("nl", "manager") => "Native partitiebeheerder openen",
         ("nl", "clean") => "Opschoning controleren",
@@ -756,6 +853,9 @@ pub fn storage_action_text(key: &str) -> &'static str {
         ("pl", "status") => "Przegląd miejsca i montowań",
         ("pl", "partitions") => "Dyski i partycje",
         ("pl", "mounts") => "Aktywne montowania",
+        ("pl", "usage") => "Wykorzystanie miejsca według woluminu",
+        ("pl", "pools") => "Miejsca do magazynowania i dyski wirtualne",
+        ("pl", "bitlocker") => "Stan funkcji BitLocker",
         ("pl", "tools") => "Wykryte narzędzia pamięci masowej",
         ("pl", "manager") => "Otwórz natywny menedżer partycji",
         ("pl", "clean") => "Sprawdź czyszczenie",
@@ -763,6 +863,9 @@ pub fn storage_action_text(key: &str) -> &'static str {
         ("ar", "status") => "ملخص المساحة ونقاط التحميل",
         ("ar", "partitions") => "الأقراص والأقسام",
         ("ar", "mounts") => "نقاط التحميل النشطة",
+        ("ar", "usage") => "استخدام المساحة حسب وحدة التخزين",
+        ("ar", "pools") => "مساحات التخزين والأقراص الافتراضية",
+        ("ar", "bitlocker") => "حالة BitLocker",
         ("ar", "tools") => "أدوات التخزين المكتشفة",
         ("ar", "manager") => "فتح مدير الأقسام الأصلي",
         ("ar", "clean") => "مراجعة التنظيف",
@@ -770,6 +873,9 @@ pub fn storage_action_text(key: &str) -> &'static str {
         ("hi", "status") => "स्थान और माउंट का सारांश",
         ("hi", "partitions") => "डिस्क और पार्टीशन",
         ("hi", "mounts") => "सक्रिय माउंट",
+        ("hi", "usage") => "वॉल्यूम के अनुसार स्थान उपयोग",
+        ("hi", "pools") => "स्टोरेज स्पेस और वर्चुअल डिस्क",
+        ("hi", "bitlocker") => "BitLocker स्थिति",
         ("hi", "tools") => "पता चले स्टोरेज टूल",
         ("hi", "manager") => "मूल पार्टीशन प्रबंधक खोलें",
         ("hi", "clean") => "क्लीनअप की समीक्षा करें",
@@ -777,6 +883,9 @@ pub fn storage_action_text(key: &str) -> &'static str {
         ("ja", "status") => "容量とマウントの概要",
         ("ja", "partitions") => "ディスクとパーティション",
         ("ja", "mounts") => "アクティブなマウント",
+        ("ja", "usage") => "ボリューム別の容量使用量",
+        ("ja", "pools") => "記憶域と仮想ディスク",
+        ("ja", "bitlocker") => "BitLocker の状態",
         ("ja", "tools") => "検出されたストレージツール",
         ("ja", "manager") => "標準のパーティション管理ツールを開く",
         ("ja", "clean") => "クリーンアップを確認",
@@ -784,6 +893,9 @@ pub fn storage_action_text(key: &str) -> &'static str {
         ("ko", "status") => "공간 및 마운트 요약",
         ("ko", "partitions") => "디스크 및 파티션",
         ("ko", "mounts") => "활성 마운트",
+        ("ko", "usage") => "볼륨별 공간 사용량",
+        ("ko", "pools") => "저장소 공간 및 가상 디스크",
+        ("ko", "bitlocker") => "BitLocker 상태",
         ("ko", "tools") => "감지된 저장소 도구",
         ("ko", "manager") => "기본 파티션 관리자 열기",
         ("ko", "clean") => "정리 검토",
@@ -791,6 +903,9 @@ pub fn storage_action_text(key: &str) -> &'static str {
         ("ro", "status") => "Rezumat spațiu și montări",
         ("ro", "partitions") => "Discuri și partiții",
         ("ro", "mounts") => "Montări active",
+        ("ro", "usage") => "Utilizarea spațiului pe volum",
+        ("ro", "pools") => "Spații de stocare și discuri virtuale",
+        ("ro", "bitlocker") => "Starea BitLocker",
         ("ro", "tools") => "Instrumente de stocare detectate",
         ("ro", "manager") => "Deschide managerul nativ de partiții",
         ("ro", "clean") => "Verifică curățarea",
@@ -798,6 +913,9 @@ pub fn storage_action_text(key: &str) -> &'static str {
         ("ru", "status") => "Обзор места и подключений",
         ("ru", "partitions") => "Диски и разделы",
         ("ru", "mounts") => "Активные подключения",
+        ("ru", "usage") => "Использование места по томам",
+        ("ru", "pools") => "Дисковые пространства и виртуальные диски",
+        ("ru", "bitlocker") => "Состояние BitLocker",
         ("ru", "tools") => "Найденные инструменты хранения",
         ("ru", "manager") => "Открыть штатный менеджер разделов",
         ("ru", "clean") => "Проверить очистку",
@@ -805,6 +923,9 @@ pub fn storage_action_text(key: &str) -> &'static str {
         ("uk", "status") => "Огляд місця та монтувань",
         ("uk", "partitions") => "Диски та розділи",
         ("uk", "mounts") => "Активні монтування",
+        ("uk", "usage") => "Використання місця за томами",
+        ("uk", "pools") => "Дискові простори та віртуальні диски",
+        ("uk", "bitlocker") => "Стан BitLocker",
         ("uk", "tools") => "Виявлені інструменти сховища",
         ("uk", "manager") => "Відкрити штатний менеджер розділів",
         ("uk", "clean") => "Перевірити очищення",
@@ -812,6 +933,9 @@ pub fn storage_action_text(key: &str) -> &'static str {
         ("zh", "status") => "空间和挂载概览",
         ("zh", "partitions") => "磁盘和分区",
         ("zh", "mounts") => "活动挂载",
+        ("zh", "usage") => "按卷查看空间使用情况",
+        ("zh", "pools") => "存储空间和虚拟磁盘",
+        ("zh", "bitlocker") => "BitLocker 状态",
         ("zh", "tools") => "检测到的存储工具",
         ("zh", "manager") => "打开原生分区管理器",
         ("zh", "clean") => "检查清理",
@@ -819,6 +943,9 @@ pub fn storage_action_text(key: &str) -> &'static str {
         (_, "status") => "Resumen de espacio y montajes",
         (_, "partitions") => "Discos y particiones",
         (_, "mounts") => "Montajes activos",
+        (_, "usage") => "Uso de espacio por volumen",
+        (_, "pools") => "Espacios de almacenamiento y discos virtuales",
+        (_, "bitlocker") => "Estado de BitLocker",
         (_, "tools") => "Herramientas detectadas",
         (_, "manager") => "Abrir gestor nativo de particiones",
         (_, "clean") => "Revisar limpieza",
@@ -826,6 +953,189 @@ pub fn storage_action_text(key: &str) -> &'static str {
         (_, "map") => "Mapa interactivo de discos y rutas",
         _ => "",
     }
+}
+
+/// Separadores de las páginas avanzadas del gestor de almacenamiento. Estos
+/// textos también forman parte del contrato visible de la GUI: no deben
+/// volver a quedar hardcodeados en español cuando cambia el idioma.
+#[allow(dead_code)]
+pub fn storage_section_text(key: &str) -> &'static str {
+    let labels: &[(&str, &str)] = match current() {
+        "en" => &[
+            ("query_map", "Inspection and map"),
+            ("file_paths", "Files and paths"),
+            ("disk_volumes", "Disks and volumes"),
+            ("tools_cleanup", "Tools and cleanup"),
+            ("partition_inspection", "Inspection and diagnosis"),
+            ("partition_tables", "Tables and partitions"),
+            ("partition_recovery", "Flags and recovery"),
+            ("partition_destruction", "Explicit destruction"),
+        ],
+        "de" => &[
+            ("query_map", "Prüfung und Karte"),
+            ("file_paths", "Dateien und Pfade"),
+            ("disk_volumes", "Datenträger und Volumes"),
+            ("tools_cleanup", "Werkzeuge und Bereinigung"),
+            ("partition_inspection", "Prüfung und Diagnose"),
+            ("partition_tables", "Tabellen und Partitionen"),
+            ("partition_recovery", "Flags und Wiederherstellung"),
+            ("partition_destruction", "Explizite Zerstörung"),
+        ],
+        "fr" => &[
+            ("query_map", "Inspection et carte"),
+            ("file_paths", "Fichiers et chemins"),
+            ("disk_volumes", "Disques et volumes"),
+            ("tools_cleanup", "Outils et nettoyage"),
+            ("partition_inspection", "Inspection et diagnostic"),
+            ("partition_tables", "Tables et partitions"),
+            ("partition_recovery", "Indicateurs et récupération"),
+            ("partition_destruction", "Destruction explicite"),
+        ],
+        "pt" => &[
+            ("query_map", "Consulta e mapa"),
+            ("file_paths", "Ficheiros e caminhos"),
+            ("disk_volumes", "Discos e volumes"),
+            ("tools_cleanup", "Ferramentas e limpeza"),
+            ("partition_inspection", "Consulta e diagnóstico"),
+            ("partition_tables", "Tabelas e partições"),
+            ("partition_recovery", "Flags e recuperação"),
+            ("partition_destruction", "Destruição explícita"),
+        ],
+        "it" => &[
+            ("query_map", "Controllo e mappa"),
+            ("file_paths", "File e percorsi"),
+            ("disk_volumes", "Dischi e volumi"),
+            ("tools_cleanup", "Strumenti e pulizia"),
+            ("partition_inspection", "Controllo e diagnosi"),
+            ("partition_tables", "Tabelle e partizioni"),
+            ("partition_recovery", "Flag e ripristino"),
+            ("partition_destruction", "Distruzione esplicita"),
+        ],
+        "ca" => &[
+            ("query_map", "Consulta i mapa"),
+            ("file_paths", "Fitxers i camins"),
+            ("disk_volumes", "Discs i volums"),
+            ("tools_cleanup", "Eines i neteja"),
+            ("partition_inspection", "Consulta i diagnòstic"),
+            ("partition_tables", "Taules i particions"),
+            ("partition_recovery", "Flags i recuperació"),
+            ("partition_destruction", "Destrucció explícita"),
+        ],
+        "nl" => &[
+            ("query_map", "Inspectie en kaart"),
+            ("file_paths", "Bestanden en paden"),
+            ("disk_volumes", "Schijven en volumes"),
+            ("tools_cleanup", "Hulpmiddelen en opschoning"),
+            ("partition_inspection", "Inspectie en diagnose"),
+            ("partition_tables", "Tabellen en partities"),
+            ("partition_recovery", "Vlaggen en herstel"),
+            ("partition_destruction", "Expliciete vernietiging"),
+        ],
+        "pl" => &[
+            ("query_map", "Inspekcja i mapa"),
+            ("file_paths", "Pliki i ścieżki"),
+            ("disk_volumes", "Dyski i woluminy"),
+            ("tools_cleanup", "Narzędzia i czyszczenie"),
+            ("partition_inspection", "Inspekcja i diagnostyka"),
+            ("partition_tables", "Tablice i partycje"),
+            ("partition_recovery", "Flagi i odzyskiwanie"),
+            ("partition_destruction", "Jawne niszczenie"),
+        ],
+        "ar" => &[
+            ("query_map", "الفحص والخريطة"),
+            ("file_paths", "الملفات والمسارات"),
+            ("disk_volumes", "الأقراص ووحدات التخزين"),
+            ("tools_cleanup", "الأدوات والتنظيف"),
+            ("partition_inspection", "الفحص والتشخيص"),
+            ("partition_tables", "الجداول والأقسام"),
+            ("partition_recovery", "العلامات والاسترداد"),
+            ("partition_destruction", "الإتلاف الصريح"),
+        ],
+        "hi" => &[
+            ("query_map", "जाँच और मानचित्र"),
+            ("file_paths", "फ़ाइलें और पथ"),
+            ("disk_volumes", "डिस्क और वॉल्यूम"),
+            ("tools_cleanup", "टूल और सफाई"),
+            ("partition_inspection", "जाँच और निदान"),
+            ("partition_tables", "तालिकाएँ और पार्टीशन"),
+            ("partition_recovery", "फ़्लैग और पुनर्प्राप्ति"),
+            ("partition_destruction", "स्पष्ट विनाश"),
+        ],
+        "ja" => &[
+            ("query_map", "検査とマップ"),
+            ("file_paths", "ファイルとパス"),
+            ("disk_volumes", "ディスクとボリューム"),
+            ("tools_cleanup", "ツールとクリーンアップ"),
+            ("partition_inspection", "検査と診断"),
+            ("partition_tables", "テーブルとパーティション"),
+            ("partition_recovery", "フラグと復旧"),
+            ("partition_destruction", "明示的な破壊"),
+        ],
+        "ko" => &[
+            ("query_map", "검사 및 지도"),
+            ("file_paths", "파일 및 경로"),
+            ("disk_volumes", "디스크 및 볼륨"),
+            ("tools_cleanup", "도구 및 정리"),
+            ("partition_inspection", "검사 및 진단"),
+            ("partition_tables", "테이블 및 파티션"),
+            ("partition_recovery", "플래그 및 복구"),
+            ("partition_destruction", "명시적 삭제"),
+        ],
+        "ro" => &[
+            ("query_map", "Inspecție și hartă"),
+            ("file_paths", "Fișiere și căi"),
+            ("disk_volumes", "Discuri și volume"),
+            ("tools_cleanup", "Instrumente și curățare"),
+            ("partition_inspection", "Inspecție și diagnosticare"),
+            ("partition_tables", "Tabele și partiții"),
+            ("partition_recovery", "Indicatoare și recuperare"),
+            ("partition_destruction", "Ștergere explicită"),
+        ],
+        "ru" => &[
+            ("query_map", "Проверка и карта"),
+            ("file_paths", "Файлы и пути"),
+            ("disk_volumes", "Диски и тома"),
+            ("tools_cleanup", "Инструменты и очистка"),
+            ("partition_inspection", "Проверка и диагностика"),
+            ("partition_tables", "Таблицы и разделы"),
+            ("partition_recovery", "Флаги и восстановление"),
+            ("partition_destruction", "Явное уничтожение"),
+        ],
+        "uk" => &[
+            ("query_map", "Перевірка та карта"),
+            ("file_paths", "Файли та шляхи"),
+            ("disk_volumes", "Диски та томи"),
+            ("tools_cleanup", "Інструменти та очищення"),
+            ("partition_inspection", "Перевірка та діагностика"),
+            ("partition_tables", "Таблиці та розділи"),
+            ("partition_recovery", "Прапорці та відновлення"),
+            ("partition_destruction", "Явне знищення"),
+        ],
+        "zh" => &[
+            ("query_map", "检查和地图"),
+            ("file_paths", "文件和路径"),
+            ("disk_volumes", "磁盘和卷"),
+            ("tools_cleanup", "工具和清理"),
+            ("partition_inspection", "检查和诊断"),
+            ("partition_tables", "分区表和分区"),
+            ("partition_recovery", "标志和恢复"),
+            ("partition_destruction", "明确销毁"),
+        ],
+        _ => &[
+            ("query_map", "Consulta y mapa"),
+            ("file_paths", "Archivos y rutas"),
+            ("disk_volumes", "Discos y volúmenes"),
+            ("tools_cleanup", "Herramientas y limpieza"),
+            ("partition_inspection", "Consulta y diagnóstico"),
+            ("partition_tables", "Tablas y particiones"),
+            ("partition_recovery", "Flags y recuperación"),
+            ("partition_destruction", "Destrucción explícita"),
+        ],
+    };
+    labels
+        .iter()
+        .find_map(|(label_key, value)| (*label_key == key).then_some(*value))
+        .unwrap_or("")
 }
 
 /// Textos del diálogo interactivo del mapa. El diálogo se crea desde el
@@ -1158,6 +1468,7 @@ pub fn native_tools_label() -> &'static str {
 pub fn native_action_text(key: &str) -> &'static str {
     match (current(), key) {
         ("en", "network_status") => "Network, routes, DNS and listening ports",
+        ("en", "network_connections") => "Network connections",
         ("en", "dns_flush") => "Flush DNS cache",
         ("en", "tools_status") => "Dependencies and versions",
         ("en", "tools_install") => "Install a dependency",
@@ -1165,6 +1476,7 @@ pub fn native_action_text(key: &str) -> &'static str {
         ("en", "container_list") => "Docker/Podman: containers",
         ("en", "kubernetes_contexts") => "Kubernetes: contexts",
         ("de", "network_status") => "Netzwerk, Routen, DNS und offene Ports",
+        ("de", "network_connections") => "Netzwerkverbindungen",
         ("de", "dns_flush") => "DNS-Cache leeren",
         ("de", "tools_status") => "Abhängigkeiten und Versionen",
         ("de", "tools_install") => "Abhängigkeit installieren",
@@ -1172,6 +1484,7 @@ pub fn native_action_text(key: &str) -> &'static str {
         ("de", "container_list") => "Docker/Podman: Container",
         ("de", "kubernetes_contexts") => "Kubernetes: Kontexte",
         ("fr", "network_status") => "Réseau, routes, DNS et ports en écoute",
+        ("fr", "network_connections") => "Connexions réseau",
         ("fr", "dns_flush") => "Vider le cache DNS",
         ("fr", "tools_status") => "Dépendances et versions",
         ("fr", "tools_install") => "Installer une dépendance",
@@ -1179,6 +1492,7 @@ pub fn native_action_text(key: &str) -> &'static str {
         ("fr", "container_list") => "Docker/Podman : conteneurs",
         ("fr", "kubernetes_contexts") => "Kubernetes : contextes",
         ("pt", "network_status") => "Rede, rotas, DNS e portas de escuta",
+        ("pt", "network_connections") => "Ligações de rede",
         ("pt", "dns_flush") => "Limpar a cache DNS",
         ("pt", "tools_status") => "Dependências e versões",
         ("pt", "tools_install") => "Instalar uma dependência",
@@ -1186,6 +1500,7 @@ pub fn native_action_text(key: &str) -> &'static str {
         ("pt", "container_list") => "Docker/Podman: contentores",
         ("pt", "kubernetes_contexts") => "Kubernetes: contextos",
         ("it", "network_status") => "Rete, rotte, DNS e porte in ascolto",
+        ("it", "network_connections") => "Connessioni di rete",
         ("it", "dns_flush") => "Svuota cache DNS",
         ("it", "tools_status") => "Dipendenze e versioni",
         ("it", "tools_install") => "Installa una dipendenza",
@@ -1193,6 +1508,7 @@ pub fn native_action_text(key: &str) -> &'static str {
         ("it", "container_list") => "Docker/Podman: container",
         ("it", "kubernetes_contexts") => "Kubernetes: contesti",
         ("ca", "network_status") => "Xarxa, rutes, DNS i ports en escolta",
+        ("ca", "network_connections") => "Connexions de xarxa",
         ("ca", "dns_flush") => "Buida la memòria cau DNS",
         ("ca", "tools_status") => "Dependències i versions",
         ("ca", "tools_install") => "Instal·lar una dependència",
@@ -1200,6 +1516,7 @@ pub fn native_action_text(key: &str) -> &'static str {
         ("ca", "container_list") => "Docker/Podman: contenidors",
         ("ca", "kubernetes_contexts") => "Kubernetes: contextos",
         ("nl", "network_status") => "Netwerk, routes, DNS en luisterpoorten",
+        ("nl", "network_connections") => "Netwerkverbindingen",
         ("nl", "dns_flush") => "DNS-cache wissen",
         ("nl", "tools_status") => "Afhankelijkheden en versies",
         ("nl", "tools_install") => "Afhankelijkheid installeren",
@@ -1207,6 +1524,7 @@ pub fn native_action_text(key: &str) -> &'static str {
         ("nl", "container_list") => "Docker/Podman: containers",
         ("nl", "kubernetes_contexts") => "Kubernetes: contexten",
         ("pl", "network_status") => "Sieć, trasy, DNS i nasłuchujące porty",
+        ("pl", "network_connections") => "Połączenia sieciowe",
         ("pl", "dns_flush") => "Wyczyść pamięć DNS",
         ("pl", "tools_status") => "Zależności i wersje",
         ("pl", "tools_install") => "Zainstaluj zależność",
@@ -1214,6 +1532,7 @@ pub fn native_action_text(key: &str) -> &'static str {
         ("pl", "container_list") => "Docker/Podman: kontenery",
         ("pl", "kubernetes_contexts") => "Kubernetes: konteksty",
         ("ar", "network_status") => "الشبكة والمسارات وDNS والمنافذ المستمعة",
+        ("ar", "network_connections") => "اتصالات الشبكة",
         ("ar", "dns_flush") => "مسح ذاكرة DNS",
         ("ar", "tools_status") => "التبعيات والإصدارات",
         ("ar", "tools_install") => "تثبيت تبعية",
@@ -1221,6 +1540,7 @@ pub fn native_action_text(key: &str) -> &'static str {
         ("ar", "container_list") => "Docker/Podman: الحاويات",
         ("ar", "kubernetes_contexts") => "Kubernetes: السياقات",
         ("hi", "network_status") => "नेटवर्क, रूट, DNS और सुनने वाले पोर्ट",
+        ("hi", "network_connections") => "नेटवर्क कनेक्शन",
         ("hi", "dns_flush") => "DNS कैश साफ़ करें",
         ("hi", "tools_status") => "निर्भरताएँ और संस्करण",
         ("hi", "tools_install") => "निर्भरता स्थापित करें",
@@ -1228,6 +1548,7 @@ pub fn native_action_text(key: &str) -> &'static str {
         ("hi", "container_list") => "Docker/Podman: कंटेनर",
         ("hi", "kubernetes_contexts") => "Kubernetes: संदर्भ",
         ("ja", "network_status") => "ネットワーク、ルート、DNS、待受ポート",
+        ("ja", "network_connections") => "ネットワーク接続",
         ("ja", "dns_flush") => "DNS キャッシュを消去",
         ("ja", "tools_status") => "依存関係とバージョン",
         ("ja", "tools_install") => "依存関係をインストール",
@@ -1235,6 +1556,7 @@ pub fn native_action_text(key: &str) -> &'static str {
         ("ja", "container_list") => "Docker/Podman: コンテナ",
         ("ja", "kubernetes_contexts") => "Kubernetes: コンテキスト",
         ("ko", "network_status") => "네트워크, 경로, DNS 및 수신 포트",
+        ("ko", "network_connections") => "네트워크 연결",
         ("ko", "dns_flush") => "DNS 캐시 비우기",
         ("ko", "tools_status") => "종속성 및 버전",
         ("ko", "tools_install") => "종속성 설치",
@@ -1242,6 +1564,7 @@ pub fn native_action_text(key: &str) -> &'static str {
         ("ko", "container_list") => "Docker/Podman: 컨테이너",
         ("ko", "kubernetes_contexts") => "Kubernetes: 컨텍스트",
         ("ro", "network_status") => "Rețea, rute, DNS și porturi de ascultare",
+        ("ro", "network_connections") => "Conexiuni de rețea",
         ("ro", "dns_flush") => "Golește memoria cache DNS",
         ("ro", "tools_status") => "Dependențe și versiuni",
         ("ro", "tools_install") => "Instalează o dependență",
@@ -1249,6 +1572,7 @@ pub fn native_action_text(key: &str) -> &'static str {
         ("ro", "container_list") => "Docker/Podman: containere",
         ("ro", "kubernetes_contexts") => "Kubernetes: contexte",
         ("ru", "network_status") => "Сеть, маршруты, DNS и прослушиваемые порты",
+        ("ru", "network_connections") => "Сетевые подключения",
         ("ru", "dns_flush") => "Очистить кэш DNS",
         ("ru", "tools_status") => "Зависимости и версии",
         ("ru", "tools_install") => "Установить зависимость",
@@ -1256,6 +1580,7 @@ pub fn native_action_text(key: &str) -> &'static str {
         ("ru", "container_list") => "Docker/Podman: контейнеры",
         ("ru", "kubernetes_contexts") => "Kubernetes: контексты",
         ("uk", "network_status") => "Мережа, маршрути, DNS і порти прослуховування",
+        ("uk", "network_connections") => "Мережеві підключення",
         ("uk", "dns_flush") => "Очистити кеш DNS",
         ("uk", "tools_status") => "Залежності та версії",
         ("uk", "tools_install") => "Встановити залежність",
@@ -1263,6 +1588,7 @@ pub fn native_action_text(key: &str) -> &'static str {
         ("uk", "container_list") => "Docker/Podman: контейнери",
         ("uk", "kubernetes_contexts") => "Kubernetes: контексти",
         ("zh", "network_status") => "网络、路由、DNS 和监听端口",
+        ("zh", "network_connections") => "网络连接",
         ("zh", "dns_flush") => "清除 DNS 缓存",
         ("zh", "tools_status") => "依赖项和版本",
         ("zh", "tools_install") => "安装依赖项",
@@ -1270,6 +1596,7 @@ pub fn native_action_text(key: &str) -> &'static str {
         ("zh", "container_list") => "Docker/Podman：容器",
         ("zh", "kubernetes_contexts") => "Kubernetes：上下文",
         (_, "network_status") => "Red, rutas, DNS y puertos escuchando",
+        (_, "network_connections") => "Conexiones de red",
         (_, "dns_flush") => "Vaciar caché DNS",
         (_, "tools_status") => "Dependencias y versiones",
         (_, "tools_install") => "Instalar una dependencia",
@@ -1280,12 +1607,93 @@ pub fn native_action_text(key: &str) -> &'static str {
     }
 }
 
-/// Etiquetas operativas de las páginas Linux de Red, Arranque y Servicios.
+/// Etiquetas operativas de las páginas de Red, Arranque y Servicios. El
+/// catálogo es compartido para que la GUI Win32 y la GUI Linux no diverjan
+/// por idioma aunque cada plataforma ejecute comandos nativos distintos.
 /// Son claves separadas de los argumentos de CLI: los identificadores y
 /// valores que se pasan al backend nunca dependen del idioma de la interfaz.
-#[cfg(not(windows))]
 pub fn system_page_text(key: &str) -> &'static str {
     const TEXT: &[(&str, [&str; 15])] = &[
+        (
+            "native_hardware_status",
+            [
+                "حالة العتاد",
+                "Hardwarestatus",
+                "Hardware status",
+                "Estado del hardware",
+                "État du matériel",
+                "हार्डवेयर स्थिति",
+                "Stato hardware",
+                "ハードウェア状態",
+                "하드웨어 상태",
+                "Stan sprzętu",
+                "Estado do hardware",
+                "Starea hardware-ului",
+                "Состояние оборудования",
+                "Стан обладнання",
+                "硬件状态",
+            ],
+        ),
+        (
+            "native_power_status",
+            [
+                "حالة الطاقة وخططها",
+                "Energie- und Energiesparpläne",
+                "Power status and plans",
+                "Estado y planes de energía",
+                "État et plans d’alimentation",
+                "पावर स्थिति और योजनाएँ",
+                "Stato e piani di alimentazione",
+                "電源状態とプラン",
+                "전원 상태 및 계획",
+                "Stan zasilania i plany",
+                "Estado e planos de energia",
+                "Starea și planurile de alimentare",
+                "Состояние питания и планы",
+                "Стан живлення та плани",
+                "电源状态和计划",
+            ],
+        ),
+        (
+            "native_security_status",
+            [
+                "حالة جدار الحماية والأمان",
+                "Firewall- und Sicherheitsstatus",
+                "Firewall and security status",
+                "Estado del firewall y seguridad",
+                "État du pare-feu et de la sécurité",
+                "फ़ायरवॉल और सुरक्षा स्थिति",
+                "Stato di firewall e sicurezza",
+                "ファイアウォールとセキュリティ状態",
+                "방화벽 및 보안 상태",
+                "Stan zapory i zabezpieczeń",
+                "Estado da firewall e segurança",
+                "Starea firewallului și securității",
+                "Состояние брандмауэра и безопасности",
+                "Стан брандмауера та безпеки",
+                "防火墙和安全状态",
+            ],
+        ),
+        (
+            "native_security_scanners",
+            [
+                "محللات التعليمات البرمجية وCI",
+                "Code- und CI-Scanner",
+                "Code and CI scanners",
+                "Analizadores de código y CI",
+                "Analyseurs de code et CI",
+                "कोड और CI स्कैनर",
+                "Scanner di codice e CI",
+                "コードとCIスキャナー",
+                "코드 및 CI 스캐너",
+                "Skanery kodu i CI",
+                "Scanners de código e CI",
+                "Scanere de cod și CI",
+                "Сканеры кода и CI",
+                "Сканери коду та CI",
+                "代码和 CI 扫描器",
+            ],
+        ),
         (
             "network_title",
             [
@@ -2312,54 +2720,136 @@ pub fn gui_text(key: &str) -> &'static str {
     }
     if matches!(
         key,
-        "settings_apply" | "settings_guide" | "elevation_default"
+        "settings_apply"
+            | "settings_guide"
+            | "elevation_default"
+            | "elevation_enabled"
+            | "elevation_disabled"
+            | "elevation_scope"
+            | "elevation_prompt"
+            | "elevation_save_error"
     ) {
         return match (current(), key) {
             ("en", "settings_apply") => "Apply settings",
             ("en", "settings_guide") => "Settings and visibility guide",
             ("en", "elevation_default") => "Elevate modifying actions by default (sudo/UAC; not queries or user-data actions)",
+            ("en", "elevation_enabled") => "enabled",
+            ("en", "elevation_disabled") => "disabled",
+            ("en", "elevation_scope") => "Queries, Git/Wine and the user's trash are never elevated automatically.",
+            ("en", "elevation_prompt") => "Elevate modifying actions by default with sudo/UAC? (y/n; queries, Git, Wine and the user's trash are never elevated automatically)",
+            ("en", "elevation_save_error") => "Could not save the default elevation:",
             ("de", "settings_apply") => "Einstellungen übernehmen",
             ("de", "settings_guide") => "Hilfe zu Einstellungen und Sichtbarkeit",
             ("de", "elevation_default") => "Ändernde Aktionen standardmäßig erhöht ausführen (sudo/UAC; keine Abfragen oder Benutzerdateiaktionen)",
+            ("de", "elevation_enabled") => "aktiviert",
+            ("de", "elevation_disabled") => "deaktiviert",
+            ("de", "elevation_scope") => "Abfragen, Git/Wine und der Papierkorb des Benutzers werden nie automatisch erhöht.",
+            ("de", "elevation_prompt") => "Ändernde Aktionen standardmäßig mit sudo/UAC erhöhen? (j/n; Abfragen, Git, Wine und der Papierkorb des Benutzers werden nie automatisch erhöht)",
+            ("de", "elevation_save_error") => "Die Standarderhöhung konnte nicht gespeichert werden:",
             ("fr", "settings_apply") => "Appliquer les réglages",
             ("fr", "settings_guide") => "Guide des réglages et de la visibilité",
             ("fr", "elevation_default") => "Élever les actions modificatrices par défaut (sudo/UAC ; pas les consultations ni les actions sur les données utilisateur)",
+            ("fr", "elevation_enabled") => "activée",
+            ("fr", "elevation_disabled") => "désactivée",
+            ("fr", "elevation_scope") => "Les consultations, Git/Wine et la corbeille de l’utilisateur ne sont jamais élevés automatiquement.",
+            ("fr", "elevation_prompt") => "Élever les actions modificatrices par défaut avec sudo/UAC ? (o/n ; les consultations, Git, Wine et la corbeille de l’utilisateur ne sont jamais élevés automatiquement)",
+            ("fr", "elevation_save_error") => "Impossible d’enregistrer l’élévation par défaut :",
             ("pt", "settings_apply") => "Aplicar definições",
             ("pt", "settings_guide") => "Guia de definições e visibilidade",
             ("pt", "elevation_default") => "Elevar ações modificadoras por predefinição (sudo/UAC; não consultas nem ações sobre dados do utilizador)",
+            ("pt", "elevation_enabled") => "ativada",
+            ("pt", "elevation_disabled") => "desativada",
+            ("pt", "elevation_scope") => "As consultas, Git/Wine e a reciclagem do utilizador nunca são elevadas automaticamente.",
+            ("pt", "elevation_prompt") => "Elevar ações modificadoras por predefinição com sudo/UAC? (s/n; consultas, Git, Wine e a reciclagem do utilizador nunca são elevadas automaticamente)",
+            ("pt", "elevation_save_error") => "Não foi possível guardar a elevação predefinida:",
             ("it", "settings_apply") => "Applica impostazioni",
             ("it", "settings_guide") => "Guida a impostazioni e visibilità",
             ("it", "elevation_default") => "Eleva per impostazione predefinita le azioni che modificano il sistema (sudo/UAC; non consultazioni o dati utente)",
+            ("it", "elevation_enabled") => "attivata",
+            ("it", "elevation_disabled") => "disattivata",
+            ("it", "elevation_scope") => "Le consultazioni, Git/Wine e il cestino dell’utente non vengono mai elevati automaticamente.",
+            ("it", "elevation_prompt") => "Elevare per impostazione predefinita le azioni modificative con sudo/UAC? (s/n; consultazioni, Git, Wine e cestino dell’utente non vengono mai elevati automaticamente)",
+            ("it", "elevation_save_error") => "Impossibile salvare l’elevazione predefinita:",
             ("pl", "settings_apply") => "Zastosuj ustawienia",
             ("pl", "settings_guide") => "Przewodnik po ustawieniach i widoczności",
             ("pl", "elevation_default") => "Domyślnie uruchamiaj działania modyfikujące z podwyższonymi uprawnieniami (sudo/UAC; nie zapytania ani działania na danych użytkownika)",
+            ("pl", "elevation_enabled") => "włączona",
+            ("pl", "elevation_disabled") => "wyłączona",
+            ("pl", "elevation_scope") => "Zapytania, Git/Wine i kosz użytkownika nigdy nie są automatycznie uruchamiane z podwyższonymi uprawnieniami.",
+            ("pl", "elevation_prompt") => "Uruchamiać domyślnie działania modyfikujące z sudo/UAC? (t/n; zapytania, Git, Wine i kosz użytkownika nigdy nie są automatycznie podwyższane)",
+            ("pl", "elevation_save_error") => "Nie można zapisać domyślnego podwyższenia uprawnień:",
             ("ar", "settings_apply") => "تطبيق الإعدادات",
             ("ar", "settings_guide") => "دليل الإعدادات والظهور",
             ("ar", "elevation_default") => "رفع صلاحيات الإجراءات المعدِّلة افتراضيًا (sudo/UAC؛ وليس الاستعلامات أو إجراءات بيانات المستخدم)",
+            ("ar", "elevation_enabled") => "مفعّلة",
+            ("ar", "elevation_disabled") => "معطّلة",
+            ("ar", "elevation_scope") => "لا تُرفع صلاحيات الاستعلامات وGit/Wine وسلة مهملات المستخدم تلقائيًا أبدًا.",
+            ("ar", "elevation_prompt") => "رفع صلاحيات الإجراءات المعدِّلة افتراضيًا باستخدام sudo/UAC؟ (ن/ل؛ لا تُرفع صلاحيات الاستعلامات وGit وWine وسلة مهملات المستخدم تلقائيًا أبدًا)",
+            ("ar", "elevation_save_error") => "تعذّر حفظ الرفع الافتراضي للصلاحيات:",
             ("hi", "settings_apply") => "सेटिंग लागू करें",
             ("hi", "settings_guide") => "सेटिंग और दृश्यता मार्गदर्शिका",
             ("hi", "elevation_default") => "संशोधन करने वाली कार्रवाइयों को डिफ़ॉल्ट रूप से उन्नत करें (sudo/UAC; क्वेरी या उपयोगकर्ता-डेटा कार्रवाइयाँ नहीं)",
+            ("hi", "elevation_enabled") => "सक्रिय",
+            ("hi", "elevation_disabled") => "निष्क्रिय",
+            ("hi", "elevation_scope") => "क्वेरी, Git/Wine और उपयोगकर्ता की ट्रैश अपने-आप उन्नत नहीं होती।",
+            ("hi", "elevation_prompt") => "संशोधन करने वाली कार्रवाइयों को sudo/UAC के साथ डिफ़ॉल्ट रूप से उन्नत करें? (y/n; क्वेरी, Git, Wine और उपयोगकर्ता की ट्रैश अपने-आप उन्नत नहीं होती)",
+            ("hi", "elevation_save_error") => "डिफ़ॉल्ट उन्नयन सहेजा नहीं जा सका:",
             ("ja", "settings_apply") => "設定を適用",
             ("ja", "settings_guide") => "設定と表示のガイド",
             ("ja", "elevation_default") => "変更操作を既定で昇格して実行（sudo/UAC。照会やユーザーデータ操作は除く）",
+            ("ja", "elevation_enabled") => "有効",
+            ("ja", "elevation_disabled") => "無効",
+            ("ja", "elevation_scope") => "照会、Git/Wine、ユーザーのごみ箱は自動的に昇格されません。",
+            ("ja", "elevation_prompt") => "変更操作を sudo/UAC で既定の昇格実行にしますか？（y/n。照会、Git、Wine、ユーザーのごみ箱は自動昇格されません）",
+            ("ja", "elevation_save_error") => "既定の昇格設定を保存できませんでした：",
             ("ko", "settings_apply") => "설정 적용",
             ("ko", "settings_guide") => "설정 및 표시 안내",
             ("ko", "elevation_default") => "수정 작업을 기본적으로 관리자 권한으로 실행 (sudo/UAC; 조회 및 사용자 데이터 작업 제외)",
+            ("ko", "elevation_enabled") => "활성화됨",
+            ("ko", "elevation_disabled") => "비활성화됨",
+            ("ko", "elevation_scope") => "조회, Git/Wine 및 사용자 휴지통은 자동으로 권한 상승되지 않습니다.",
+            ("ko", "elevation_prompt") => "수정 작업을 기본적으로 sudo/UAC로 권한 상승하여 실행할까요? (y/n; 조회, Git, Wine 및 사용자 휴지통은 자동 상승하지 않음)",
+            ("ko", "elevation_save_error") => "기본 권한 상승을 저장할 수 없습니다:",
             ("ro", "settings_apply") => "Aplică setările",
             ("ro", "settings_guide") => "Ghid pentru setări și vizibilitate",
             ("ro", "elevation_default") => "Rulează implicit cu privilegii ridicate acțiunile modificatoare (sudo/UAC; nu și interogările sau acțiunile asupra datelor utilizatorului)",
+            ("ro", "elevation_enabled") => "activată",
+            ("ro", "elevation_disabled") => "dezactivată",
+            ("ro", "elevation_scope") => "Interogările, Git/Wine și coșul de gunoi al utilizatorului nu sunt ridicate automat.",
+            ("ro", "elevation_prompt") => "Rulezi implicit acțiunile modificatoare cu sudo/UAC? (d/n; interogările, Git, Wine și coșul de gunoi al utilizatorului nu sunt ridicate automat)",
+            ("ro", "elevation_save_error") => "Ridicarea implicită nu a putut fi salvată:",
             ("ru", "settings_apply") => "Применить настройки",
             ("ru", "settings_guide") => "Руководство по настройкам и видимости",
             ("ru", "elevation_default") => "По умолчанию запускать изменяющие действия с повышенными правами (sudo/UAC; не запросы и не действия с данными пользователя)",
+            ("ru", "elevation_enabled") => "включена",
+            ("ru", "elevation_disabled") => "отключена",
+            ("ru", "elevation_scope") => "Запросы, Git/Wine и корзина пользователя никогда не получают права автоматически.",
+            ("ru", "elevation_prompt") => "Запускать изменяющие действия по умолчанию с sudo/UAC? (д/н; запросы, Git, Wine и корзина пользователя автоматически не повышаются)",
+            ("ru", "elevation_save_error") => "Не удалось сохранить повышение по умолчанию:",
             ("uk", "settings_apply") => "Застосувати налаштування",
             ("uk", "settings_guide") => "Посібник із налаштувань і видимості",
             ("uk", "elevation_default") => "Типово запускати дії зі зміною системи з підвищеними правами (sudo/UAC; не запити й не дії з даними користувача)",
+            ("uk", "elevation_enabled") => "увімкнено",
+            ("uk", "elevation_disabled") => "вимкнено",
+            ("uk", "elevation_scope") => "Запити, Git/Wine і кошик користувача ніколи не підвищуються автоматично.",
+            ("uk", "elevation_prompt") => "Типово запускати дії зі зміною системи через sudo/UAC? (т/н; запити, Git, Wine і кошик користувача автоматично не підвищуються)",
+            ("uk", "elevation_save_error") => "Не вдалося зберегти типове підвищення:",
             ("zh", "settings_apply") => "应用设置",
             ("zh", "settings_guide") => "设置与可见性指南",
             ("zh", "elevation_default") => "默认提升修改操作的权限（sudo/UAC；查询和用户数据操作除外）",
+            ("zh", "elevation_enabled") => "已启用",
+            ("zh", "elevation_disabled") => "已禁用",
+            ("zh", "elevation_scope") => "查询、Git/Wine 和用户回收站不会自动提升权限。",
+            ("zh", "elevation_prompt") => "是否默认使用 sudo/UAC 提升修改操作？（y/n；查询、Git、Wine 和用户回收站不会自动提升）",
+            ("zh", "elevation_save_error") => "无法保存默认提升设置：",
             (_, "settings_apply") => "Aplicar ajustes",
             (_, "settings_guide") => "Guía de ajustes y visibilidad",
             (_, "elevation_default") => "Elevar acciones modificadoras por defecto (sudo/UAC; no consultas ni acciones de datos de usuario)",
+            (_, "elevation_enabled") => "activada",
+            (_, "elevation_disabled") => "desactivada",
+            (_, "elevation_scope") => "Las consultas, Git/Wine y la papelera del usuario nunca se elevan automáticamente.",
+            (_, "elevation_prompt") => "¿Elevar acciones modificadoras por defecto con sudo/UAC? (s/n; las consultas, Git, Wine y la papelera del usuario nunca se elevan automáticamente)",
+            (_, "elevation_save_error") => "No se pudo guardar la elevación por defecto:",
             (_, _) => "",
         };
     }
@@ -3617,6 +4107,21 @@ pub fn tools_text(key: &str) -> &'static str {
         ("ru", "pause") => "Нажмите Enter, чтобы вернуться: ",
         ("uk", "pause") => "Натисніть Enter для повернення: ",
         ("zh", "pause") => "按 Enter 返回：",
+        ("en", "git_lfs") => "Git LFS status and native command",
+        ("de", "git_lfs") => "Git-LFS-Status und nativer Befehl",
+        ("fr", "git_lfs") => "État Git LFS et commande native",
+        ("pt", "git_lfs") => "Estado do Git LFS e comando nativo",
+        ("it", "git_lfs") => "Stato Git LFS e comando nativo",
+        ("ca", "git_lfs") => "Estat de Git LFS i ordre nativa",
+        ("nl", "git_lfs") => "Git LFS-status en native opdracht",
+        ("pl", "git_lfs") => "Stan Git LFS i polecenie natywne",
+        ("ar", "git_lfs") => "حالة Git LFS والأمر الأصلي",
+        ("hi", "git_lfs") => "Git LFS स्थिति और मूल कमांड",
+        ("ja", "git_lfs") => "Git LFS の状態とネイティブコマンド",
+        ("ko", "git_lfs") => "Git LFS 상태 및 네이티브 명령",
+        ("ro", "git_lfs") => "Stare Git LFS și comandă nativă",
+        ("ru", "git_lfs") => "Состояние Git LFS и нативная команда",
+        ("uk", "git_lfs") => "Стан Git LFS і нативна команда",
         ("pl", "menu") => "Pakiety, źródła i Git",
         ("pl", "help") => "Szukaj/instaluj z wykrytych źródeł i wykonuj chronione operacje Git",
         ("pl", "title") => "=== Pakiety, źródła i Git ===",
@@ -3644,6 +4149,7 @@ pub fn tools_text(key: &str) -> &'static str {
         (_, "git_tag") => "Listar o crear tag",
         (_, "git_release") => "Crear release de GitHub",
         (_, "git_login") => "Comprobar identidad Git e inicio de sesión GitHub opcional",
+        (_, "git_lfs") => "Estado de Git LFS y comando nativo",
         (_, "gh_repo") => "Repositorio de GitHub",
         (_, "gh_prs") => "Pull requests de GitHub",
         (_, "gh_releases") => "Releases de GitHub",
@@ -4165,6 +4671,263 @@ pub fn text(key: &str) -> &'static str {
     }
 }
 
+/// Textos breves de la ayuda global que no pertenecen a una familia concreta.
+/// Mantenerlos aquí evita que `--lang` deje fragmentos de español entre
+/// descripciones traducidas. Los nombres de comandos y opciones se conservan
+/// literalmente porque forman parte de la interfaz CLI.
+pub fn help_extra(key: &str) -> &'static str {
+    const TEXT: &[(&str, [&str; 15])] = &[
+        (
+            "report",
+            [
+                "Lire un rapport avec sortie directe, pagination ou éditeur",
+                "Bericht direkt, mit Pager oder Editor lesen",
+                "Read a report directly, through a pager or in an editor",
+                "Leer un informe con salida directa, paginador o editor",
+                "Lire un rapport directement, avec un pager ou un éditeur",
+                "रिपोर्ट को सीधे, पेजर या संपादक के माध्यम से पढ़ें",
+                "Leggi un rapporto direttamente, con pager o editor",
+                "レポートを直接、ページャー、またはエディターで読む",
+                "보고서를 직접, 페이저 또는 편집기로 읽기",
+                "Czytaj raport bezpośrednio, przez pager lub w edytorze",
+                "Ler um relatório diretamente, através de um pager ou editor",
+                "Citiți un raport direct, prin pager sau editor",
+                "Читать отчет напрямую, через pager или редактор",
+                "Читати звіт напряму, через pager або редактор",
+                "直接、通过分页器或编辑器读取报告",
+            ],
+        ),
+        (
+            "privileges",
+            [
+                "Politique d’élévation par action et plateforme",
+                "Erhöhungsrichtlinie nach Aktion und Plattform",
+                "Elevation policy by action and platform",
+                "Política de elevación por acción y plataforma",
+                "Politique d’élévation selon l’action et la plateforme",
+                "कार्रवाई और प्लेटफ़ॉर्म के अनुसार उन्नयन नीति",
+                "Politica di elevazione per azione e piattaforma",
+                "操作とプラットフォームごとの昇格ポリシー",
+                "작업 및 플랫폼별 권한 상승 정책",
+                "Zasady podnoszenia uprawnień według działania i platformy",
+                "Política de elevação por ação e plataforma",
+                "Politica de elevare în funcție de acțiune și platformă",
+                "Политика повышения прав по действию и платформе",
+                "Політика підвищення прав за дією та платформою",
+                "按操作和平台划分的提权策略",
+            ],
+        ),
+        (
+            "privilege_policy",
+            [
+                "Les actions obligatoires demandent sudo/UAC ; les consultations, Git/Wine et la corbeille utilisateur ne sont pas élevées.",
+                "Erforderliche Aktionen fragen sudo/UAC an; Abfragen, Git/Wine und der Papierkorb des Benutzers werden nicht erhöht.",
+                "Required actions ask for sudo/UAC; queries, Git/Wine and the user’s trash are never elevated.",
+                "Las acciones obligatorias piden sudo/UAC; consultas, Git/Wine y la papelera del usuario no se elevan.",
+                "Les actions obligatoires demandent sudo/UAC ; les consultations, Git/Wine et la corbeille utilisateur ne sont pas élevées.",
+                "आवश्यक कार्रवाइयाँ sudo/UAC माँगती हैं; क्वेरी, Git/Wine और उपयोगकर्ता का ट्रैश उन्नत नहीं किया जाता।",
+                "Le azioni obbligatorie richiedono sudo/UAC; consultazioni, Git/Wine e cestino dell’utente non vengono elevate.",
+                "必須操作では sudo/UAC を要求します。照会、Git/Wine、ユーザーのゴミ箱は昇格しません。",
+                "필수 작업은 sudo/UAC를 요청하며 조회, Git/Wine 및 사용자 휴지통은 권한 상승하지 않습니다.",
+                "Wymagane działania proszą o sudo/UAC; zapytania, Git/Wine i kosz użytkownika nie są uruchamiane z podwyższonymi uprawnieniami.",
+                "As ações obrigatórias pedem sudo/UAC; consultas, Git/Wine e o lixo do utilizador não são elevados.",
+                "Acțiunile obligatorii cer sudo/UAC; interogările, Git/Wine și coșul utilizatorului nu sunt elevate.",
+                "Обязательные действия запрашивают sudo/UAC; запросы, Git/Wine и корзина пользователя не запускаются с повышенными правами.",
+                "Обов’язкові дії запитують sudo/UAC; запити, Git/Wine і кошик користувача не виконуються з підвищенням прав.",
+                "必需操作会请求 sudo/UAC；查询、Git/Wine 和用户回收站不会提权。",
+            ],
+        ),
+        (
+            "doctor_install",
+            [
+                "doctor --install TOOL",
+                "doctor --install TOOL",
+                "doctor --install TOOL",
+                "doctor --install TOOL",
+                "doctor --install TOOL",
+                "doctor --install TOOL",
+                "doctor --install TOOL",
+                "doctor --install TOOL",
+                "doctor --install TOOL",
+                "doctor --install TOOL",
+                "doctor --install TOOL",
+                "doctor --install TOOL",
+                "doctor --install TOOL",
+                "doctor --install TOOL",
+                "doctor --install TOOL",
+            ],
+        ),
+        (
+            "elevation_hint",
+            [
+                "--elevate | --no-elevate ; la préférence persistante se change dans Réglages.",
+                "--elevate | --no-elevate; die dauerhafte Einstellung wird unter Einstellungen geändert.",
+                "--elevate | --no-elevate; change the persistent preference in Settings.",
+                "--elevate | --no-elevate; la preferencia persistente se cambia en Ajustes.",
+                "--elevate | --no-elevate ; la préférence persistante se modifie dans Paramètres.",
+                "--elevate | --no-elevate; स्थायी प्राथमिकता सेटिंग्स में बदलें।",
+                "--elevate | --no-elevate; cambia la preferenza persistente in Impostazioni.",
+                "--elevate | --no-elevate。永続的な設定は設定画面で変更します。",
+                "--elevate | --no-elevate; 영구 기본 설정은 설정에서 변경합니다.",
+                "--elevate | --no-elevate; trwałe ustawienie zmienisz w Ustawieniach.",
+                "--elevate | --no-elevate; altere a preferência persistente em Definições.",
+                "--elevate | --no-elevate; modificați preferința persistentă în Setări.",
+                "--elevate | --no-elevate; изменяйте постоянную настройку в разделе «Настройки».",
+                "--elevate | --no-elevate; змінюйте постійне налаштування в розділі «Параметри».",
+                "--elevate | --no-elevate；在设置中更改持久偏好。",
+            ],
+        ),
+        (
+            "git",
+            [
+                "git status|log|clone|fetch|pull|add|commit|push|branch|tag|release|diagnose|repair|lfs|gh|login [options sûres]",
+                "git status|log|clone|fetch|pull|add|commit|push|branch|tag|release|diagnose|repair|lfs|gh|login [sichere Optionen]",
+                "git status|log|clone|fetch|pull|add|commit|push|branch|tag|release|diagnose|repair|lfs|gh|login [safe options]",
+                "git status|log|clone|fetch|pull|add|commit|push|branch|tag|release|diagnose|repair|lfs|gh|login [opciones seguras]",
+                "git status|log|clone|fetch|pull|add|commit|push|branch|tag|release|diagnose|repair|lfs|gh|login [options sûres]",
+                "git status|log|clone|fetch|pull|add|commit|push|branch|tag|release|diagnose|repair|lfs|gh|login [सुरक्षित विकल्प]",
+                "git status|log|clone|fetch|pull|add|commit|push|branch|tag|release|diagnose|repair|lfs|gh|login [opzioni sicure]",
+                "git status|log|clone|fetch|pull|add|commit|push|branch|tag|release|diagnose|repair|lfs|gh|login [安全なオプション]",
+                "git status|log|clone|fetch|pull|add|commit|push|branch|tag|release|diagnose|repair|lfs|gh|login [안전한 옵션]",
+                "git status|log|clone|fetch|pull|add|commit|push|branch|tag|release|diagnose|repair|lfs|gh|login [bezpieczne opcje]",
+                "git status|log|clone|fetch|pull|add|commit|push|branch|tag|release|diagnose|repair|lfs|gh|login [opções seguras]",
+                "git status|log|clone|fetch|pull|add|commit|push|branch|tag|release|diagnose|repair|lfs|gh|login [opțiuni sigure]",
+                "git status|log|clone|fetch|pull|add|commit|push|branch|tag|release|diagnose|repair|lfs|gh|login [безопасные параметры]",
+                "git status|log|clone|fetch|pull|add|commit|push|branch|tag|release|diagnose|repair|lfs|gh|login [безпечні параметри]",
+                "git status|log|clone|fetch|pull|add|commit|push|branch|tag|release|diagnose|repair|lfs|gh|login [安全选项]",
+            ],
+        ),
+        (
+            "winslim",
+            [
+                "Détecter NSudo et lancer des processus Windows avec une identité explicite",
+                "NSudo erkennen und Windows-Prozesse mit einer expliziten Identität starten",
+                "Detect NSudo and launch Windows processes with an explicit identity",
+                "Detectar NSudo y lanzar procesos Windows con identidad explícita",
+                "Détecter NSudo et lancer des processus Windows avec une identité explicite",
+                "NSudo का पता लगाएँ और स्पष्ट पहचान के साथ Windows प्रक्रियाएँ चलाएँ",
+                "Rileva NSudo e avvia processi Windows con un’identità esplicita",
+                "NSudo を検出し、明示した ID で Windows プロセスを起動",
+                "NSudo를 감지하고 명시적 ID로 Windows 프로세스 실행",
+                "Wykrywaj NSudo i uruchamiaj procesy Windows z jawną tożsamością",
+                "Detetar o NSudo e iniciar processos Windows com uma identidade explícita",
+                "Detectați NSudo și lansați procese Windows cu o identitate explicită",
+                "Обнаруживать NSudo и запускать процессы Windows с указанным идентификатором",
+                "Виявляти NSudo й запускати процеси Windows із явно вказаною особою",
+                "检测 NSudo 并使用明确身份启动 Windows 进程",
+            ],
+        ),
+        (
+            "release_manifest",
+            [
+                "Générer le manifeste vérifiable d’une release GitHub",
+                "Überprüfbares GitHub-Release-Manifest erzeugen",
+                "Generate a verifiable GitHub release manifest",
+                "Generar el manifiesto verificable de una release de GitHub",
+                "Générer le manifeste vérifiable d’une release GitHub",
+                "सत्यापनीय GitHub रिलीज़ मेनिफेस्ट बनाएँ",
+                "Genera il manifesto verificabile di una release GitHub",
+                "検証可能な GitHub リリースマニフェストを生成",
+                "검증 가능한 GitHub 릴리스 매니페스트 생성",
+                "Generuj weryfikowalny manifest wydania GitHub",
+                "Gerar o manifesto verificável de uma release GitHub",
+                "Generați manifestul verificabil al unei versiuni GitHub",
+                "Создать проверяемый манифест релиза GitHub",
+                "Створити перевірюваний маніфест релізу GitHub",
+                "生成可验证的 GitHub 发布清单",
+            ],
+        ),
+        (
+            "release_checksums",
+            [
+                "Générer SHA256SUMS.txt pour les artefacts publiables",
+                "SHA256SUMS.txt für veröffentlichbare Artefakte erzeugen",
+                "Generate SHA256SUMS.txt for publishable artifacts",
+                "Generar SHA256SUMS.txt para los artefactos publicables",
+                "Générer SHA256SUMS.txt pour les artefacts publiables",
+                "प्रकाशित किए जा सकने वाले आर्टिफ़ैक्ट के लिए SHA256SUMS.txt बनाएँ",
+                "Genera SHA256SUMS.txt per gli artefatti pubblicabili",
+                "公開可能な成果物用の SHA256SUMS.txt を生成",
+                "게시 가능한 아티팩트용 SHA256SUMS.txt 생성",
+                "Generuj SHA256SUMS.txt dla artefaktów do publikacji",
+                "Gerar SHA256SUMS.txt para os artefactos publicáveis",
+                "Generați SHA256SUMS.txt pentru artefactele publicabile",
+                "Создать SHA256SUMS.txt для публикуемых артефактов",
+                "Створити SHA256SUMS.txt для артефактів, готових до публікації",
+                "为可发布构件生成 SHA256SUMS.txt",
+            ],
+        ),
+        (
+            "release_signature",
+            [
+                "Signer ou vérifier SHA256SUMS.txt avec Ed25519",
+                "SHA256SUMS.txt mit Ed25519 signieren oder prüfen",
+                "Sign or verify SHA256SUMS.txt with Ed25519",
+                "Firmar o verificar SHA256SUMS.txt con Ed25519",
+                "Signer ou vérifier SHA256SUMS.txt avec Ed25519",
+                "Ed25519 से SHA256SUMS.txt पर हस्ताक्षर या सत्यापन करें",
+                "Firma o verifica SHA256SUMS.txt con Ed25519",
+                "Ed25519 で SHA256SUMS.txt に署名または検証",
+                "Ed25519로 SHA256SUMS.txt 서명 또는 검증",
+                "Podpisuj lub weryfikuj SHA256SUMS.txt za pomocą Ed25519",
+                "Assinar ou verificar SHA256SUMS.txt com Ed25519",
+                "Semnați sau verificați SHA256SUMS.txt cu Ed25519",
+                "Подписать или проверить SHA256SUMS.txt с помощью Ed25519",
+                "Підписати або перевірити SHA256SUMS.txt за допомогою Ed25519",
+                "使用 Ed25519 签名或验证 SHA256SUMS.txt",
+            ],
+        ),
+        (
+            "update",
+            [
+                "update [check|download] [--repository OWNER/REPO] [--pause] — vérifie une release GitHub, la signature et le hash, puis prépare le paquet sans privilèges",
+                "update [check|download] [--repository OWNER/REPO] [--pause] — prüft ein GitHub-Release, Signatur und Hash und bereitet das Paket ohne erhöhte Rechte vor",
+                "update [check|download] [--repository OWNER/REPO] [--pause] — checks a GitHub release, signature and hash, then prepares the package without privileges",
+                "update [check|download] [--repository OWNER/REPO] [--pause] — comprueba una release GitHub, verifica firma/hash y prepara el paquete sin privilegios",
+                "update [check|download] [--repository OWNER/REPO] [--pause] — vérifie une release GitHub, la signature et le hash, puis prépare le paquet sans privilèges",
+                "update [check|download] [--repository OWNER/REPO] [--pause] — GitHub रिलीज़, हस्ताक्षर और हैश जाँचकर बिना उन्नत अधिकार के पैकेज तैयार करता है",
+                "update [check|download] [--repository OWNER/REPO] [--pause] — verifica una release GitHub, firma e hash e prepara il pacchetto senza privilegi",
+                "update [check|download] [--repository OWNER/REPO] [--pause] — GitHub リリース、署名、ハッシュを確認し、権限なしでパッケージを準備",
+                "update [check|download] [--repository OWNER/REPO] [--pause] — GitHub 릴리스, 서명 및 해시를 확인하고 권한 없이 패키지 준비",
+                "update [check|download] [--repository OWNER/REPO] [--pause] — sprawdza wydanie GitHub, podpis i hash, a następnie przygotowuje pakiet bez podwyższonych uprawnień",
+                "update [check|download] [--repository OWNER/REPO] [--pause] — verifica uma release GitHub, assinatura e hash e prepara o pacote sem privilégios",
+                "update [check|download] [--repository OWNER/REPO] [--pause] — verifică o versiune GitHub, semnătura și hashul, apoi pregătește pachetul fără privilegii",
+                "update [check|download] [--repository OWNER/REPO] [--pause] — проверяет релиз GitHub, подпись и хеш, затем готовит пакет без повышения прав",
+                "update [check|download] [--repository OWNER/REPO] [--pause] — перевіряє реліз GitHub, підпис і хеш, а потім готує пакет без підвищення прав",
+                "update [check|download] [--repository OWNER/REPO] [--pause] — 检查 GitHub 发布、签名和哈希，然后在不提权的情况下准备包",
+            ],
+        ),
+        (
+            "scanner_note",
+            [
+                "Consultation en lecture seule : aucun analyseur n’est exécuté et le dépôt n’est pas modifié.",
+                "Nur-Lese-Abfrage: Es wird kein Scanner ausgeführt und das Repository nicht verändert.",
+                "Read-only inventory: no scanner is run and the repository is not modified.",
+                "Consulta informativa: no se ejecuta ningún análisis ni se modifica el repositorio.",
+                "Inventaire en lecture seule : aucun analyseur n’est exécuté et le dépôt n’est pas modifié.",
+                "केवल-पठन सूची: कोई स्कैनर नहीं चलाया जाता और रिपॉज़िटरी बदली नहीं जाती।",
+                "Inventario in sola lettura: nessuno scanner viene eseguito e il repository non viene modificato.",
+                "読み取り専用の一覧です。スキャナーは実行せず、リポジトリも変更しません。",
+                "읽기 전용 목록입니다. 스캐너를 실행하지 않으며 저장소를 수정하지 않습니다.",
+                "Inwentaryzacja tylko do odczytu: żaden skaner nie jest uruchamiany, a repozytorium nie jest modyfikowane.",
+                "Inventário somente leitura: nenhum scanner é executado e o repositório não é alterado.",
+                "Inventar doar în citire: nu rulează niciun scaner și depozitul nu este modificat.",
+                "Инвентаризация только для чтения: сканеры не запускаются, репозиторий не изменяется.",
+                "Інвентаризація лише для читання: сканери не запускаються, репозиторій не змінюється.",
+                "只读清单：不会运行扫描器，也不会修改仓库。",
+            ],
+        ),
+    ];
+    let index = SUPPORTED
+        .iter()
+        .position(|candidate| *candidate == current())
+        .unwrap_or(3);
+    TEXT.iter()
+        .find(|(candidate, _)| *candidate == key)
+        .map(|(_, values)| values[index])
+        .unwrap_or("")
+}
+
 /// Categorías del menú principal. Se mantienen separadas del catálogo de
 /// comandos para que la CLI pueda cambiar su jerarquía sin cambiar el
 /// contrato de automatización ni los nombres de las acciones.
@@ -4423,6 +5186,163 @@ pub fn category_text(key: &str) -> &'static str {
     }
 }
 
+/// Etiquetas de acciones que conectan una categoría con su guía contextual.
+/// El catálogo de la guía y el constructor de la GUI comparten estas mismas
+/// cadenas para que el índice no se quede desfasado al cambiar de idioma.
+#[allow(dead_code)]
+pub fn gui_catalog_text(key: &str) -> &'static str {
+    const TEXT: &[(&str, [&str; 15])] = &[
+        (
+            "native_guide",
+            [
+                "دليل الأدوات الأصلية",
+                "Handbuch für native Werkzeuge",
+                "Native tools guide",
+                "Guía de herramientas nativas",
+                "Guide des outils natifs",
+                "मूल उपकरण मार्गदर्शिका",
+                "Guida agli strumenti nativi",
+                "ネイティブツールガイド",
+                "네이티브 도구 안내",
+                "Przewodnik po narzędziach natywnych",
+                "Guia de ferramentas nativas",
+                "Ghid pentru instrumente native",
+                "Руководство по системным инструментам",
+                "Посібник із вбудованих інструментів",
+                "原生工具指南",
+            ],
+        ),
+        (
+            "dependencies_guide",
+            [
+                "دليل التبعيات",
+                "Handbuch für Abhängigkeiten",
+                "Dependencies guide",
+                "Guía de dependencias",
+                "Guide des dépendances",
+                "निर्भरताएँ मार्गदर्शिका",
+                "Guida alle dipendenze",
+                "依存関係ガイド",
+                "종속성 안내",
+                "Przewodnik po zależnościach",
+                "Guia de dependências",
+                "Ghid pentru dependențe",
+                "Руководство по зависимостям",
+                "Посібник із залежностей",
+                "依赖项指南",
+            ],
+        ),
+        (
+            "installable_guide",
+            [
+                "دليل الأدوات القابلة للتثبيت",
+                "Handbuch für installierbare Werkzeuge",
+                "Installable tools guide",
+                "Guía de herramientas instalables",
+                "Guide des outils installables",
+                "इंस्टॉल करने योग्य उपकरण मार्गदर्शिका",
+                "Guida agli strumenti installabili",
+                "インストール可能なツールガイド",
+                "설치 가능한 도구 안내",
+                "Przewodnik po narzędziach instalowalnych",
+                "Guia de ferramentas instaláveis",
+                "Ghid pentru instrumente instalabile",
+                "Руководство по устанавливаемым инструментам",
+                "Посібник із інструментів для встановлення",
+                "可安装工具指南",
+            ],
+        ),
+        (
+            "automation_guide",
+            [
+                "دليل الأتمتة",
+                "Handbuch für Automatisierung",
+                "Automation guide",
+                "Guía de automatización",
+                "Guide de l’automatisation",
+                "स्वचालन मार्गदर्शिका",
+                "Guida all’automazione",
+                "自動化ガイド",
+                "자동화 안내",
+                "Przewodnik po automatyzacji",
+                "Guia de automação",
+                "Ghid pentru automatizare",
+                "Руководство по автоматизации",
+                "Посібник з автоматизації",
+                "自动化指南",
+            ],
+        ),
+        (
+            "registered_scripts",
+            [
+                "البرامج النصية المسجلة",
+                "Registrierte Skripte",
+                "Registered scripts",
+                "Scripts registrados",
+                "Scripts enregistrés",
+                "पंजीकृत स्क्रिप्ट",
+                "Script registrati",
+                "登録済みスクリプト",
+                "등록된 스크립트",
+                "Zarejestrowane skrypty",
+                "Scripts registados",
+                "Scripturi înregistrate",
+                "Зарегистрированные скрипты",
+                "Зареєстровані скрипти",
+                "已注册脚本",
+            ],
+        ),
+        (
+            "register_script",
+            [
+                "تسجيل برنامج نصي جديد",
+                "Neues Skript registrieren",
+                "Register new script",
+                "Registrar nuevo script",
+                "Enregistrer un nouveau script",
+                "नई स्क्रिप्ट पंजीकृत करें",
+                "Registra nuovo script",
+                "新しいスクリプトを登録",
+                "새 스크립트 등록",
+                "Zarejestruj nowy skrypt",
+                "Registar novo script",
+                "Înregistrează un script nou",
+                "Зарегистрировать новый скрипт",
+                "Зареєструвати новий скрипт",
+                "注册新脚本",
+            ],
+        ),
+        (
+            "scripts_guide",
+            [
+                "دليل البرامج النصية والأتمتة",
+                "Handbuch für Skripte und Automatisierung",
+                "Scripts and automation guide",
+                "Guía de scripts y automatización",
+                "Guide des scripts et de l’automatisation",
+                "स्क्रिप्ट और स्वचालन मार्गदर्शिका",
+                "Guida a script e automazione",
+                "スクリプトと自動化ガイド",
+                "스크립트 및 자동화 안내",
+                "Przewodnik po skryptach i automatyzacji",
+                "Guia de scripts e automação",
+                "Ghid pentru scripturi și automatizare",
+                "Руководство по скриптам и автоматизации",
+                "Посібник зі скриптів та автоматизації",
+                "脚本和自动化指南",
+            ],
+        ),
+    ];
+    let index = SUPPORTED
+        .iter()
+        .position(|language| *language == current())
+        .unwrap_or(3);
+    TEXT.iter()
+        .find(|(entry_key, _)| *entry_key == key)
+        .map(|(_, values)| values[index])
+        .unwrap_or("")
+}
+
 /// Etiquetas de los ajustes de la CLI. Se mantienen fuera de `gui_text` para
 /// que el binario de consola conserve portabilidad incluso en plataformas
 /// donde no se compila una GUI nativa.
@@ -4547,7 +5467,178 @@ pub fn update_text(key: &str) -> &'static str {
 /// Textos del registro de automatizaciones. Las automatizaciones son datos
 /// del usuario, no plugins con código embebido; este catálogo solo traduce la
 /// navegación y sus mensajes básicos.
+fn automation_extended_text(key: &str) -> Option<&'static str> {
+    const TEXT: &[(&str, [&str; 15])] = &[
+        (
+            "field_name",
+            [
+                "الاسم", "Name", "Name", "Nombre", "Nom", "नाम", "Nome", "名前",
+                "이름", "Nazwa", "Nome", "Nume", "Имя", "Назва", "名称",
+            ],
+        ),
+        (
+            "field_program",
+            [
+                "البرنامج أو المسار",
+                "Programm oder Pfad",
+                "Program or path",
+                "Programa o ruta",
+                "Programme ou chemin",
+                "कार्यक्रम या पथ",
+                "Programma o percorso",
+                "プログラムまたはパス",
+                "프로그램 또는 경로",
+                "Program lub ścieżka",
+                "Programa ou caminho",
+                "Program sau cale",
+                "Программа или путь",
+                "Програма або шлях",
+                "程序或路径",
+            ],
+        ),
+        (
+            "field_working_directory",
+            [
+                "دليل العمل (فارغ للإبقاء؛ - للحذف)",
+                "Arbeitsverzeichnis (leer beibehalten; - löschen)",
+                "Working directory (blank keeps; - removes)",
+                "Directorio de trabajo (vacío conserva; - elimina)",
+                "Répertoire de travail (vide conserve ; - supprime)",
+                "कार्य निर्देशिका (खाली रखने के लिए; - हटाने के लिए)",
+                "Directory di lavoro (vuota mantiene; - rimuove)",
+                "作業ディレクトリ（空欄は保持、- は削除）",
+                "작업 디렉터리 (비우면 유지, - 는 삭제)",
+                "Katalog roboczy (puste zachowuje; - usuwa)",
+                "Diretório de trabalho (vazio mantém; - remove)",
+                "Director de lucru (gol păstrează; - elimină)",
+                "Рабочий каталог (пусто — сохранить; - — удалить)",
+                "Робочий каталог (порожньо — зберегти; - — вилучити)",
+                "工作目录（留空保留；- 删除）",
+            ],
+        ),
+        (
+            "field_arguments",
+            [
+                "المعاملات (فارغ للإبقاء؛ - للحذف)",
+                "Argumente (leer beibehalten; - löschen)",
+                "Arguments (blank keeps; - removes)",
+                "Argumentos (vacío conserva; - elimina)",
+                "Arguments (vide conserve ; - supprime)",
+                "तर्क (खाली रखने के लिए; - हटाने के लिए)",
+                "Argomenti (vuoto mantiene; - rimuove)",
+                "引数（空欄は保持、- は削除）",
+                "인수 (비우면 유지, - 는 삭제)",
+                "Argumenty (puste zachowuje; - usuwa)",
+                "Argumentos (vazio mantém; - remove)",
+                "Argumente (gol păstrează; - elimină)",
+                "Аргументы (пусто — сохранить; - — удалить)",
+                "Аргументи (порожньо — зберегти; - — вилучити)",
+                "参数（留空保留；- 删除）",
+            ],
+        ),
+        (
+            "save",
+            [
+                "حفظ التغييرات", "Änderungen speichern", "Save changes", "Guardar cambios",
+                "Enregistrer les modifications", "परिवर्तन सहेजें", "Salva modifiche", "変更を保存",
+                "변경 사항 저장", "Zapisz zmiany", "Guardar alterações", "Salvează modificările",
+                "Сохранить изменения", "Зберегти зміни", "保存更改",
+            ],
+        ),
+        (
+            "refresh",
+            [
+                "إعادة تحميل القائمة", "Liste neu laden", "Refresh list", "Recargar listado",
+                "Actualiser la liste", "सूची रीफ़्रेश करें", "Ricarica elenco", "一覧を再読み込み",
+                "목록 새로 고침", "Odśwież listę", "Recarregar lista", "Reîncarcă lista",
+                "Обновить список", "Оновити список", "刷新列表",
+            ],
+        ),
+        (
+            "none",
+            [
+                "لا توجد نصوص برمجية مسجلة.", "Keine Skripte registriert.", "No scripts registered.",
+                "No hay scripts registrados.", "Aucun script enregistré.", "कोई स्क्रिप्ट पंजीकृत नहीं है।",
+                "Nessuno script registrato.", "登録されたスクリプトはありません。", "등록된 스크립트가 없습니다.",
+                "Nie zarejestrowano skryptów.", "Nenhum script registado.", "Nu există scripturi înregistrate.",
+                "Зарегистрированных скриптов нет.", "Зареєстрованих скриптів немає.", "没有已注册的脚本。",
+            ],
+        ),
+        (
+            "action_run",
+            [
+                "تشغيل", "Ausführen", "Run", "Ejecutar", "Exécuter", "चलाएँ", "Esegui", "実行",
+                "실행", "Uruchom", "Executar", "Rulează", "Запустить", "Запустити", "运行",
+            ],
+        ),
+        (
+            "action_edit",
+            [
+                "تحرير", "Bearbeiten", "Edit", "Editar", "Modifier", "संपादित करें", "Modifica", "編集",
+                "편집", "Edytuj", "Editar", "Editează", "Изменить", "Редагувати", "编辑",
+            ],
+        ),
+        (
+            "action_remove",
+            [
+                "إزالة", "Entfernen", "Remove", "Borrar", "Supprimer", "हटाएँ", "Rimuovi", "削除",
+                "제거", "Usuń", "Remover", "Elimină", "Удалить", "Вилучити", "移除",
+            ],
+        ),
+        (
+            "winslim_opened",
+            [
+                "تم فتح مساعد WinSlim / NSudo في وحدة تحكم مستقلة.",
+                "Der WinSlim-/NSudo-Assistent wurde in einer separaten Konsole geöffnet.",
+                "The WinSlim / NSudo assistant opened in a separate console.",
+                "Se abrió el asistente WinSlim / NSudo en una consola independiente.",
+                "L’assistant WinSlim / NSudo a été ouvert dans une console séparée.",
+                "WinSlim / NSudo सहायक अलग कंसोल में खुल गया।",
+                "L’assistente WinSlim / NSudo è stato aperto in una console separata.",
+                "WinSlim / NSudo アシスタントを別のコンソールで開きました。",
+                "WinSlim / NSudo 도우미가 별도 콘솔에서 열렸습니다.",
+                "Asystent WinSlim / NSudo został otwarty w osobnej konsoli.",
+                "O assistente WinSlim / NSudo foi aberto numa consola separada.",
+                "Asistentul WinSlim / NSudo a fost deschis într-o consolă separată.",
+                "Мастер WinSlim / NSudo открыт в отдельной консоли.",
+                "Помічник WinSlim / NSudo відкрито в окремій консолі.",
+                "WinSlim / NSudo 助手已在独立控制台中打开。",
+            ],
+        ),
+        (
+            "update_opened",
+            [
+                "تم فتح وحدة تحكم مستقلة للتحقق من تحديث أو تنزيله. لا تتم ترقية العملية ولا استبدال التثبيت تلقائيًا.",
+                "Eine separate Konsole zur Prüfung oder zum Download eines Updates wurde geöffnet. Der Prozess wird nicht erhöht und die Installation nicht automatisch ersetzt.",
+                "A separate console opened to check for or download an update. The process is not elevated and the installation is not replaced automatically.",
+                "Se abrió una consola independiente para comprobar o descargar una actualización. No se eleva el proceso ni se sustituye automáticamente la instalación.",
+                "Une console séparée a été ouverte pour rechercher ou télécharger une mise à jour. Le processus n’est pas élevé et l’installation n’est pas remplacée automatiquement.",
+                "अपडेट जाँचने या डाउनलोड करने के लिए अलग कंसोल खुल गया। प्रक्रिया को उन्नत नहीं किया जाता और इंस्टॉलेशन अपने-आप बदला नहीं जाता।",
+                "È stata aperta una console separata per verificare o scaricare un aggiornamento. Il processo non viene elevato e l’installazione non viene sostituita automaticamente.",
+                "更新の確認またはダウンロード用に別のコンソールを開きました。プロセスは昇格されず、インストールも自動置換されません。",
+                "업데이트 확인 또는 다운로드를 위해 별도 콘솔이 열렸습니다. 프로세스는 승격되지 않으며 설치도 자동으로 교체되지 않습니다.",
+                "Otwarto osobną konsolę, aby sprawdzić lub pobrać aktualizację. Proces nie jest podnoszony, a instalacja nie jest automatycznie zastępowana.",
+                "Foi aberta uma consola separada para verificar ou descarregar uma atualização. O processo não é elevado e a instalação não é substituída automaticamente.",
+                "A fost deschisă o consolă separată pentru verificarea sau descărcarea unei actualizări. Procesul nu este elevat, iar instalarea nu este înlocuită automat.",
+                "Открыта отдельная консоль для проверки или загрузки обновления. Процесс не получает повышенных прав, а установка не заменяется автоматически.",
+                "Відкрито окрему консоль для перевірки або завантаження оновлення. Процес не отримує підвищених прав, а встановлення не замінюється автоматично.",
+                "已打开独立控制台以检查或下载更新。进程不会提升权限，安装不会自动替换。",
+            ],
+        ),
+    ];
+    let index = SUPPORTED
+        .iter()
+        .position(|language| *language == current())
+        .unwrap_or(3);
+    TEXT.iter()
+        .find(|(entry_key, _)| *entry_key == key)
+        .map(|(_, values)| values[index])
+}
+
 pub fn automation_text(key: &str) -> &'static str {
+    if let Some(text) = automation_extended_text(key) {
+        return text;
+    }
     match (current(), key) {
         ("ar", "winslim_status") => "حالة WSCore وNSudo",
         ("ar", "winslim_launch") => "فتح مساعد تشغيل NSudo…",
@@ -4699,6 +5790,86 @@ pub fn gui_family_text(key: &str) -> &'static str {
             ],
         ),
         (
+            "storage_partitions",
+            [
+                "الأقسام والجداول",
+                "Partitionen und Tabellen",
+                "Partitions and tables",
+                "Particionado y tablas",
+                "Partitions et tables",
+                "पार्टीशन और तालिकाएँ",
+                "Partizioni e tabelle",
+                "パーティションとテーブル",
+                "파티션 및 테이블",
+                "Partycje i tablice",
+                "Partições e tabelas",
+                "Partiții și tabele",
+                "Разделы и таблицы",
+                "Розділи та таблиці",
+                "分区和分区表",
+            ],
+        ),
+        (
+            "storage_filesystems",
+            [
+                "أنظمة الملفات",
+                "Dateisysteme",
+                "Filesystems",
+                "Sistemas de archivos",
+                "Systèmes de fichiers",
+                "फाइल सिस्टम",
+                "Sistemi di file",
+                "ファイルシステム",
+                "파일 시스템",
+                "Systemy plików",
+                "Sistemas de ficheiros",
+                "Sisteme de fișiere",
+                "Файловые системы",
+                "Файлові системи",
+                "文件系统",
+            ],
+        ),
+        (
+            "storage_volumes",
+            [
+                "التشفير ووحدات التخزين",
+                "Verschlüsselung und Volumes",
+                "Encryption and volumes",
+                "Cifrado y volúmenes",
+                "Chiffrement et volumes",
+                "एन्क्रिप्शन और वॉल्यूम",
+                "Crittografia e volumi",
+                "暗号化とボリューム",
+                "암호화 및 볼륨",
+                "Szyfrowanie i woluminy",
+                "Encriptação e volumes",
+                "Criptare și volume",
+                "Шифрование и тома",
+                "Шифрування та томи",
+                "加密和卷",
+            ],
+        ),
+        (
+            "wine_prefixes",
+            [
+                "إدارة بادئات Wine وProton",
+                "Wine- und Proton-Präfixe verwalten",
+                "Manage Wine and Proton prefixes",
+                "Gestión de prefijos Wine y Proton",
+                "Gérer les préfixes Wine et Proton",
+                "Wine और Proton प्रीफ़िक्स प्रबंधित करें",
+                "Gestisci prefissi Wine e Proton",
+                "Wine と Proton のプレフィックス管理",
+                "Wine 및 Proton 프리픽스 관리",
+                "Zarządzanie prefiksami Wine i Proton",
+                "Gerir prefixos Wine e Proton",
+                "Gestionează prefixele Wine și Proton",
+                "Управление префиксами Wine и Proton",
+                "Керування префіксами Wine та Proton",
+                "管理 Wine 和 Proton 前缀",
+            ],
+        ),
+        (
             "native_system",
             [
                 "النظام والشبكة والأمان",
@@ -4816,6 +5987,26 @@ pub fn gui_family_text(key: &str) -> &'static str {
                 "Docker / Podman / Compose",
                 "Docker / Podman / Compose",
                 "Docker / Podman / Compose",
+            ],
+        ),
+        (
+            "kubernetes",
+            [
+                "Kubernetes",
+                "Kubernetes",
+                "Kubernetes",
+                "Kubernetes",
+                "Kubernetes",
+                "Kubernetes",
+                "Kubernetes",
+                "Kubernetes",
+                "Kubernetes",
+                "Kubernetes",
+                "Kubernetes",
+                "Kubernetes",
+                "Kubernetes",
+                "Kubernetes",
+                "Kubernetes",
             ],
         ),
         (
@@ -5041,10 +6232,13 @@ pub fn gui_family_text(key: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        boot_label, category_text, gui_account_text, gui_action_text, gui_confirmation_text,
-        gui_family_text, gui_native_prompt, gui_text, language_test_guard, native_tools_label,
-        normalize, set, settings_text, storage_action_text, system_page_text, SUPPORTED,
+        boot_label, category_text, gui_account_text, gui_action_text, gui_catalog_text,
+        gui_confirmation_text, gui_family_text, gui_text, help_extra, language_test_guard,
+        native_tools_label, normalize, set, settings_text, storage_action_text,
+        storage_section_text, SUPPORTED,
     };
+    #[cfg(not(windows))]
+    use super::{gui_native_prompt, system_page_text};
 
     #[test]
     fn normalizes_language_variants() {
@@ -5243,8 +6437,43 @@ mod tests {
                 "remove",
                 "program",
                 "arguments",
+                "field_name",
+                "field_program",
+                "field_working_directory",
+                "field_arguments",
+                "save",
+                "refresh",
+                "none",
+                "action_run",
+                "action_edit",
+                "action_remove",
+                "winslim_opened",
+                "update_opened",
             ] {
                 assert!(!super::automation_text(key).is_empty());
+            }
+        }
+        set("es");
+    }
+
+    #[test]
+    fn gui_catalog_bridge_labels_exist_in_every_terminal_language() {
+        let _guard = language_test_guard();
+        for language in SUPPORTED {
+            set(language);
+            for key in [
+                "native_guide",
+                "dependencies_guide",
+                "installable_guide",
+                "automation_guide",
+                "registered_scripts",
+                "register_script",
+                "scripts_guide",
+            ] {
+                assert!(
+                    !gui_catalog_text(key).is_empty(),
+                    "{language} missing {key}"
+                );
             }
         }
         set("es");
@@ -5310,6 +6539,11 @@ mod tests {
                 "settings_apply",
                 "settings_guide",
                 "elevation_default",
+                "elevation_enabled",
+                "elevation_disabled",
+                "elevation_scope",
+                "elevation_prompt",
+                "elevation_save_error",
                 "update_check",
                 "update_download",
                 "visible",
@@ -5325,16 +6559,50 @@ mod tests {
     }
 
     #[test]
+    fn elevation_cli_feedback_does_not_fall_back_to_spanish() {
+        let _guard = language_test_guard();
+        let spanish = [
+            gui_text("elevation_default"),
+            gui_text("elevation_scope"),
+            gui_text("elevation_prompt"),
+            gui_text("elevation_save_error"),
+        ];
+        for language in SUPPORTED {
+            set(language);
+            if *language != "es" {
+                for (key, spanish_value) in [
+                    ("elevation_default", spanish[0]),
+                    ("elevation_scope", spanish[1]),
+                    ("elevation_prompt", spanish[2]),
+                    ("elevation_save_error", spanish[3]),
+                ] {
+                    assert_ne!(
+                        gui_text(key),
+                        spanish_value,
+                        "Spanish elevation feedback in {language}/{key}"
+                    );
+                }
+            }
+        }
+        set("es");
+    }
+
+    #[test]
     fn gui_family_labels_are_available_in_every_terminal_language() {
         let _guard = language_test_guard();
         let families = [
             "native_storage",
+            "storage_partitions",
+            "storage_filesystems",
+            "storage_volumes",
+            "wine_prefixes",
             "native_system",
             "installable_connectivity",
             "installable_ssh",
             "installable_android",
             "installable_utilities",
             "installable_docker",
+            "kubernetes",
             "containers",
             "images",
             "volumes_networks",
@@ -5360,10 +6628,38 @@ mod tests {
     }
 
     #[test]
+    fn storage_section_labels_are_available_in_every_terminal_language() {
+        let _guard = language_test_guard();
+        for language in SUPPORTED {
+            set(language);
+            for key in [
+                "query_map",
+                "file_paths",
+                "disk_volumes",
+                "tools_cleanup",
+                "partition_inspection",
+                "partition_tables",
+                "partition_recovery",
+                "partition_destruction",
+            ] {
+                assert!(
+                    !storage_section_text(key).is_empty(),
+                    "{language} missing {key}"
+                );
+            }
+        }
+        set("es");
+    }
+
+    #[test]
     #[cfg(not(windows))]
     fn network_boot_and_services_pages_are_translated_in_every_language() {
         let _guard = language_test_guard();
         let keys = [
+            "native_hardware_status",
+            "native_power_status",
+            "native_security_status",
+            "native_security_scanners",
             "network_title",
             "network_inspection",
             "network_status",
@@ -5407,6 +6703,7 @@ mod tests {
             system_page_text("network_title"),
             system_page_text("boot_title"),
             system_page_text("services_title"),
+            system_page_text("native_security_scanners"),
         ];
         assert_eq!(
             system_page_text("network_title"),
@@ -5425,9 +6722,14 @@ mod tests {
                 assert!(!translated.trim().is_empty(), "{language} missing {key}");
             }
             if *language != "es" {
-                for (index, key) in ["network_title", "boot_title", "services_title"]
-                    .iter()
-                    .enumerate()
+                for (index, key) in [
+                    "network_title",
+                    "boot_title",
+                    "services_title",
+                    "native_security_scanners",
+                ]
+                .iter()
+                .enumerate()
                 {
                     assert_ne!(
                         system_page_text(key),
@@ -5554,6 +6856,37 @@ mod tests {
                     !gui_confirmation_text(key).is_empty(),
                     "{language} missing confirmation text {key}"
                 );
+            }
+        }
+        set("es");
+    }
+
+    #[test]
+    fn global_help_extras_are_present_and_localized() {
+        let _guard = language_test_guard();
+        let keys = [
+            "report",
+            "privileges",
+            "privilege_policy",
+            "elevation_hint",
+            "doctor_install",
+            "winslim",
+            "release_manifest",
+            "release_checksums",
+            "release_signature",
+            "update",
+            "git",
+            "scanner_note",
+        ];
+        set("es");
+        let spanish_report = help_extra("report");
+        for language in SUPPORTED {
+            set(language);
+            for key in keys {
+                assert!(!help_extra(key).trim().is_empty(), "{language}: {key}");
+            }
+            if *language != "es" {
+                assert_ne!(help_extra("report"), spanish_report, "{language}: report");
             }
         }
         set("es");

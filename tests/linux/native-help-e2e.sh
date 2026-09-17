@@ -11,6 +11,10 @@ trap 'rm -rf -- "$TMP_DIR"' EXIT
 
 die() { printf 'NATIVE HELP E2E ERROR: %s\n' "$1" >&2; exit 1; }
 ok() { printf '  OK    %s\n' "$1"; }
+# Algunas herramientas imprimen bytes de control en su ayuda (por ejemplo
+# mkfs.xfs); tratar todos los informes como texto evita falsos avisos de grep
+# y mantiene el parseo de opciones estable.
+grep() { command grep -a "$@"; }
 
 while (($#)); do
     case "$1" in
@@ -26,17 +30,39 @@ done
 
 [[ -x "$BIN" ]] || die "no existe el binario ejecutable: $BIN"
 
+export HOME="$TMP_DIR/home"
+export XDG_CONFIG_HOME="$HOME/.config"
+export XDG_DATA_HOME="$HOME/.local/share"
+export XDG_STATE_HOME="$HOME/.local/state"
+export TMPDIR="$TMP_DIR"
+export WINEPREFIX="$TMP_DIR/wineprefix"
+export KUBECONFIG="$TMP_DIR/kubeconfig"
+export DOCKER_CONFIG="$TMP_DIR/docker"
+export GIT_CONFIG_NOSYSTEM=1
+mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"
+
 run_help() {
-    local output="$1" tool="$2"
+    local output="$1" tool="$2" allow_nonzero=0
     shift 2
     : >"$output"
     local status
+    case "$tool" in
+        # Algunos comandos publican ayuda completa con código no cero: los
+        # clientes OpenSSH sin destino (1/255) y iproute2 `ip/bridge --help`
+        # (255).
+        # Las excepciones están acotadas y la salida sigue debiendo ser
+        # reconocible; ninguna otra herramienta convierte un error en ayuda.
+        ssh|scp|sftp|ip|bridge|openvpn|ssh-copy-id|ssh-keygen) allow_nonzero=1 ;;
+    esac
     set +e
     timeout 12 "$tool" "$@" >"$output" 2>&1
     status=$?
     set -e
     [[ -s "$output" ]] || return 1
     if [[ "$status" -eq 124 ]]; then
+        return 1
+    fi
+    if [[ "$status" -ne 0 && "$allow_nonzero" -eq 0 ]]; then
         return 1
     fi
     if [[ "$status" -ne 0 ]] && ! grep -Eiq 'usage|options|commands|help|opciones|comandos' "$output"; then
@@ -46,24 +72,257 @@ run_help() {
 }
 
 help_for() {
-    local tool="$1" output="$2"
+    local tool="$1" output="$2" status
     case "$tool" in
         adb) run_help "$output" "$tool" help || run_help "$output" "$tool" --help ;;
         # OpenSSH clients have no portable help switch. With no arguments they
         # print their complete usage and exit nonzero; do not fake a query with
         # -h/--help, which these clients report as an unknown option.
         ssh|scp|sftp) run_help "$output" "$tool" ;;
+        ssh-copy-id)
+            # ssh-copy-id imprime el uso completo con `-h` y código 1.
+            if timeout 12 "$tool" -h >"$output" 2>&1; then status=0; else status=$?; fi
+            [[ "$status" -ne 124 ]] || return 1
+            grep -Fq 'Usage:' "$output" && grep -Eq -- '\[-f\]|\[-n\]|\[-i' "$output"
+            ;;
+        ssh-keygen)
+            # `-h` o una invocación sin argumentos pueden generar una clave;
+            # `--help` es seguro, imprime el contrato y termina con código 1.
+            if timeout 12 "$tool" --help >"$output" 2>&1; then status=0; else status=$?; fi
+            [[ "$status" -ne 124 ]] || return 1
+            grep -Fq 'usage: ssh-keygen' "$output" &&
+                grep -Fq -- '-t ecdsa|ecdsa-sk|ed25519' "$output"
+            ;;
+        # e2fsprogs exposes emergency usage for an invalid option. The error
+        # text is part of its native help path; require both its Usage and the
+        # detailed Emergency help section to reject unrelated failures.
+        e2fsck)
+            if timeout 12 "$tool" --help >"$output" 2>&1; then status=0; else status=$?; fi
+            [[ "$status" -ne 124 ]] || return 1
+            grep -Fq 'Usage: e2fsck' "$output" && grep -Fq 'Emergency help:' "$output"
+            ;;
+        xfs_admin)
+            if timeout 12 "$tool" --help >"$output" 2>&1; then status=0; else status=$?; fi
+            [[ "$status" -ne 124 ]] || return 1
+            grep -Fq 'Usage: xfs_admin' "$output"
+            ;;
+        xhost)
+            # xhost documents its syntax with the historical single-dash
+            # spelling. Its default invocation tries to contact DISPLAY and
+            # is not a help query.
+            if timeout 12 "$tool" -help >"$output" 2>&1; then status=0; else status=$?; fi
+            [[ "$status" -ne 124 ]] || return 1
+            grep -Fq 'usage: xhost' "$output"
+            ;;
+        exfatlabel)
+            # exfatprogs publica una ayuda completa con código 1 incluso
+            # usando --help; exigir el encabezado y sus opciones evita
+            # confundir un fallo de acceso al dispositivo con documentación.
+            if timeout 12 "$tool" --help >"$output" 2>&1; then status=0; else status=$?; fi
+            [[ "$status" -ne 124 ]] || return 1
+            grep -Fq 'Usage: exfatlabel' "$output" &&
+                grep -Eq -- '--volume-serial|--version|--help' "$output"
+            ;;
+        gradle)
+            if run_help "$output" "$tool" --help; then return 0; fi
+            # Con HOME/XDG aislados, algunas instalaciones de Gradle no
+            # pueden cargar su libnative-platform local. No es una ayuda
+            # válida, pero sí una limitación del entorno de la E2E; cualquier
+            # otro error de Gradle debe seguir fallando la auditoría.
+            grep -Fq "Failed to load native library 'libnative-platform.so'" "$output" && return 2
+            return 1
+            ;;
+        inxi)
+            if run_help "$output" "$tool" --help; then return 0; fi
+            # inxi se niega a mostrar --help cuando no detecta una tty y
+            # clasifica la ejecución como cliente IRC. La E2E no debe
+            # falsificar una tty, así que se informa como limitación del
+            # runner solo ante ese mensaje exacto.
+            grep -Fq "You can't run option help in an IRC client!" "$output" && return 2
+            return 1
+            ;;
+        kpartx)
+            # multipath-tools imprime su ayuda con `--help` y código 1; no
+            # usar el fallback `help`, que intenta hablar con device-mapper.
+            if timeout 12 "$tool" --help >"$output" 2>&1; then status=0; else status=$?; fi
+            [[ "$status" -ne 124 ]] || return 1
+            grep -Fq 'Usage:' "$output" && grep -Eq -- '-a add partition|-d del partition|-l list partitions' "$output"
+            ;;
+        lspci)
+            # pciutils usa opciones cortas, imprime la ayuda al recibir una
+            # opción desconocida y termina con 1; validar varias secciones
+            # reales evita aceptar solo el texto de error.
+            if timeout 12 "$tool" --help >"$output" 2>&1; then status=0; else status=$?; fi
+            [[ "$status" -ne 124 ]] || return 1
+            grep -Fq 'Usage: lspci' "$output" &&
+                grep -Fq 'Basic display modes:' "$output" &&
+                grep -Fq 'Selection of devices:' "$output"
+            ;;
+        memtester)
+            # Sin tamaño de memoria, memtester muestra el contrato de uso y
+            # termina con 1 después de imprimir datos inocuos del sistema;
+            # nunca se debe lanzar una prueba real desde esta E2E.
+            if timeout 12 "$tool" --help >"$output" 2>&1; then status=0; else status=$?; fi
+            [[ "$status" -ne 124 ]] || return 1
+            grep -Fq 'Usage: memtester' "$output" && grep -Fq 'memtester version' "$output"
+            ;;
+        mkfs.exfat)
+            # exfatprogs imprime su contrato de formato con código 1 ante
+            # --help; no ejecutar el fallback `help`, que intenta abrirlo
+            # como un dispositivo de salida.
+            if timeout 12 "$tool" --help >"$output" 2>&1; then status=0; else status=$?; fi
+            [[ "$status" -ne 124 ]] || return 1
+            grep -Fq 'Usage: mkfs.exfat' "$output" &&
+                grep -Eq -- '--volume-label|--volume-guid|--help' "$output"
+            ;;
+        mkfs.ext4)
+            # Los alias mkfs.ext4/mke2fs documentan opciones cortas, pero
+            # imprimen el uso al rechazar --help con código 1.
+            if timeout 12 "$tool" --help >"$output" 2>&1; then status=0; else status=$?; fi
+            [[ "$status" -ne 124 ]] || return 1
+            grep -Fq 'Usage: mkfs.ext4' "$output" &&
+                grep -Eq -- '-L volume-label|-O feature|-U UUID' "$output"
+            ;;
+        mkfs.xfs)
+            # xfsprogs también imprime el uso al rechazar --help con código
+            # 1; se valida que el dispositivo no llegue a abrirse.
+            if timeout 12 "$tool" --help >"$output" 2>&1; then status=0; else status=$?; fi
+            [[ "$status" -ne 124 ]] || return 1
+            grep -aFq 'Usage: mkfs.xfs' "$output" &&
+                grep -aEq -- '\[-b size=num\]|\[-L label|devicename' "$output"
+            ;;
+        openvpn)
+            # OpenVPN 2.7 publica toda la ayuda con código 1 incluso ante
+            # --help; no debe probarse el fallback `help` como configuración.
+            if timeout 12 "$tool" --help >"$output" 2>&1; then status=0; else status=$?; fi
+            [[ "$status" -ne 124 ]] || return 1
+            grep -Fq 'General Options:' "$output" &&
+                grep -Fq -- '--config file' "$output" &&
+                grep -Fq -- '--help' "$output"
+            ;;
+        resize2fs)
+            # e2fsprogs usa `-h` y devuelve 1 al mostrar el uso; no pasar un
+            # nombre ficticio al backend para no abrir dispositivos reales.
+            if timeout 12 "$tool" -h >"$output" 2>&1; then status=0; else status=$?; fi
+            [[ "$status" -ne 124 ]] || return 1
+            grep -Fq 'Usage: resize2fs' "$output" &&
+                grep -Eq -- 'device|new_size|RAID-stride' "$output"
+            ;;
+        socat)
+            # socat solo acepta la ayuda corta `-h`; `--help` es un error de
+            # opción y su mensaje puede parecer ayuda sin serlo.
+            run_help "$output" "$tool" -h
+            ;;
+        tune2fs)
+            # tune2fs no tiene una opción --help dedicada; al rechazarla
+            # publica igualmente su sintaxis completa con código 1.
+            if timeout 12 "$tool" --help >"$output" 2>&1; then status=0; else status=$?; fi
+            [[ "$status" -ne 124 ]] || return 1
+            grep -Fq 'Usage: tune2fs' "$output" &&
+                grep -Eq -- '-L volume_label|-U UUID|device' "$output"
+            ;;
+        xfs_growfs)
+            # xfs_growfs documenta sus opciones cortas al rechazar --help
+            # con código 2; no se debe pasar un punto de montaje inventado.
+            if timeout 12 "$tool" --help >"$output" 2>&1; then status=0; else status=$?; fi
+            [[ "$status" -ne 124 ]] || return 1
+            grep -Fq 'Usage: xfs_growfs' "$output" &&
+                grep -Fq $'\t-d' "$output" && grep -Fq $'\t-l' "$output"
+            ;;
+        xfs_info)
+            # xfs_info solo tiene `-V` como opción informativa; las opciones
+            # de ayuda inválidas imprimen su contrato con código 2.
+            if timeout 12 "$tool" --help >"$output" 2>&1; then status=0; else status=$?; fi
+            [[ "$status" -ne 124 ]] || return 1
+            grep -Fq 'Usage: xfs_info' "$output" && grep -Fq 'mountpoint' "$output"
+            ;;
+        xfs_repair)
+            # xfs_repair imprime su sintaxis al rechazar --help con código 1;
+            # no ejecutar ninguna reparación ni abrir un dispositivo.
+            if timeout 12 "$tool" --help >"$output" 2>&1; then status=0; else status=$?; fi
+            [[ "$status" -ne 124 ]] || return 1
+            grep -Fq 'Usage: xfs_repair' "$output" &&
+                grep -Fq 'No modify mode' "$output" && grep -Fq 'device' "$output"
+            ;;
+        # These launch graphical partition editors rather than exposing a
+        # CLI contract. Calling them with generic help switches can invoke
+        # pkexec or abort before GTK/Qt finds a usable display.
+        gparted|partitionmanager)
+            printf 'Herramienta gráfica; no publica ayuda CLI.\n' >"$output"
+            return 2
+            ;;
+        wineboot)
+            # Incluso las consultas de ayuda pueden crear/inicializar un
+            # prefijo y arrancar wineserver. La suite no debe convertir una
+            # comprobación de documentación en una acción de inicialización.
+            printf 'Inicializador de prefijos Wine; se omite para no crear ni modificar un prefijo durante la consulta de ayuda.\n' >"$output"
+            return 2
+            ;;
+        trash)
+            printf 'Integración de papelera; el backend llama a gio/trash-put y no existe un comando trash propio.\n' >"$output"
+            return 2
+            ;;
+        nft)
+            if run_help "$output" "$tool" --help; then return 0; fi
+            grep -Eiq 'Netlink socket: Operation not permitted|Operation not permitted' "$output" && return 2
+            return 1
+            ;;
+        bridge)
+            if run_help "$output" "$tool" --help; then return 0; fi
+            grep -Eiq 'Netlink socket: Operation not permitted|Operation not permitted' "$output" && return 2
+            return 1
+            ;;
+        ip)
+            if run_help "$output" "$tool" --help; then return 0; fi
+            grep -Eiq 'Netlink socket: Operation not permitted|Operation not permitted' "$output" && return 2
+            return 1
+            ;;
+        udisksctl)
+            if run_help "$output" "$tool" help; then return 0; fi
+            if run_help "$output" "$tool" --help; then return 0; fi
+            grep -Eiq 'Could not connect: Operation not permitted|Operation not permitted' "$output" && return 2
+            return 1
+            ;;
+        useradd|userdel|usermod)
+            if run_help "$output" "$tool" --help; then return 0; fi
+            grep -Fq 'Cannot open audit interface - aborting.' "$output" && return 2
+            return 1
+            ;;
         # `git help -a` publica el catálogo real de subcomandos sin abrir un
         # pager/man interactivo, por lo que sirve mejor como superficie de
         # contraste que `git --help`.
         git) run_help "$output" "$tool" help -a || run_help "$output" "$tool" --help ;;
         gh|kubectl) run_help "$output" "$tool" help || run_help "$output" "$tool" --help ;;
+        docker-compose)
+            if command -v docker-compose >/dev/null 2>&1; then
+                run_help "$output" docker-compose --help
+            else
+                run_help "$output" docker compose --help
+            fi
+            ;;
         dig)
             if run_help "$output" "$tool" -h; then return 0; fi
             # Some sandboxed hosts deny socket() even while dig initializes
             # its help path. This is an environment restriction, not evidence
             # that the invalid `dig --help` fallback is a valid help screen.
             if grep -Eiq 'Operation not permitted|can.t find either v4 or v6 networking' "$output"; then
+                return 2
+            fi
+            return 1
+            ;;
+        nslookup)
+            # BIND nslookup rejects the common -h spelling as an invalid
+            # option; try common long spellings first. Some builds also need
+            # socket initialization before printing anything, so restricted
+            # network namespaces are reported as an environmental skip.
+            for help_switch in -help --help -h; do
+                if run_help "$output" "$tool" "$help_switch"; then return 0; fi
+                if grep -Eiq 'Operation not permitted|can.t find either v4 or v6 networking' "$output"; then
+                    return 2
+                fi
+            done
+            if grep -Eiq 'invalid option|unknown option|unrecognized option' "$output"; then
+                printf 'Esta implementación no ofrece una opción de ayuda CLI no interactiva verificable.\n' >"$output"
                 return 2
             fi
             return 1
@@ -130,27 +389,74 @@ check_surface() {
     ok "$tool: $native_count/$expected_count operaciones nativas comprobadas contra GUI/$guide_topic"
 }
 
-printf 'E2E: ejecutando las ayudas nativas reales disponibles...\n'
+printf 'E2E: descubriendo herramientas del catálogo instalado...\n'
 HELP_DIR="$TMP_DIR/help"
 mkdir -p "$HELP_DIR"
-tools=(
-    adb docker podman kubectl helm git gh ssh scp sftp nmcli ip ss systemctl
-    efibootmgr parted lsblk findmnt mount umount fsck cryptsetup lvm btrfs zpool
-    mdadm curl wget file tree htop btop lsof strace tcpdump dig nmap openssl gpg
-    7z unzip zip zstd tmux python3 make cmake gcc gdb
+CAPABILITIES_JSON="$TMP_DIR/capabilities.json"
+"$BIN" capabilities --format json >"$CAPABILITIES_JSON" 2>"$TMP_DIR/capabilities.err" ||
+    die 'no se pudo enumerar el catálogo real de herramientas del anfitrión'
+
+# El catálogo de botones/acciones es otra superficie pública: si una GUI o
+# una terminal consume este JSON, cada entrada debe tener un backend conocido,
+# una política de seguridad y un ID único. Esto detecta acciones huérfanas aun
+# cuando la ayuda de la herramienta nativa siga siendo correcta.
+ACTIONS_JSON="$TMP_DIR/actions.json"
+"$BIN" actions list --format json >"$ACTIONS_JSON" 2>"$TMP_DIR/actions.err" ||
+    die 'no se pudo enumerar el catálogo JSON de acciones guiadas'
+if command -v jq >/dev/null 2>&1; then
+    jq -e '
+        .schema == "ltools-actions-v1" and
+        .platform == "linux" and
+        (.actions | length > 0) and
+        (([.actions[].id] | length) == ([.actions[].id] | unique | length)) and
+        all(.actions[];
+            (.id | type == "string" and length > 0) and
+            (.command | IN("audit", "packages", "games", "storage", "system", "accounts", "native", "defaults", "clean", "diagnostics", "automation", "boot", "wine")) and
+            (.targetPolicy | type == "string" and length > 0) and
+            (.profile | type == "string" and length > 0) and
+            (.mutating | type == "boolean") and
+            (.confirmation | type == "string") and
+            (.args | type == "array" and all(.[]; type == "string"))
+        )
+    ' "$ACTIONS_JSON" >/dev/null ||
+        die 'el catálogo JSON de acciones contiene IDs duplicados, campos incompletos o backends desconocidos'
+    ok 'catálogo JSON de acciones: IDs, backends y políticas verificados'
+else
+    grep -Fq '"schema":"ltools-actions-v1"' "$ACTIONS_JSON" ||
+        die 'el catálogo JSON de acciones no declara su esquema'
+    grep -Fq '"actions":[' "$ACTIONS_JSON" ||
+        die 'el catálogo JSON de acciones no contiene acciones'
+    ok 'catálogo JSON de acciones disponible (jq no instalado; validación estructural reducida)'
+fi
+mapfile -t tools < <(
+    sed -n 's/.*"command":"\([^"]*\)".*"available":true.*/\1/p' "$CAPABILITIES_JSON" |
+        sort -u
 )
+(( ${#tools[@]} > 0 )) || die 'el catálogo disponible no contiene comandos para auditar'
+printf 'E2E: ejecutando las ayudas nativas reales disponibles (%s comandos)...\n' "${#tools[@]}"
 checked=0
 for tool in "${tools[@]}"; do
-    command -v "$tool" >/dev/null 2>&1 || continue
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        if [[ "$tool" == docker-compose ]] && command -v docker >/dev/null 2>&1; then
+            : # El catálogo considera válido el subcomando docker compose.
+        elif [[ "$tool" == trash ]]; then
+            : # Adaptador de plataforma, no un ejecutable homónimo.
+        else
+            die "el catálogo marca $tool como disponible, pero no se resuelve en el PATH de la E2E"
+        fi
+    fi
     help_file="$HELP_DIR/${tool//\//_}.out"
     if help_for "$tool" "$help_file"; then
         :
     else
         help_status=$?
-        if [[ "$tool" == dig && "$help_status" -eq 2 ]]; then
-            printf '  SKIP  dig: el sandbox bloqueó socket() antes de mostrar ayuda\n'
+        if [[ "$help_status" -eq 2 ]]; then
+            reason="$(head -n 1 "$help_file" | tr -d '\r')"
+            printf '  SKIP  %s: %s\n' "$tool" "${reason:-el entorno impidió consultar la ayuda}"
             continue
         fi
+        printf 'Salida recibida de %s (código de ayuda inválida):\n' "$tool" >&2
+        sed -n '1,40p' "$help_file" >&2
         die "$tool está instalado pero no devuelve ninguna ayuda válida"
     fi
     count="$(option_count "$help_file")"

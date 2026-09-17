@@ -5,6 +5,10 @@ edition = "2021"
 description = "Núcleo nativo y seguro para LTools"
 license = "MIT"
 
+[workspace]
+members = ["crates/native-argv"]
+resolver = "2"
+
 [features]
 default = []
 cli = []
@@ -13,6 +17,7 @@ cli = []
 base64 = "0.23"
 ed25519-dalek = { version = "2.2", features = ["pem"] }
 libc = "0.2"
+ltools-argv = { path = "crates/native-argv" }
 sha2 = "0.10"
 serde_json = "1.0.151"
 semver = "1.0"

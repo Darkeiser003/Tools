@@ -34,15 +34,24 @@ TMP_DIR="$(realpath -m -- "$TMP_DIR")"
 CAPTURE_DIR="$(realpath -m -- "$CAPTURE_DIR")"
 [[ "$SCREEN" =~ ^[0-9]+x[0-9]+$ ]] || { echo "Pantalla inválida: $SCREEN" >&2; exit 2; }
 mkdir -p -- "$TMP_DIR" "$CAPTURE_DIR"
-if ! command -v xvfb-run >/dev/null || ! command -v xdotool >/dev/null \
+if ! command -v xvfb-run >/dev/null || ! command -v xdpyinfo >/dev/null \
+    || ! command -v xdotool >/dev/null \
     || ! command -v timeout >/dev/null \
     || { ! command -v import >/dev/null && ! command -v magick >/dev/null; } \
     || { ! command -v identify >/dev/null && ! command -v magick >/dev/null; }; then
     if (( REQUIRE_GUI )); then
-        echo "ERROR: se requieren xvfb-run, xdotool, timeout e ImageMagick (import y identify, o magick)" >&2
+        echo "ERROR: se requieren xvfb-run, xdpyinfo, xdotool, timeout e ImageMagick (import y identify, o magick)" >&2
         exit 2
     fi
-    echo "SKIP: faltan xvfb-run, xdotool, timeout o ImageMagick para acciones/capturas GUI"
+    echo "SKIP: faltan xvfb-run, xdpyinfo, xdotool, timeout o ImageMagick para acciones/capturas GUI"
+    exit 0
+fi
+if ! timeout 10 xvfb-run -a -s "-screen 0 1280x900x24" xdpyinfo >/dev/null 2>&1; then
+    if (( REQUIRE_GUI )); then
+        echo "ERROR: Xvfb no acepta conexiones X11; se cancela la E2E GUI del mapa" >&2
+        exit 2
+    fi
+    echo "SKIP: Xvfb inició pero no acepta clientes X11"
     exit 0
 fi
 
@@ -66,10 +75,13 @@ RUN_DIR="$(mktemp -d "$TMP_DIR/storage-map-gui-e2e.XXXXXX")"
 CONFIRM_ACTION="action"
 HOME_DIR="$RUN_DIR/home"
 SOURCE="$HOME_DIR/.cache/ltools-map/source.txt"
+TREE_ROOT="$RUN_DIR/tree-root"
 COPY="$RUN_DIR/copy.txt"
 MOVED="$RUN_DIR/moved.txt"
 mkdir -p -- "${SOURCE%/*}"
 printf 'LTools GUI map action fixture\n' >"$SOURCE"
+mkdir -p -- "$TREE_ROOT/child/grandchild"
+printf 'LTools GUI map expansion fixture\n' >"$TREE_ROOT/child/grandchild/nested.txt"
 GUI_PID=""
 MAP_WINDOW=""
 ACTION_ROW_Y=0
@@ -278,9 +290,10 @@ confirm_yes() {
     # devolver la raíz cuando Xvfb no tiene gestor de ventanas. Se encuentra el
     # diálogo entre las ventanas visibles sin título y se omiten la raíz, el
     # mapa y las ventanas diminutas auxiliares.
-    local screen_width screen_height dialog title geometry width height click_x click_y candidate
+    local screen_width screen_height dialog title geometry width height click_x click_y candidate candidate_area dialog_area
     read -r screen_width screen_height < <(xdotool getdisplaygeometry)
     dialog=""
+    dialog_area=0
     while IFS= read -r candidate; do
         [[ "$candidate" != "$MAP_WINDOW" ]] || continue
         title="$(xdotool getwindowname "$candidate" 2>/dev/null || true)"
@@ -290,8 +303,15 @@ confirm_yes() {
         height="$(awk -F= '$1 == "HEIGHT" { print $2 }' <<<"$geometry")"
         if [[ "$width" =~ ^[0-9]+$ && "$height" =~ ^[0-9]+$ ]] &&
             (( width >= 200 && height >= 100 && width < screen_width && height < screen_height )); then
-            dialog="$candidate"
-            break
+            # Con un gestor de ventanas también aparecen ventanas GTK padre
+            # sin nombre (por ejemplo, la ventana principal). No asumir que el
+            # primer top-level sin título es el modal: elegir el candidato
+            # visible más pequeño excluye raíz/padre y conserva el diálogo.
+            candidate_area=$((width * height))
+            if [[ -z "$dialog" ]] || (( candidate_area < dialog_area )); then
+                dialog="$candidate"
+                dialog_area="$candidate_area"
+            fi
         fi
     done < <(xdotool search --onlyvisible --name '.*' 2>/dev/null || true)
     [[ -n "$dialog" ]] || { echo 'No se identificó la ventana del diálogo de confirmación' >&2; return 1; }
@@ -324,13 +344,87 @@ wait_for_file() {
     return 1
 }
 
-# Copiar: Enter debe cancelar; solo un clic explícito en Sí ejecuta la acción.
-launch_map "$SOURCE" map-copy
+# La vista debe permitir expandir y contraer una carpeta individual, además de
+# ofrecer navegación por teclado y controles globales. El marcador se
+# emite desde las señales reales de GtkTreeView, no desde el propio test.
+launch_map "$TREE_ROOT" map-tree-expansion
 if (( LAYOUT_ONLY )); then
     close_gui
     echo "OK: layout compacto del mapa validado en ${SCREEN}"
     exit 0
 fi
+
+# Pulsa la flecha triangular de la primera carpeta para verificar la
+# interacción gráfica individual, no solo la navegación por teclado.
+xdotool mousemove --sync --window "$MAP_WINDOW" 18 110 click 1
+for _ in {1..30}; do
+    grep -Fq 'STORAGE_TREE_ROW_EXPANDED' "$RUN_DIR/map-tree-expansion.layout" && break
+    sleep 0.05
+done
+grep -Fq 'STORAGE_TREE_ROW_EXPANDED' "$RUN_DIR/map-tree-expansion.layout" || {
+    echo 'La flecha triangular no expandió la carpeta seleccionada del mapa' >&2
+    exit 41
+}
+capture_screen "$CAPTURE_DIR/linux-storage-map-tree-expanded-es.png"
+xdotool mousemove --sync --window "$MAP_WINDOW" 18 110 click 1
+for _ in {1..30}; do
+    [[ "$(grep -Fc 'STORAGE_TREE_ROW_COLLAPSED' "$RUN_DIR/map-tree-expansion.layout" || true)" -ge 1 ]] && break
+    sleep 0.05
+done
+[[ "$(grep -Fc 'STORAGE_TREE_ROW_COLLAPSED' "$RUN_DIR/map-tree-expansion.layout" || true)" -ge 1 ]] || {
+    echo 'La flecha triangular no contrajo la carpeta seleccionada del mapa' >&2
+    exit 42
+}
+capture_screen "$CAPTURE_DIR/linux-storage-map-tree-collapsed-es.png"
+
+# También se conservan las flechas de teclado accesibles de GtkTreeView.
+xdotool windowfocus --sync "$MAP_WINDOW"
+xdotool mousemove --sync --window "$MAP_WINDOW" 120 110 click 1
+xdotool key --clearmodifiers Right
+for _ in {1..30}; do
+    [[ "$(grep -Fc 'STORAGE_TREE_ROW_EXPANDED' "$RUN_DIR/map-tree-expansion.layout" || true)" -ge 2 ]] && break
+    sleep 0.05
+done
+[[ "$(grep -Fc 'STORAGE_TREE_ROW_EXPANDED' "$RUN_DIR/map-tree-expansion.layout" || true)" -ge 2 ]] || {
+    echo 'La flecha derecha no expandió la carpeta seleccionada del mapa' >&2
+    focus_window="$(xdotool getwindowfocus 2>/dev/null || true)"
+    printf 'Diagnóstico: mapa=%s foco=%s título_foco=%s ratón=%s\n' \
+        "$MAP_WINDOW" "$focus_window" "$(xdotool getwindowname "$focus_window" 2>/dev/null || true)" \
+        "$(xdotool getmouselocation --shell 2>/dev/null | tr '\n' ' ' || true)" >&2
+    exit 43
+}
+xdotool key --clearmodifiers Left
+for _ in {1..30}; do
+    [[ "$(grep -Fc 'STORAGE_TREE_ROW_COLLAPSED' "$RUN_DIR/map-tree-expansion.layout" || true)" -ge 2 ]] && break
+    sleep 0.05
+done
+[[ "$(grep -Fc 'STORAGE_TREE_ROW_COLLAPSED' "$RUN_DIR/map-tree-expansion.layout" || true)" -ge 2 ]] || {
+    echo 'La flecha izquierda no contrajo la carpeta seleccionada del mapa' >&2
+    exit 44
+}
+xdotool mousemove --window "$MAP_WINDOW" 55 "$ACTION_ROW_Y" click 1
+for _ in {1..30}; do
+    grep -Fq 'STORAGE_TREE_EXPAND_ALL' "$RUN_DIR/map-tree-expansion.layout" && break
+    sleep 0.05
+done
+grep -Fq 'STORAGE_TREE_EXPAND_ALL' "$RUN_DIR/map-tree-expansion.layout" || {
+    echo 'El botón Expandir todo no activó el árbol' >&2
+    exit 45
+}
+xdotool mousemove --window "$MAP_WINDOW" 185 "$ACTION_ROW_Y" click 1
+for _ in {1..30}; do
+    grep -Fq 'STORAGE_TREE_COLLAPSE_ALL' "$RUN_DIR/map-tree-expansion.layout" && break
+    sleep 0.05
+done
+grep -Fq 'STORAGE_TREE_COLLAPSE_ALL' "$RUN_DIR/map-tree-expansion.layout" || {
+    echo 'El botón Colapsar todo no activó el árbol' >&2
+    exit 46
+}
+close_gui
+echo 'OK: mapa GUI: flechas triangulares, navegación por teclado y expansión global'
+
+# Copiar: Enter debe cancelar; solo un clic explícito en Sí ejecuta la acción.
+launch_map "$SOURCE" map-copy
 open_path_form 228 "Copiar ruta seleccionada" "$COPY"
 capture_screen "$CAPTURE_DIR/linux-storage-map-confirm-no-es.png"
 xdotool key Return
@@ -387,5 +481,9 @@ if command -v gio >/dev/null || command -v trash-put >/dev/null; then
     close_gui
     echo "OK: papelera del mapa GUI en XDG_DATA_HOME aislado"
 else
+    if (( REQUIRE_GUI )); then
+        echo 'ERROR: se necesita gio o trash-put para probar el botón de papelera del mapa' >&2
+        exit 2
+    fi
     echo "SKIP: papelera GUI sin gio/trash-put"
 fi

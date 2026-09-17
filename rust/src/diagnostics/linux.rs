@@ -68,15 +68,47 @@ fn probe(key: &'static str, command: &'static str, args: &[&str]) -> Probe {
 }
 
 fn probe_file(key: &'static str, path: &'static str) -> Probe {
-    let output = fs::read_to_string(path).unwrap_or_default();
-    Probe {
-        key,
-        command: path,
-        available: fs::metadata(path).is_ok(),
-        installed: fs::metadata(path).is_ok(),
-        output,
-        error: String::new(),
-        status_code: None,
-        timed_out: false,
+    let installed = fs::metadata(path).is_ok();
+    match fs::read_to_string(path) {
+        Ok(output) => Probe {
+            key,
+            command: path,
+            available: true,
+            installed,
+            output,
+            error: String::new(),
+            status_code: None,
+            timed_out: false,
+        },
+        Err(error) => Probe {
+            key,
+            command: path,
+            available: false,
+            installed,
+            output: String::new(),
+            error: error.to_string(),
+            status_code: None,
+            timed_out: false,
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::probe_file;
+
+    #[test]
+    fn unreadable_probe_files_keep_the_read_error_visible() {
+        let probe = probe_file("directory-fixture", "/etc");
+        assert!(probe.installed, "the fixture directory should exist");
+        assert!(
+            !probe.available,
+            "a directory is not readable as a text file"
+        );
+        assert!(probe.output.is_empty());
+        assert!(
+            !probe.error.is_empty(),
+            "the probe must explain why the file could not be read"
+        );
     }
 }

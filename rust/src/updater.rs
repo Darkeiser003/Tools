@@ -77,7 +77,7 @@ impl UpdateTransport for HttpUpdateTransport {
 }
 
 pub fn help() -> &'static str {
-    "update [check|download] [--repository OWNER/REPO] [--pause] — comprueba una release GitHub, verifica firma/hash y prepara el paquete sin privilegios"
+    crate::i18n::help_extra("update")
 }
 
 pub fn run(args: &[String]) -> Result<(), String> {

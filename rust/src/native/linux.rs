@@ -263,8 +263,12 @@ fn power(ctx: &Context, action: &str) -> Result<(), String> {
 }
 
 fn security(ctx: &Context, action: &str) -> Result<(), String> {
+    if action == "scanners" || action == "code-scanners" {
+        crate::native::security_scanner_inventory();
+        return Ok(());
+    }
     if action != "status" && action != "overview" {
-        return Err("security admite status".into());
+        return Err("security admite status u scanners".into());
     }
     println!("=== Firewall Linux ===");
     let mut found = false;
@@ -2559,7 +2563,7 @@ fn security_menu(ctx: &Context) -> Result<(), String> {
     loop {
         crate::clear_screen();
         println!("=== Gestión de firewall Linux ===");
-        println!("  1) Estado\n  2) Activar UFW\n  3) Desactivar UFW\n  4) Recargar firewalld\n  5) Ver reglas nftables\n q) Volver");
+        println!("  1) Estado\n  2) Activar UFW\n  3) Desactivar UFW\n  4) Recargar firewalld\n  5) Ver reglas nftables\n  6) Analizadores de código y CI\n q) Volver");
         let answer = crate::menu_input("Elige una operación: ").unwrap_or_default();
         let result = match answer.as_str() {
             "1" => security(ctx, "status"),
@@ -2605,6 +2609,7 @@ fn security_menu(ctx: &Context) -> Result<(), String> {
                     Err("nft no está disponible".into())
                 }
             }
+            "6" => security(ctx, "scanners"),
             "" | "q" | "Q" => return Ok(()),
             _ => {
                 println!("Opción no válida.");

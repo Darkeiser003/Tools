@@ -1,6 +1,6 @@
 use crate::common::{
-    ask, command_exists, command_output, command_output_owned, ensure_tool, human_bytes,
-    move_to_trash, run_command, run_with_sudo, Context,
+    ask, command_exists, command_output, command_output_detailed_with_env, ensure_tool,
+    human_bytes, move_to_trash, run_command, run_with_sudo, CommandOutput, Context,
 };
 use crate::i18n;
 use std::fs::{self, File};
@@ -8,19 +8,73 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn query(program: &str, args: &[&str]) -> String {
-    Command::new(program)
-        .env("LC_ALL", "C")
-        .args(args)
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| {
-            String::from_utf8_lossy(&output.stdout)
-                .trim_end()
-                .to_string()
-        })
-        .unwrap_or_default()
+fn query_output(program: &str, args: &[&str]) -> Result<CommandOutput, String> {
+    command_output_detailed_with_env(program, args, &[("LC_ALL", "C")])
+        .map_err(|error| format!("no se pudo iniciar {program}: {error}"))
+}
+
+fn query_failure(program: &str, args: &[&str], output: &CommandOutput) -> String {
+    query_failure_with_arguments(program, &args.join(" "), output)
+}
+
+fn query_failure_with_arguments(program: &str, arguments: &str, output: &CommandOutput) -> String {
+    let command = if arguments.is_empty() {
+        program.to_owned()
+    } else {
+        format!("{program} {arguments}")
+    };
+    if output.timed_out {
+        return format!("la consulta «{command}» superó el tiempo límite de 30 s");
+    }
+    let detail = if output.stderr.trim().is_empty() {
+        format!(
+            "código de salida {}",
+            output
+                .status_code
+                .map_or_else(|| "desconocido".into(), |code| code.to_string())
+        )
+    } else {
+        output.stderr.trim().to_owned()
+    };
+    format!("falló la consulta «{command}»: {detail}")
+}
+
+fn query(program: &str, args: &[&str]) -> Result<String, String> {
+    let output = query_output(program, args)?;
+    if !output.success() {
+        return Err(query_failure(program, args, &output));
+    }
+    Ok(output.stdout.trim_end().to_owned())
+}
+
+fn query_owned(program: &str, args: &[String]) -> Result<String, String> {
+    let borrowed_args = args.iter().map(String::as_str).collect::<Vec<_>>();
+    let output = query_output(program, &borrowed_args)?;
+    if !output.success() {
+        return Err(query_failure_with_arguments(
+            program,
+            &args.join(" "),
+            &output,
+        ));
+    }
+    Ok(output.stdout.trim_end().to_owned())
+}
+
+fn query_or_empty_status(
+    program: &str,
+    args: &[&str],
+    empty_status: i32,
+) -> Result<String, String> {
+    let output = query_output(program, args)?;
+    if output.success()
+        || (output.status_code == Some(empty_status)
+            && output.stdout.trim().is_empty()
+            && output.stderr.trim().is_empty()
+            && !output.timed_out)
+    {
+        return Ok(output.stdout.trim_end().to_owned());
+    }
+    Err(query_failure(program, args, &output))
 }
 
 fn normalize_manager(value: &str) -> &str {
@@ -237,8 +291,8 @@ fn flatpak_scope_for_package(package: &str, requested: Option<&str>) -> Result<S
             continue;
         }
         let args = flatpak_query_args(scope);
-        let output = command_output_owned("flatpak", &args)
-            .ok_or_else(|| format!("no se pudo consultar Flatpak {scope}"))?;
+        let output = query_owned("flatpak", &args)
+            .map_err(|error| format!("no se pudo consultar Flatpak {scope}: {error}"))?;
         if output.lines().any(|line| line.trim() == package) {
             installed_scopes.push(scope.to_owned());
         }
@@ -248,8 +302,8 @@ fn flatpak_scope_for_package(package: &str, requested: Option<&str>) -> Result<S
             continue;
         }
         let args = flatpak_query_args(&installation);
-        let output = command_output_owned("flatpak", &args)
-            .ok_or_else(|| format!("no se pudo consultar Flatpak {installation}"))?;
+        let output = query_owned("flatpak", &args)
+            .map_err(|error| format!("no se pudo consultar Flatpak {installation}: {error}"))?;
         if output.lines().any(|line| line.trim() == package) {
             installed_scopes.push(installation);
         }
@@ -378,10 +432,39 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
         ),
         ("packages-nix.tsv", "nix-env", vec!["-q"], "user"),
     ];
+    let mut query_errors = Vec::new();
     for (filename, program, query_args, scope) in &queries {
-        collect_query_rows(&mut inventory, program, query_args, scope);
-        if full {
-            collect_query(&out, filename, program, query_args, scope);
+        let mut detailed = if full {
+            let mut file = File::create(out.join(filename)).map_err(|error| error.to_string())?;
+            writeln!(file, "scope\tmanager\tdata").map_err(|error| error.to_string())?;
+            Some(file)
+        } else {
+            None
+        };
+        if !command_exists(program) {
+            continue;
+        }
+        let result = if *filename == "packages-pacman-orphans.tsv" {
+            query_or_empty_status(program, query_args, 1)
+        } else {
+            query(program, query_args)
+        };
+        match result {
+            Ok(output) => {
+                for line in output.lines() {
+                    let data = line.replace(['\t', '\r', '\n'], " ");
+                    writeln!(inventory, "package\t{scope}\t{program}\t{data}\t\t")
+                        .map_err(|error| error.to_string())?;
+                    if let Some(file) = detailed.as_mut() {
+                        writeln!(file, "{scope}\t{program}\t{data}")
+                            .map_err(|error| error.to_string())?;
+                    }
+                }
+            }
+            Err(error) => {
+                eprintln!("Aviso: {error}");
+                query_errors.push((program, query_args.join(" "), error));
+            }
         }
     }
     collect_artifact_rows(&mut inventory, &ctx.home);
@@ -413,6 +496,19 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
     writeln!(summary, "Informe: {}", out.display()).map_err(|e| e.to_string())?;
+    let errors_path = out.join("manager-errors.tsv");
+    let mut errors_file = File::create(&errors_path).map_err(|error| error.to_string())?;
+    writeln!(errors_file, "manager\targuments\terror").map_err(|error| error.to_string())?;
+    for (manager, arguments, error) in &query_errors {
+        let arguments = arguments.replace(['\t', '\r', '\n'], " ");
+        let error = error.replace(['\t', '\r', '\n'], " ");
+        writeln!(errors_file, "{manager}\t{arguments}\t{error}")
+            .map_err(|error| error.to_string())?;
+    }
+    writeln!(summary, "Consultas fallidas: {}", query_errors.len())
+        .map_err(|error| error.to_string())?;
+    writeln!(summary, "Detalle de consultas: {}", errors_path.display())
+        .map_err(|error| error.to_string())?;
     println!("Informe de paquetes: {}", out.display());
     println!(
         "Inventario principal: {}",
@@ -439,31 +535,14 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
     if view_report {
         crate::report::interactive(&out)?;
     }
+    if !query_errors.is_empty() {
+        return Err(format!(
+            "inventario parcial: fallaron {} consulta(s) de gestores. El informe y sus errores se conservaron en {}",
+            query_errors.len(),
+            out.display()
+        ));
+    }
     Ok(())
-}
-
-fn collect_query_rows(inventory: &mut File, program: &str, args: &[&str], scope: &str) {
-    if !command_exists(program) {
-        return;
-    }
-    for line in query(program, args).lines() {
-        let data = line.replace(['\t', '\r', '\n'], " ");
-        let _ = writeln!(inventory, "package\t{scope}\t{program}\t{data}\t\t");
-    }
-}
-
-fn collect_query(out: &Path, name: &str, program: &str, args: &[&str], scope: &str) {
-    let mut file = match File::create(out.join(name)) {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-    let _ = writeln!(file, "scope\tmanager\tdata");
-    if !command_exists(program) {
-        return;
-    }
-    for line in query(program, args).lines() {
-        let _ = writeln!(file, "{}\t{}\t{}", scope, program, line.replace('\t', " "));
-    }
 }
 
 fn collect_artifacts(out: &Path, home: &Path) {
@@ -683,7 +762,7 @@ pub fn clean(ctx: &Context, args: &[String]) -> Result<(), String> {
     }
     if orphans {
         if command_exists("pacman") {
-            let orphan_packages = query("pacman", &["-Qdtq"]);
+            let orphan_packages = query_or_empty_status("pacman", &["-Qdtq"], 1)?;
             for package in orphan_packages.lines() {
                 remove_package(ctx, package, cascade, Some("pacman"), None)?;
             }
@@ -691,41 +770,68 @@ pub fn clean(ctx: &Context, args: &[String]) -> Result<(), String> {
             eprintln!("--orphans solo está disponible cuando pacman está instalado.");
         }
     }
+    let mut path_failures = Vec::new();
     for path in paths {
-        if !force && referenced(&path, &ctx.home) {
-            eprintln!(
-                "Bloqueado: hay referencias a {}. Usa --force tras revisarlas.",
-                path.display()
-            );
-            continue;
-        }
-        if !force && !ensure_tool(ctx, "rg")? {
-            eprintln!(
-                "No se elimina {} sin poder comprobar referencias. Usa --force solo tras revisarlo manualmente.",
-                path.display()
-            );
-            continue;
+        if !force {
+            if !ensure_tool(ctx, "rg")? {
+                eprintln!(
+                    "No se elimina {} sin poder comprobar referencias. Usa --force solo tras revisarlo manualmente.",
+                    path.display()
+                );
+                path_failures.push(path.display().to_string());
+                continue;
+            }
+            match referenced(&path, &ctx.home) {
+                Ok(true) => {
+                    eprintln!(
+                        "Bloqueado: hay referencias a {}. Usa --force tras revisarlas.",
+                        path.display()
+                    );
+                    path_failures.push(path.display().to_string());
+                    continue;
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    eprintln!(
+                        "No se elimina {} porque no se pudo completar la comprobación de referencias: {error}. Usa --force solo tras revisarlo manualmente.",
+                        path.display()
+                    );
+                    path_failures.push(path.display().to_string());
+                    continue;
+                }
+            }
         }
         if !ensure_tool(ctx, "trash")? {
             eprintln!(
                 "No se elimina {} sin una papelera compatible.",
                 path.display()
             );
+            path_failures.push(path.display().to_string());
             continue;
         }
-        if ask(&format!("¿Mover {} a la papelera?", path.display()))
-            && move_to_trash(&path, ctx.dry_run).map_err(|e| e.to_string())?
-        {
-            if let Some(plan) = &ctx.plan {
-                plan.record(
-                    "trash-move",
-                    &path,
-                    if ctx.dry_run { "planned" } else { "executed" },
-                    false,
-                    "papelera",
-                    "",
-                )
-                .map_err(|e| e.to_string())?;
+        if ask(&format!("¿Mover {} a la papelera?", path.display())) {
+            match move_to_trash(&path, ctx.dry_run) {
+                Ok(true) => {
+                    if let Some(plan) = &ctx.plan {
+                        plan.record(
+                            "trash-move",
+                            &path,
+                            if ctx.dry_run { "planned" } else { "executed" },
+                            false,
+                            "papelera",
+                            "",
+                        )
+                        .map_err(|e| e.to_string())?;
+                    }
+                }
+                Ok(false) => {
+                    eprintln!("No se pudo mover {} a la papelera.", path.display());
+                    path_failures.push(path.display().to_string());
+                }
+                Err(error) => {
+                    eprintln!("No se pudo mover {} a la papelera: {error}", path.display());
+                    path_failures.push(path.display().to_string());
+                }
             }
         }
     }
@@ -734,6 +840,12 @@ pub fn clean(ctx: &Context, args: &[String]) -> Result<(), String> {
     }
     if flatpak_unused {
         run_flatpak_unused(ctx)?;
+    }
+    if !path_failures.is_empty() {
+        return Err(format!(
+            "no se completó la limpieza de estas rutas: {}",
+            path_failures.join(", ")
+        ));
     }
     Ok(())
 }
@@ -769,7 +881,7 @@ fn preview_clean(ctx: &Context) -> Result<(), String> {
         }
     }
     if command_exists("pacman") {
-        let orphans = query("pacman", &["-Qdtq"]);
+        let orphans = query_or_empty_status("pacman", &["-Qdtq"], 1)?;
         if !orphans.trim().is_empty() {
             found = true;
             println!(
@@ -888,7 +1000,7 @@ fn remove_package(
     let mut has_dependents = false;
     let dependency_note: String;
     if manager == "pacman" {
-        let info = query("pacman", &["-Qi", package]);
+        let info = query("pacman", &["-Qi", package])?;
         if info.is_empty() {
             eprintln!("No está instalado: {package}");
             return Ok(());
@@ -1176,23 +1288,52 @@ fn run_flatpak_unused(ctx: &Context) -> Result<(), String> {
     Ok(())
 }
 
-fn referenced(path: &Path, home: &Path) -> bool {
-    if !command_exists("rg") {
-        return false;
-    }
-    let roots = [
+fn referenced(path: &Path, home: &Path) -> Result<bool, String> {
+    let candidates = [
         home.join(".config"),
         home.join(".local/share/lutris"),
         home.join(".local/share/umu"),
         home.join(".var/app"),
     ];
-    Command::new("rg")
-        .args(["-F", "-l", "--hidden", "--no-messages", "--"])
+    let mut roots = Vec::new();
+    for candidate in candidates {
+        match fs::metadata(&candidate) {
+            Ok(metadata) if metadata.is_dir() => roots.push(candidate),
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "no se pudo inspeccionar {}: {error}",
+                    candidate.display()
+                ));
+            }
+        }
+    }
+    if roots.is_empty() {
+        return Ok(false);
+    }
+    let output = Command::new("rg")
+        .args(["-F", "-l", "--hidden", "--"])
         .arg(path)
         .args(roots)
         .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+        .map_err(|error| format!("no se pudo iniciar rg: {error}"))?;
+    match output.status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        code => {
+            let stderr = String::from_utf8_lossy(&output.stderr)
+                .trim()
+                .replace(['\r', '\n'], " ");
+            let status =
+                code.map_or_else(|| "sin código de salida".into(), |value| value.to_string());
+            if stderr.is_empty() {
+                Err(format!("rg terminó con código {status}"))
+            } else {
+                Err(format!("rg terminó con código {status}: {stderr}"))
+            }
+        }
+    }
 }
 
 #[cfg(test)]

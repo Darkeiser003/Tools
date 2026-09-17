@@ -6,18 +6,23 @@
 //! carpeta. Las operaciones de gestión se mantienen separadas del escaneo y
 //! pasan por confirmación, dry-run y los bloqueos de rutas críticas de LTools.
 
-use crate::common::{human_bytes, move_to_trash, Context};
+use crate::common::{human_bytes, is_link_or_reparse_point, move_to_trash, Context};
 use std::cmp::Reverse;
+#[cfg(target_os = "linux")]
+use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 #[cfg(target_os = "linux")]
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(target_os = "linux")]
 use std::time::{SystemTime, UNIX_EPOCH};
 #[cfg(target_os = "linux")]
 use std::{io, os::unix::fs::DirBuilderExt};
+#[cfg(windows)]
+use windows_sys::Win32::Storage::FileSystem::MoveFileW;
 
 #[derive(Debug, Clone)]
 pub(crate) struct Node {
@@ -37,6 +42,8 @@ pub(crate) struct Node {
     pub(crate) error: Option<String>,
     pub(crate) children: Vec<Node>,
 }
+
+static STAGE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy)]
 struct FilesystemSpace {
@@ -646,11 +653,15 @@ fn scan_with_progress(
         Err(error) => return inaccessible(name, path, protected, explanation, error.to_string()),
     };
     let permission = permission_summary(&metadata);
-    if metadata.file_type().is_symlink() {
+    if is_link_or_reparse_point(&metadata) {
         return Node {
             name,
             path: path.to_path_buf(),
-            kind: "symlink",
+            kind: if metadata.file_type().is_symlink() {
+                "symlink"
+            } else {
+                "reparse-point"
+            },
             size: 0,
             filesystem_total: None,
             filesystem_used: None,
@@ -830,7 +841,7 @@ fn measure_directory(
         Ok(metadata) => metadata,
         Err(error) => return (0, 1, Some(format!("{}: {error}", path.display())), false),
     };
-    if metadata.file_type().is_symlink()
+    if is_link_or_reparse_point(&metadata)
         || (!follow_mounts
             && device.is_some_and(|expected| crate::common::device(path) != Some(expected)))
     {
@@ -1426,8 +1437,26 @@ fn manage_operation(args: &[String]) -> Option<&str> {
 
 fn checked_existing(raw: &str) -> Result<PathBuf, String> {
     let path = validate_path(raw)?;
-    if !path.exists() {
-        return Err(format!("no existe: {}", path.display()));
+    let metadata = fs::symlink_metadata(&path)
+        .map_err(|error| format!("no se puede consultar {}: {error}", path.display()))?;
+    if is_link_or_reparse_point(&metadata) {
+        // Resolve only the parent so file actions operate on the selected link
+        // or reparse point itself, not the path to which it points. This also
+        // keeps dangling symbolic links manageable without following a target.
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let parent = fs::canonicalize(parent).map_err(|error| {
+            format!(
+                "no se puede resolver el directorio de {}: {error}",
+                path.display()
+            )
+        })?;
+        let name = path
+            .file_name()
+            .ok_or_else(|| format!("la ruta no identifica un elemento: {}", path.display()))?;
+        return Ok(parent.join(name));
     }
     Ok(fs::canonicalize(&path).unwrap_or(path))
 }
@@ -1513,7 +1542,7 @@ fn transfer(ctx: &Context, operation: &str, args: &[String]) -> Result<(), Strin
     }
     let mut same_volume_move = false;
     if operation == "move" {
-        match fs::rename(&source, &destination) {
+        match rename_without_replace(&source, &destination) {
             Ok(()) => same_volume_move = true,
             Err(error) if error.kind() == std::io::ErrorKind::CrossesDevices => {
                 copy_new_path(&source, &destination).map_err(|copy_error| {
@@ -1625,23 +1654,39 @@ fn resolve_future_path(path: &Path) -> Result<PathBuf, String> {
     }
 }
 
-fn copy_new_path(source: &Path, destination: &Path) -> Result<(), String> {
+pub(crate) fn copy_new_path(source: &Path, destination: &Path) -> Result<(), String> {
     if path_exists_including_symlink(destination) {
         return Err(format!(
             "el destino ya existe y no se sobrescribirá: {}",
             destination.display()
         ));
     }
-    if let Err(error) = copy_entry(source, destination) {
-        let cleanup = remove_partial_copy(destination);
-        return Err(match cleanup {
-            Ok(()) => format!("{error}; se retiró la copia parcial"),
-            Err(cleanup_error) => format!(
-                "{error}; además, no se pudo retirar la copia parcial {}: {cleanup_error}",
+    let parent = destination
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent).map_err(|error| {
+        format!(
+            "no se pudo preparar el directorio destino {}: {error}",
+            parent.display()
+        )
+    })?;
+    let staging_dir = StorageStageDir::create(parent)
+        .map_err(|error| format!("no se pudo crear un área temporal segura: {error}"))?;
+    let staging_path = staging_dir.0.join("entry");
+    copy_entry(source, &staging_path)
+        .map_err(|error| format!("no se pudo preparar una copia completa: {error}"))?;
+    rename_without_replace(&staging_path, destination).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::AlreadyExists {
+            format!(
+                "el destino apareció durante la operación y se conservó sin sobrescribir: {}",
                 destination.display()
-            ),
-        });
-    }
+            )
+        } else {
+            format!("no se pudo publicar la copia sin sobrescribir el destino: {error}")
+        }
+    })?;
+    drop(staging_dir);
     Ok(())
 }
 
@@ -1650,11 +1695,11 @@ fn copy_entry(source: &Path, destination: &Path) -> std::io::Result<()> {
     use std::io::ErrorKind;
 
     let metadata = fs::symlink_metadata(source)?;
-    if metadata.file_type().is_symlink() {
+    if is_link_or_reparse_point(&metadata) {
         return Err(Error::new(
             ErrorKind::InvalidInput,
             format!(
-                "no se siguen ni copian enlaces simbólicos: {}",
+                "no se siguen ni copian enlaces simbólicos ni puntos de reanálisis: {}",
                 source.display()
             ),
         ));
@@ -1667,7 +1712,7 @@ fn copy_entry(source: &Path, destination: &Path) -> std::io::Result<()> {
             let entry = entry?;
             copy_entry(&entry.path(), &destination.join(entry.file_name()))?;
         }
-        fs::set_permissions(destination, metadata.permissions())?;
+        set_copied_permissions(destination, &metadata)?;
         return Ok(());
     }
     if !metadata.is_file() {
@@ -1683,17 +1728,26 @@ fn copy_entry(source: &Path, destination: &Path) -> std::io::Result<()> {
         .open(destination)?;
     std::io::copy(&mut input, &mut output)?;
     drop(output);
-    fs::set_permissions(destination, metadata.permissions())
+    set_copied_permissions(destination, &metadata)
 }
 
-fn remove_partial_copy(path: &Path) -> std::io::Result<()> {
-    let Ok(metadata) = fs::symlink_metadata(path) else {
-        return Ok(());
-    };
-    if metadata.is_dir() && !metadata.file_type().is_symlink() {
-        fs::remove_dir_all(path)
-    } else {
-        fs::remove_file(path)
+fn set_copied_permissions(destination: &Path, source: &fs::Metadata) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        // A privileged copy changes the new file's owner to the privileged
+        // account. Reapplying SUID/SGID from a user-controlled source could
+        // therefore turn an ordinary user executable into a privileged one.
+        // Preserve normal rwx permissions, but never propagate special bits.
+        fs::set_permissions(
+            destination,
+            fs::Permissions::from_mode(source.permissions().mode() & 0o777),
+        )
+    }
+    #[cfg(not(unix))]
+    {
+        fs::set_permissions(destination, source.permissions())
     }
 }
 
@@ -1720,6 +1774,7 @@ fn archive(ctx: &Context, operation: &str, args: &[String]) -> Result<(), String
             "zip",
             vec![
                 "-r".to_owned(),
+                "-y".to_owned(),
                 destination.display().to_string(),
                 source.display().to_string(),
             ],
@@ -1751,21 +1806,246 @@ fn archive(ctx: &Context, operation: &str, args: &[String]) -> Result<(), String
     if !crate::common::command_exists(program) {
         return Err(format!("{program} no está instalado"));
     }
+    ensure_no_link_tree(&source)?;
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
+    let parent = destination
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let staging_dir = StorageStageDir::create(parent).map_err(|error| {
+        format!("no se pudo crear un área temporal segura junto al destino: {error}")
+    })?;
+    let staging_destination = staging_dir.0.join(if operation == "zip" {
+        "archive.zip"
+    } else {
+        "archive.tar"
+    });
+    let staging_args = if operation == "zip" {
+        vec![
+            "-r".to_owned(),
+            "-y".to_owned(),
+            staging_destination.display().to_string(),
+            source.display().to_string(),
+        ]
+    } else {
+        vec![
+            "-cf".to_owned(),
+            staging_destination.display().to_string(),
+            source.display().to_string(),
+        ]
+    };
     let status = Command::new(program)
-        .args(&program_args)
+        .args(&staging_args)
         .status()
         .map_err(|error| error.to_string())?;
     if !status.success() {
-        let _ = fs::remove_file(&destination);
         return Err(format!("{program} terminó con error"));
     }
+    let staged_metadata = fs::symlink_metadata(&staging_destination)
+        .map_err(|error| format!("el archivo temporal no se creó correctamente: {error}"))?;
+    if !staged_metadata.is_file() || is_link_or_reparse_point(&staged_metadata) {
+        return Err("la herramienta no produjo un archivo regular seguro".into());
+    }
+    publish_archive_without_replace(&staging_destination, &destination).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::AlreadyExists {
+            format!(
+                "el destino apareció durante la operación y se conservó sin sobrescribir: {}",
+                destination.display()
+            )
+        } else {
+            format!("no se pudo publicar el archivo sin sobrescribir el destino: {error}")
+        }
+    })?;
+    drop(staging_dir);
     if let Some(plan) = &ctx.plan {
         let _ = plan.record("remove-created", &destination, "executed", true, "", "");
     }
     println!("Archivo creado: {}", destination.display());
+    Ok(())
+}
+
+struct StorageStageDir(PathBuf);
+
+impl StorageStageDir {
+    fn create(parent: &Path) -> std::io::Result<Self> {
+        for _ in 0..128 {
+            let sequence = STAGE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let path = parent.join(format!(".ltools-stage-{}-{sequence}", std::process::id()));
+            #[cfg(unix)]
+            let create_result = {
+                use std::os::unix::fs::DirBuilderExt;
+                let mut builder = fs::DirBuilder::new();
+                builder.mode(0o700).create(&path)
+            };
+            #[cfg(not(unix))]
+            let create_result = fs::create_dir(&path);
+            match create_result {
+                Ok(()) => return Ok(Self(path)),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "no se encontró un nombre temporal libre",
+        ))
+    }
+}
+
+impl Drop for StorageStageDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn rename_without_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let source_c = std::ffi::CString::new(source.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "ruta con NUL"))?;
+    let destination_c = std::ffi::CString::new(destination.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "ruta con NUL"))?;
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            source_c.as_ptr(),
+            libc::AT_FDCWD,
+            destination_c.as_ptr(),
+            libc::RENAME_NOREPLACE as libc::c_uint,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn renameat2_needs_fallback(error: &std::io::Error) -> bool {
+    matches!(
+        error.raw_os_error(),
+        Some(libc::ENOSYS) | Some(libc::EINVAL) | Some(libc::EOPNOTSUPP)
+    )
+}
+
+#[cfg(windows)]
+pub(crate) fn rename_without_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    let source = source
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let destination = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let result = unsafe { MoveFileW(source.as_ptr(), destination.as_ptr()) };
+    if result == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn rename_without_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let source_c = std::ffi::CString::new(source.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "ruta con NUL"))?;
+    let destination_c = std::ffi::CString::new(destination.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "ruta con NUL"))?;
+    let result =
+        unsafe { libc::renamex_np(source_c.as_ptr(), destination_c.as_ptr(), libc::RENAME_EXCL) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+fn publish_archive_without_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
+    match rename_without_replace(source, destination) {
+        #[cfg(target_os = "linux")]
+        Err(error) if renameat2_needs_fallback(&error) => {
+            // `source` is inside the archive's private 0700 staging directory,
+            // so the hard-link fallback cannot race with an untrusted writer.
+            hard_link_without_replace(source, destination)
+        }
+        result => result,
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+pub(crate) fn rename_without_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
+    let _ = (source, destination);
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "esta plataforma no ofrece un movimiento atómico sin reemplazo",
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn hard_link_without_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
+    fs::hard_link(source, destination)?;
+    if let Err(error) = fs::remove_file(source) {
+        let _ = fs::remove_file(destination);
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn ensure_no_link_tree(path: &Path) -> Result<(), String> {
+    let mut pending = vec![path.to_path_buf()];
+    let mut inspected = 0u64;
+    #[cfg(target_os = "linux")]
+    let mut visited_directories = HashSet::new();
+    while let Some(current) = pending.pop() {
+        let metadata = fs::symlink_metadata(&current)
+            .map_err(|error| format!("no se puede consultar {}: {error}", current.display()))?;
+        if is_link_or_reparse_point(&metadata) {
+            return Err(format!(
+                "no se archivan árboles con enlaces simbólicos o puntos de reanálisis; selecciona un árbol sin enlaces: {}",
+                current.display()
+            ));
+        }
+        inspected += 1;
+        if inspected.is_multiple_of(10_000) {
+            eprintln!("Inspeccionando el árbol antes de archivarlo: {inspected} rutas...");
+        }
+        if metadata.is_dir() {
+            #[cfg(target_os = "linux")]
+            {
+                use std::os::unix::fs::MetadataExt;
+                if !visited_directories.insert((metadata.dev(), metadata.ino())) {
+                    return Err(format!(
+                        "el árbol contiene un directorio repetido o un ciclo de montaje y no se archivará: {}",
+                        current.display()
+                    ));
+                }
+            }
+            let entries = fs::read_dir(&current).map_err(|error| {
+                format!(
+                    "no se puede inspeccionar {} antes de archivarlo: {error}",
+                    current.display()
+                )
+            })?;
+            for entry in entries {
+                let entry = entry.map_err(|error| {
+                    format!(
+                        "no se puede enumerar {} antes de archivarlo: {error}",
+                        current.display()
+                    )
+                })?;
+                pending.push(entry.path());
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1800,13 +2080,17 @@ fn open_path(ctx: &Context, raw: &str, yes: bool) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
+    use super::archive;
+    #[cfg(unix)]
+    use super::checked_existing;
     #[cfg(not(windows))]
     use super::path_is_within_home;
     #[cfg(unix)]
     use super::resolve_future_path;
     use super::{
-        copy_new_path, explain_path_key, manage_operation, parse_options, render_json, scan,
-        scan_with_progress, MapOptions,
+        copy_new_path, explain_path_key, manage_operation, parse_options, rename_without_replace,
+        render_json, scan, scan_with_progress, MapOptions,
     };
     #[cfg(not(windows))]
     use std::path::Path;
@@ -1828,6 +2112,115 @@ mod tests {
             !path.exists(),
             "el directorio temporal debe limpiarse al salir"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archive_staging_directory_is_private_and_removed() {
+        use super::StorageStageDir;
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = test_directory("archive-stage");
+        let stage = StorageStageDir::create(&root).unwrap();
+        assert_eq!(
+            std::fs::metadata(&stage.0).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        let stage_path = stage.0.clone();
+        drop(stage);
+        assert!(!stage_path.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn archive_publication_never_replaces_an_existing_destination() {
+        let root = test_directory("archive-publish");
+        let stage = root.join("staged.tar");
+        let destination = root.join("existing.tar");
+        std::fs::write(&stage, b"new archive").unwrap();
+        std::fs::write(&destination, b"keep existing archive").unwrap();
+
+        assert!(rename_without_replace(&stage, &destination).is_err());
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            b"keep existing archive"
+        );
+        assert_eq!(std::fs::read(&stage).unwrap(), b"new archive");
+
+        let free_destination = root.join("new.tar");
+        rename_without_replace(&stage, &free_destination).unwrap();
+        assert_eq!(std::fs::read(&free_destination).unwrap(), b"new archive");
+        assert!(!stage.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn renameat2_fallback_only_matches_unsupported_operation_errors() {
+        use super::renameat2_needs_fallback;
+        use std::io::Error;
+
+        for code in [libc::ENOSYS, libc::EINVAL, libc::EOPNOTSUPP] {
+            assert!(renameat2_needs_fallback(&Error::from_raw_os_error(code)));
+        }
+        for code in [libc::EEXIST, libc::EACCES, libc::EXDEV] {
+            assert!(!renameat2_needs_fallback(&Error::from_raw_os_error(code)));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn tar_archive_is_staged_then_published_without_touching_its_source() {
+        let root = test_directory("archive-run");
+        let source = root.join("source");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("inside.txt"), b"archive fixture").unwrap();
+        let destination = root.join("result.tar");
+        let context = crate::common::Context {
+            home: root.clone(),
+            dry_run: false,
+            elevate_by_default: false,
+            privileged_child: false,
+            plan_path: None,
+            plan: None,
+        };
+        let args = vec![
+            "--source".to_owned(),
+            source.display().to_string(),
+            "--destination".to_owned(),
+            destination.display().to_string(),
+            "--yes".to_owned(),
+        ];
+
+        archive(&context, "tar", &args).unwrap();
+        let listing = std::process::Command::new("tar")
+            .args(["-tf", destination.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(listing.status.success());
+        assert!(String::from_utf8_lossy(&listing.stdout).contains("inside.txt"));
+        assert_eq!(
+            std::fs::read(source.join("inside.txt")).unwrap(),
+            b"archive fixture"
+        );
+        assert!(std::fs::read_dir(&root).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".ltools-stage-")));
+
+        let existing = root.join("existing.tar");
+        std::fs::write(&existing, b"preserve me").unwrap();
+        let existing_args = vec![
+            "--source".to_owned(),
+            source.display().to_string(),
+            "--destination".to_owned(),
+            existing.display().to_string(),
+            "--yes".to_owned(),
+        ];
+        assert!(archive(&context, "tar", &existing_args).is_err());
+        assert_eq!(std::fs::read(existing).unwrap(), b"preserve me");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1906,7 +2299,79 @@ mod tests {
             let link_copy = root.join("link-copy");
             assert!(copy_new_path(&source, &link_copy).is_err());
             assert!(!link_copy.exists());
+            assert!(std::fs::read_dir(&root).unwrap().all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".ltools-stage-")));
         }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_drops_setuid_setgid_and_sticky_permission_bits() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = test_directory("copy-special-mode");
+        let source = root.join("source");
+        let source_directory = source.join("special-directory");
+        std::fs::create_dir_all(&source_directory).unwrap();
+        let source_file = source_directory.join("user-executable");
+        std::fs::write(&source_file, "unprivileged content").unwrap();
+        std::fs::set_permissions(&source_file, std::fs::Permissions::from_mode(0o6755)).unwrap();
+        std::fs::set_permissions(&source_directory, std::fs::Permissions::from_mode(0o3775))
+            .unwrap();
+
+        let destination = root.join("copy");
+        copy_new_path(&source, &destination).unwrap();
+
+        let copied_file_mode =
+            std::fs::metadata(destination.join("special-directory/user-executable"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777;
+        let copied_directory_mode = std::fs::metadata(destination.join("special-directory"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777;
+        assert_eq!(copied_file_mode, 0o755, "no setuid/setgid on copied files");
+        assert_eq!(
+            copied_directory_mode, 0o775,
+            "no setgid/sticky on copied directories"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checked_existing_preserves_live_and_dangling_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let root = test_directory("selected-symlink");
+        let target = root.join("target.txt");
+        let link = root.join("selected-link");
+        let dangling = root.join("dangling-link");
+        std::fs::write(&target, "keep target").unwrap();
+        symlink(&target, &link).unwrap();
+        symlink("missing-target", &dangling).unwrap();
+
+        let selected = checked_existing(link.to_str().unwrap()).unwrap();
+        assert!(std::fs::symlink_metadata(&selected)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(copy_new_path(&selected, &root.join("link-copy")).is_err());
+
+        let selected_dangling = checked_existing(dangling.to_str().unwrap()).unwrap();
+        assert!(std::fs::symlink_metadata(&selected_dangling)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep target");
         std::fs::remove_dir_all(root).unwrap();
     }
 

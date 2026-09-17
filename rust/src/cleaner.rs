@@ -1,7 +1,9 @@
 //! Limpieza guiada de espacio: inventaría rutas conocidas y separa cachés
 //! regenerables de datos personales y aplicaciones.
 
-use crate::common::{ask, directory_size, human_bytes, move_to_trash, Context};
+use crate::common::{
+    ask, directory_size, human_bytes, is_link_or_reparse_point, move_to_trash, Context,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -76,6 +78,7 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
     let mut potential = 0_u64;
     let mut selected = 0_u64;
     let mut liberated = 0_u64;
+    let mut failures = Vec::new();
     for kind in [
         Kind::Cache,
         Kind::Temporary,
@@ -147,7 +150,8 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
                     );
                 }
                 Err(error) => {
-                    eprintln!("  No se pudo limpiar {}: {error}", candidate.path.display())
+                    eprintln!("  No se pudo limpiar {}: {error}", candidate.path.display());
+                    failures.push(candidate.path.display().to_string());
                 }
             }
         }
@@ -159,6 +163,12 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
         human_bytes(liberated)
     );
     println!("La papelera puede seguir ocupando espacio físico hasta vaciarse explícitamente.");
+    if !failures.is_empty() {
+        return Err(format!(
+            "la limpieza terminó con errores en: {}",
+            failures.join(", ")
+        ));
+    }
     Ok(())
 }
 
@@ -222,10 +232,10 @@ fn remove_contents(path: &Path, remove_root: bool) -> std::io::Result<()> {
 
 fn remove_contents_inner(path: &Path, remove_root: bool) -> std::io::Result<()> {
     let metadata = fs::symlink_metadata(path)?;
-    if metadata.file_type().is_symlink() {
+    if is_link_or_reparse_point(&metadata) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            "no se siguen enlaces simbólicos",
+            "no se siguen enlaces simbólicos ni puntos de reanálisis",
         ));
     }
     if metadata.is_file() {
@@ -271,7 +281,21 @@ fn ensure_device_tree(path: &Path, device: Option<u64>) -> std::io::Result<()> {
     for entry in fs::read_dir(path)? {
         let child = entry?.path();
         let metadata = fs::symlink_metadata(&child)?;
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        if is_link_or_reparse_point(&metadata) {
+            #[cfg(windows)]
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!(
+                        "se omite el punto de reanálisis para no recorrer su destino: {}",
+                        child.display()
+                    ),
+                ));
+            }
+            #[cfg(not(windows))]
+            continue;
+        }
+        if !metadata.is_dir() {
             continue;
         }
         if device.is_some() && crate::common::device(&child) != device {
@@ -292,6 +316,16 @@ fn remove_contents_tree(path: &Path) -> std::io::Result<()> {
     for entry in fs::read_dir(path)? {
         let child = entry?.path();
         let metadata = fs::symlink_metadata(&child)?;
+        #[cfg(windows)]
+        if is_link_or_reparse_point(&metadata) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "se omite el punto de reanálisis para no recorrer su destino: {}",
+                    child.display()
+                ),
+            ));
+        }
         if !metadata.is_dir() {
             fs::remove_file(child)?;
         } else {

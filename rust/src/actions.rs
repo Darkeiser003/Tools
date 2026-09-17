@@ -234,6 +234,16 @@ static ACTIONS: &[ActionSpec] = &[
         profile: "safe-default",
     },
     ActionSpec {
+        id: "native.security-scanners",
+        category: "native",
+        command: "native",
+        args: &["security", "scanners"],
+        target: "none",
+        mutating: false,
+        confirmation: "none",
+        profile: "safe-default",
+    },
+    ActionSpec {
         id: "native.tooling-status",
         category: "native",
         command: "native",
@@ -748,6 +758,16 @@ static ACTIONS: &[ActionSpec] = &[
         profile: "safe-default",
     },
     ActionSpec {
+        id: "native.security-scanners",
+        category: "native",
+        command: "native",
+        args: &["security", "scanners"],
+        target: "none",
+        mutating: false,
+        confirmation: "none",
+        profile: "safe-default",
+    },
+    ActionSpec {
         id: "native.tooling-status",
         category: "native",
         command: "native",
@@ -1215,6 +1235,10 @@ mod tests {
     fn read_only_catalog_actions_do_not_need_a_plan() {
         assert!(!needs_plan(&["run".into(), "audit.quick".into()]));
         assert!(!needs_plan(&["run".into(), "storage.overview".into()]));
+        assert!(!needs_plan(&[
+            "run".into(),
+            "native.security-scanners".into(),
+        ]));
         assert!(!needs_plan(&["list".into()]));
     }
 

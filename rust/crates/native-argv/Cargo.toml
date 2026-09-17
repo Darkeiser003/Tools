@@ -1,0 +1,10 @@
+[package]
+name = "ltools-argv"
+version = "1.0.0"
+edition = "2021"
+description = "Parser limitado de argumentos nativos, sin shell, compartido por LTools"
+license = "MIT"
+publish = false
+
+[lib]
+path = "src/lib.rs"

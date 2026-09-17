@@ -18,7 +18,11 @@ if (-not $cargo) { throw 'No se encontró cargo.' }
 if ($Target -notmatch '^(x86_64|aarch64|i686)-pc-windows-(msvc|gnu)$') { throw "Target Windows no compatible: $Target" }
 
 function Get-PreviewFingerprint {
-    $roots = @((Join-Path $root 'rust\src'), (Join-Path $root 'rust\.cargo')) | Where-Object { Test-Path -LiteralPath $_ -PathType Container }
+    $roots = @(
+        (Join-Path $root 'rust\src'),
+        (Join-Path $root 'rust\crates'),
+        (Join-Path $root 'rust\.cargo')
+    ) | Where-Object { Test-Path -LiteralPath $_ -PathType Container }
     $files = @($roots | ForEach-Object { Get-ChildItem -LiteralPath $_ -Recurse -File -Force })
     foreach ($name in @('Cargo.toml', 'Cargo.lock', 'build.rs', 'rust-toolchain', 'rust-toolchain.toml')) {
         $path = Join-Path (Join-Path $root 'rust') $name

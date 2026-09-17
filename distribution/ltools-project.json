@@ -43,6 +43,11 @@
         "appimage-cli": "ltools-{version}-linux-{architecture}-cli.AppImage",
         "tarball": "ltools-{version}-linux-{architecture}.tar.gz"
       },
+      "runtime": {
+        "appimage_requires_fuse": true,
+        "appimage_extract_override": "APPIMAGE_EXTRACT_AND_RUN=1",
+        "note": "El AppImage se monta con FUSE; en entornos sin FUSE se puede ejecutar directamente con APPIMAGE_EXTRACT_AND_RUN=1. No se publica ningún lanzador adicional."
+      },
       "install": {
         "portable": true,
         "recommended_directory": "~/.local/bin",

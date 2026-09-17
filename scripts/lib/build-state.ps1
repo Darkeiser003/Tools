@@ -39,8 +39,8 @@ function Get-LToolsBuildImpact($Old, $New) {
     }
 
     foreach ($path in $impact.Changed) {
-        $rustBuild = $path -match '^rust/(src/|Cargo\.(toml|lock)$|build\.rs$|rust-toolchain(\.toml)?$|\.cargo/)'
-        $rustProduct = $path -match '^rust/src/' -or $path -match '^rust/(Cargo\.(toml|lock)$|build\.rs$|rust-toolchain(\.toml)?$|\.cargo/)'
+        $rustBuild = $path -match '^rust/(src/|crates/|Cargo\.(toml|lock)$|build\.rs$|rust-toolchain(\.toml)?$|\.cargo/)'
+        $rustProduct = $path -match '^rust/(src|crates)/' -or $path -match '^rust/(Cargo\.(toml|lock)$|build\.rs$|rust-toolchain(\.toml)?$|\.cargo/)'
         $windowsProduct = $path -match '^windows/(?!tests/)'
         $packageInput = $rustProduct -or $windowsProduct -or $path -eq 'windows/tests/release-e2e.ps1' -or
             $path -match '^scripts/build\.ps1$' -or
@@ -52,13 +52,13 @@ function Get-LToolsBuildImpact($Old, $New) {
 
         if ($rustBuild) { $impact.RustCompile.Add($path) }
         if ($packageInput) { $impact.Package.Add($path) }
-        if ($path -match '^rust/(src/|tests/|Cargo\.(toml|lock)$|build\.rs$|rust-toolchain(\.toml)?$|\.cargo/)') {
+        if ($path -match '^rust/(src/|crates/|tests/|Cargo\.(toml|lock)$|build\.rs$|rust-toolchain(\.toml)?$|\.cargo/)') {
             $impact.CargoTests.Add($path)
         }
-        if ($rustProduct -or $windowsProduct -or $path -eq 'windows/tests/smoke.ps1') {
+        if ($rustProduct -or $windowsProduct -or $path -in @('windows/tests/smoke.ps1', 'windows/tests/native-process.ps1')) {
             $impact.WindowsSmoke.Add($path)
         }
-        if ($rustProduct -or $windowsProduct -or $path -eq 'windows/tests/e2e.ps1') {
+        if ($rustProduct -or $windowsProduct -or $path -in @('windows/tests/e2e.ps1', 'windows/tests/native-process.ps1')) {
             $impact.WindowsE2E.Add($path)
         }
         if ($path -match '^scripts/(build\.ps1|lib/(publish|third-party-licenses|ssh-signing)\.ps1)$' -or
@@ -68,7 +68,7 @@ function Get-LToolsBuildImpact($Old, $New) {
         if ($path -match '^scripts/build\.ps1$' -or $path -match '^scripts/lib/build-state\.ps1$' -or $path -eq 'tests/build-state.ps1') {
             $impact.BuildStateTests.Add($path)
         }
-        if ($path -eq 'windows/tests/release-e2e.ps1') {
+        if ($path -in @('windows/tests/release-e2e.ps1', 'windows/tests/native-process.ps1')) {
             $impact.ReleaseTests.Add($path)
         }
     }

@@ -1,0 +1,1 @@
+issue create --title 'Fix spaces' --body "$HOME; echo no"

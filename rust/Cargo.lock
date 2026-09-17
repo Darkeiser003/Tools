@@ -216,12 +216,17 @@ dependencies = [
  "base64",
  "ed25519-dalek",
  "libc",
+ "ltools-argv",
  "semver",
  "serde_json",
  "sha2",
  "ureq",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "ltools-argv"
+version = "1.0.0"
 
 [[package]]
 name = "memchr"

@@ -48,9 +48,16 @@ else
 fi
 
 if command -v zizmor >/dev/null 2>&1; then
-    printf '[REVIEW] zizmor: workflows y automatizaciones de .github (offline)\n'
-    if ! (cd -- "$ROOT_DIR" && zizmor --offline .github); then
-        status=1
+    if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}${ZIZMOR_GITHUB_TOKEN:-}" ]]; then
+        printf '[REVIEW] zizmor online: workflows, automatizaciones y referencias externas\n'
+        if ! (cd -- "$ROOT_DIR" && zizmor .github); then
+            status=1
+        fi
+    else
+        printf '[REVIEW][PARTIAL] zizmor offline: no se verifican referencias remotas de acciones; el workflow de GitHub ejecuta la auditoría online.\n'
+        if ! (cd -- "$ROOT_DIR" && zizmor --offline .github); then
+            status=1
+        fi
     fi
 else
     printf '[REVIEW][SKIP] zizmor no está instalado; GitHub Actions lo ejecuta en el workflow de seguridad.\n'

@@ -64,7 +64,11 @@ fn native_is_read_only(args: &[String]) -> bool {
         }
         "hardware" | "hw" => action.is_none() || matches!(action, Some("status" | "overview")),
         "security" | "firewall" => {
-            action.is_none() || matches!(action, Some("menu" | "status" | "overview"))
+            action.is_none()
+                || matches!(
+                    action,
+                    Some("menu" | "status" | "overview" | "scanners" | "code-scanners")
+                )
         }
         "power" | "energy" => {
             action.is_none() || matches!(action, Some("menu" | "status" | "overview" | "plans"))
@@ -765,6 +769,13 @@ mod tests {
             classify("native", &args(&["security", "menu"])),
             ActionPrivilege::ReadOnly
         );
+        for action in ["status", "scanners", "code-scanners"] {
+            assert_eq!(
+                classify("native", &args(&["security", action])),
+                ActionPrivilege::ReadOnly,
+                "native security {action} must never elevate"
+            );
+        }
         for area in [
             "network",
             "hardware",

@@ -81,9 +81,9 @@ clean_repo() {
     fi
     if ((plans_only == 0)) && [[ "$only" != build-tmp ]]; then
         case "$only" in
-            all) generated=(dist release rust/target target windows/target windows/bin windows/obj build out artifacts .appimage-builder .pytest_cache coverage node_modules) ;;
-            targets) generated=(rust/target target windows/target windows/bin windows/obj) ;;
-            dist) generated=(dist) ;;
+            all) generated=(dist rust/dist release rust/target fuzz/target fuzz/artifacts reports target windows/target windows/bin windows/obj build out artifacts .appimage-builder .pytest_cache coverage node_modules) ;;
+            targets) generated=(rust/target fuzz/target target windows/target windows/bin windows/obj) ;;
+            dist) generated=(dist rust/dist) ;;
             release) generated=(release) ;;
         esac
         for relative in "${generated[@]}"; do
@@ -238,6 +238,7 @@ run_suite_test() {
 run_all_e2e() {
     local failures=0 selected captures
     run_suite_test 'Smoke del backend release' "$ROOT_DIR/tests/linux/smoke.sh" --require-gui --binary "$RELEASE_BIN" || failures=$((failures + 1))
+    run_suite_test 'CLI distribuible y contratos' "$ROOT_DIR/tests/linux/cli-e2e.sh" --binary "$RELEASE_BIN" || failures=$((failures + 1))
     run_suite_test 'Migración y rollback' "$ROOT_DIR/tests/linux/e2e.sh" --require-dependencies --binary "$RELEASE_BIN" || failures=$((failures + 1))
     run_suite_test 'Menús y acciones' "$ROOT_DIR/tests/linux/menu-e2e.sh" --require-gui --binary "$RELEASE_BIN" || failures=$((failures + 1))
     run_suite_test 'Stores y Git' "$ROOT_DIR/tests/linux/software-git-e2e.sh" --binary "$RELEASE_BIN" || failures=$((failures + 1))
@@ -308,7 +309,21 @@ preview_menu() {
                 else printf 'No hay perfil CLI aislado. Usa Build → Compilar el perfil CLI.\n'; pause; fi ;;
             5)
                 if selected="$(choose_artifact 'ltools-*.AppImage' 'AppImages')"; then
-                    case "$selected" in *-cli.AppImage) printf 'Ese es el perfil CLI. Elige un AppImage GUI.\n'; pause ;; *) run_and_pause "$ROOT_DIR/appimage/run-ltools.sh" "$selected" ;; esac
+                    case "$selected" in
+                        *-cli.AppImage)
+                            printf 'Ese es el perfil CLI. Elige un AppImage GUI.\n'
+                            pause
+                            ;;
+                        *)
+                            if [[ -c /dev/fuse ]] &&
+                                { command -v fusermount3 >/dev/null 2>&1 || command -v fusermount >/dev/null 2>&1; }; then
+                                run_and_pause "$selected"
+                            else
+                                printf 'FUSE no está disponible; se ejecutará mediante la extracción oficial del AppImage.\n'
+                                run_and_pause env APPIMAGE_EXTRACT_AND_RUN=1 "$selected"
+                            fi
+                            ;;
+                    esac
                 else pause; fi ;;
             6) run_and_pause bash -c 'find "$1" "$2" -maxdepth 1 -type f \( -name "ltools-*" -o -name "SHA256SUMS.txt*" \) -printf "%p\n" 2>/dev/null || true' _ "$ROOT_DIR/dist" "$ROOT_DIR/release" ;;
             7) run_and_pause bash "$ROOT_DIR/scripts/live-preview.sh" ;;
@@ -330,9 +345,10 @@ test_menu() {
         printf '  7) E2E de ayudas nativas\n'
         printf '  8) E2E del tarball Linux\n'
         printf '  9) E2E de acciones reales del mapa GUI\n'
+        printf ' 10) E2E de la CLI distribuible\n'
         printf '  0) Volver\n'
         read -r -p 'Selecciona una opción: ' choice || return
-        if [[ "$choice" =~ ^[1-4]$ || "$choice" == 6 || "$choice" == 7 || "$choice" == 9 ]]; then
+        if [[ "$choice" =~ ^[1-4]$ || "$choice" == 6 || "$choice" == 7 || "$choice" == 9 || "$choice" == 10 ]]; then
             if [[ ! -x "$RELEASE_BIN" ]]; then printf 'No existe el backend release. Estas pruebas usan un binario ya compilado.\n'; pause; continue; fi
         fi
         case "$choice" in
@@ -352,6 +368,7 @@ test_menu() {
                 captures="$(mktemp -d "$ROOT_DIR/dist/storage-map-gui.XXXXXX")"
                 run_and_pause "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" \
                     --require-gui --binary "$RELEASE_BIN" --tmp "$captures" --captures "$captures/captures" ;;
+            10) run_and_pause "$ROOT_DIR/tests/linux/cli-e2e.sh" --binary "$RELEASE_BIN" ;;
             0|'') return ;;
             *) printf 'Opción no válida.\n'; pause ;;
         esac
@@ -377,7 +394,7 @@ build_menu() {
             2)
                 run_and_pause env CARGO_TARGET_DIR="$ROOT_DIR/rust/target/cli-preview" cargo build --manifest-path "$MANIFEST" --features cli --release ;;
             3)
-                run_and_pause bash -c 'set -e; cargo fmt --manifest-path "$1" -- --check; cargo clippy --manifest-path "$1" --all-targets -- -D warnings; cargo test --manifest-path "$1" --all-targets; "$2"; "$3"; bash "$4"' _ \
+                run_and_pause bash -c 'set -e; cargo fmt --manifest-path "$1" --all -- --check; cargo clippy --manifest-path "$1" --workspace --all-targets -- -D warnings; cargo test --manifest-path "$1" --workspace --all-targets; "$2"; "$3"; bash "$4"' _ \
                     "$MANIFEST" "$ROOT_DIR/tests/contracts.sh" "$ROOT_DIR/tests/encoding.sh" "$ROOT_DIR/tests/scripts-syntax.sh" ;;
             4) run_and_pause "$LINUX_BUILDER" --non-interactive --no-appimage --no-windows-wine --allow-unsigned --output "$ROOT_DIR/dist/local" --release-dir "$ROOT_DIR/dist/local-release" ;;
             5) run_and_pause "$LINUX_BUILDER" --non-interactive --appimage --no-package --no-windows-wine --allow-unsigned --output "$ROOT_DIR/dist/local" --release-dir "$ROOT_DIR/dist/local-release" ;;
@@ -566,6 +583,11 @@ validate_output_paths() {
     if [[ "$output_real" == "$release_real" || "$output_real" == "$release_real/"* || "$release_real" == "$output_real/"* ]]; then
         die "las rutas de staging y publicación no pueden coincidir ni contenerse entre sí: output=$output_real release=$release_real"
     fi
+    # Todas las fases pueden cambiar de directorio. Conserva rutas absolutas
+    # para que los staging temporales, CARGO_HOME y los logs no se resuelvan
+    # accidentalmente relativos al subdirectorio actual.
+    OUTPUT_DIR="$output_real"
+    RELEASE_DIR="$release_real"
 }
 
 log_timing() {
@@ -1029,10 +1051,10 @@ if [[ "$MENU_E2E" -eq 1 ]]; then
 fi
 if [[ "$PACKAGE" -eq 1 || "$SMOKE" -eq 1 || "$MENU_E2E" -eq 1 ]]; then
     require_command timeout
-    for gui_command in xvfb-run xdotool import identify file; do
+    for gui_command in xvfb-run xdotool import identify file xdpyinfo; do
         require_command "$gui_command"
     done
-    timeout 10 xvfb-run -a -s "-screen 0 1280x900x24" true >/dev/null 2>&1 ||
+    timeout 10 xvfb-run -a -s "-screen 0 1280x900x24" xdpyinfo >/dev/null 2>&1 ||
         die 'Xvfb está instalado, pero no puede iniciar un display: no se comenzará la build con E2E GUI incompletas'
 fi
 if [[ "$E2E" -eq 1 ]]; then
@@ -1058,37 +1080,37 @@ fi
 
 if [[ "$CHECKS" -eq 1 ]]; then
     step 'Validando formato Rust'
-    if ! run_logged cargo fmt --manifest-path "$MANIFEST" -- --check; then
+    if ! run_logged cargo fmt --manifest-path "$MANIFEST" --all -- --check; then
         if [[ "$AUTO_FIX" -ne 1 ]]; then
             die 'rustfmt detectó diferencias; corrígelas o vuelve a ejecutar con --auto-fix para aplicar formato y reescanear.'
         fi
         step 'Autocorrigiendo formato Rust'
         rust_fix_before="$(rust_source_hashes)"
-        run_logged cargo fmt --manifest-path "$MANIFEST"
+        run_logged cargo fmt --manifest-path "$MANIFEST" --all
         ok '[AUTO-FIX] rustfmt aplicó el formato; se repite el escaneo antes de continuar.'
         report_rust_autofix_changes "$rust_fix_before"
         step 'Reescaneando formato Rust'
-        run_logged cargo fmt --manifest-path "$MANIFEST" -- --check
+        run_logged cargo fmt --manifest-path "$MANIFEST" --all -- --check
     fi
     ok 'rustfmt correcto'
 
     step 'Validando Clippy'
-    if ! run_logged cargo clippy --manifest-path "$MANIFEST" --all-targets "${cargo_args[@]}" -- -D warnings; then
+    if ! run_logged cargo clippy --manifest-path "$MANIFEST" --workspace --all-features --all-targets "${cargo_args[@]}" -- -D warnings; then
         if [[ "$AUTO_FIX" -ne 1 ]]; then
             die 'Clippy encontró avisos; corrígelos o vuelve a ejecutar con --auto-fix para aplicar solo sugerencias mecánicas y reescanear.'
         fi
         step 'Aplicando autocorrecciones mecánicas de Clippy'
         rust_fix_before="$(rust_source_hashes)"
-        run_logged cargo clippy --fix --allow-dirty --allow-staged --manifest-path "$MANIFEST" --all-targets "${cargo_args[@]}"
+        run_logged cargo clippy --fix --allow-dirty --allow-staged --manifest-path "$MANIFEST" --workspace --all-features --all-targets "${cargo_args[@]}"
         ok '[AUTO-FIX] Clippy aplicó sugerencias mecánicas; se volverán a ejecutar formato y Clippy estricto.'
         step 'Normalizando formato después de Clippy'
-        run_logged cargo fmt --manifest-path "$MANIFEST"
+        run_logged cargo fmt --manifest-path "$MANIFEST" --all
         ok '[AUTO-FIX] rustfmt normalizó el resultado de Clippy antes del reescaneo.'
         report_rust_autofix_changes "$rust_fix_before"
         step 'Reescaneando formato después de Clippy'
-        run_logged cargo fmt --manifest-path "$MANIFEST" -- --check
+        run_logged cargo fmt --manifest-path "$MANIFEST" --all -- --check
         step 'Reescaneando Clippy estricto'
-        run_logged cargo clippy --manifest-path "$MANIFEST" --all-targets "${cargo_args[@]}" -- -D warnings
+        run_logged cargo clippy --manifest-path "$MANIFEST" --workspace --all-features --all-targets "${cargo_args[@]}" -- -D warnings
     fi
     ok 'Clippy sin avisos en todos los targets (incluidos tests)'
 
@@ -1122,9 +1144,23 @@ if [[ "$CHECKS" -eq 1 ]]; then
     cargo_home_dir="${CARGO_HOME:-${HOME:-/tmp}/.cargo}"
     if command -v cargo-audit >/dev/null 2>&1 && { [[ "$OFFLINE" -eq 0 ]] || [[ -d "$cargo_home_dir/advisory-db" ]]; }; then
         step 'Auditando dependencias Rust'
-        audit_args=(audit --file Cargo.lock)
-        [[ "$OFFLINE" -eq 1 ]] && audit_args+=(--no-fetch)
-        (cd "$ROOT_DIR/rust" && run_logged cargo "${audit_args[@]}")
+        run_cargo_audit() {
+            local lockfile="$1" audit_home='' status=0
+            local -a audit_args=(audit --file "$lockfile")
+            [[ "$OFFLINE" -eq 1 ]] && audit_args+=(--no-fetch)
+            if [[ "$OFFLINE" -eq 1 && -d "$cargo_home_dir/advisory-db" && -d "$cargo_home_dir/registry" ]]; then
+                audit_home="$OUTPUT_DIR/.cargo-audit-$BUILD_ID"
+                mkdir -p -- "$audit_home"
+                cp -a -- "$cargo_home_dir/advisory-db" "$audit_home/"
+                ln -s -- "$cargo_home_dir/registry" "$audit_home/registry"
+                CARGO_HOME="$audit_home" run_logged cargo "${audit_args[@]}" || status=$?
+                rm -rf -- "$audit_home"
+                return "$status"
+            fi
+            run_logged cargo "${audit_args[@]}"
+        }
+        (cd "$ROOT_DIR/rust" && run_cargo_audit Cargo.lock)
+        run_cargo_audit "$ROOT_DIR/fuzz/Cargo.lock"
         ok 'cargo audit sin vulnerabilidades conocidas'
     elif [[ "$STRICT_SECURITY" -eq 1 ]]; then
         die 'la auditoría estricta requiere cargo-audit y, en modo offline, una base local de advisories'
@@ -1134,8 +1170,9 @@ if [[ "$CHECKS" -eq 1 ]]; then
     if command -v cargo-deny >/dev/null 2>&1; then
         step 'Validando licencias y fuentes Rust'
         cargo_home_dir="${CARGO_HOME:-${HOME:-/tmp}/.cargo}"
-        if [[ -w "$cargo_home_dir/advisory-dbs" ]]; then
-            (cd "$ROOT_DIR/rust" && run_logged cargo deny check)
+        if [[ "$OFFLINE" -eq 0 ]] && [[ -w "$cargo_home_dir/advisory-dbs" ]]; then
+            (cd "$ROOT_DIR/rust" && run_logged cargo deny --config "$ROOT_DIR/deny.toml" check)
+            run_logged cargo deny --manifest-path "$ROOT_DIR/fuzz/Cargo.toml" --config "$ROOT_DIR/fuzz/deny.toml" check
         elif [[ -d "$cargo_home_dir/advisory-dbs" && -d "$cargo_home_dir/registry" ]]; then
             # Algunos entornos de CI/sandbox montan ~/.cargo como solo
             # lectura. cargo-deny necesita un lock exclusivo incluso en modo
@@ -1146,7 +1183,10 @@ if [[ "$CHECKS" -eq 1 ]]; then
             cp -a -- "$cargo_home_dir/advisory-dbs" "$deny_home/"
             ln -s -- "$cargo_home_dir/registry" "$deny_home/registry"
             deny_status=0
-            (cd "$ROOT_DIR/rust" && CARGO_HOME="$deny_home" run_logged cargo deny --offline check) || deny_status=$?
+            (cd "$ROOT_DIR/rust" && CARGO_HOME="$deny_home" run_logged cargo deny --offline --config "$ROOT_DIR/deny.toml" check) || deny_status=$?
+            if (( deny_status == 0 )); then
+                (cd "$ROOT_DIR" && CARGO_HOME="$deny_home" run_logged cargo deny --offline --manifest-path "$ROOT_DIR/fuzz/Cargo.toml" --config "$ROOT_DIR/fuzz/deny.toml" check) || deny_status=$?
+            fi
             rm -rf -- "$deny_home"
             (( deny_status == 0 )) || exit "$deny_status"
         else
@@ -1162,18 +1202,20 @@ fi
 
 if [[ "$TESTS" -eq 1 ]]; then
     step 'Ejecutando pruebas Rust'
-    run_logged cargo test --manifest-path "$MANIFEST" "${cargo_args[@]}"
-    ok 'cargo test correcto'
+    run_logged cargo test --manifest-path "$MANIFEST" --workspace --all-features --all-targets "${cargo_args[@]}"
+    ok 'cargo test correcto (incluidas todas las features)'
 fi
 
-if [[ "$CHECKS" -eq 1 && "$WINDOWS_WINE" -eq 0 ]] && command -v rustup >/dev/null 2>&1 &&
+if [[ "$CHECKS" -eq 1 ]] && command -v rustup >/dev/null 2>&1 &&
     installed_targets="$(rustup target list --installed 2>/dev/null || true)" &&
     grep -Fxq "$WINDOWS_TARGET" <<<"$installed_targets"; then
-    step 'Comprobando compatibilidad cruzada Windows'
-    run_logged cargo check --manifest-path "$MANIFEST" "${cargo_args[@]}" --target "$WINDOWS_TARGET" --jobs "$JOBS"
-    ok "backend Rust compatible con $WINDOWS_TARGET"
-elif [[ "$WINDOWS_WINE" -eq 1 ]]; then
-    ok "la compilación Windows con pruebas está incluida en la etapa Wine; se omite cargo check duplicado para $WINDOWS_TARGET"
+    step 'Clippy cruzado Windows'
+    run_logged cargo clippy --manifest-path "$MANIFEST" --workspace --all-features --target "$WINDOWS_TARGET" --all-targets "${cargo_args[@]}" --jobs "$JOBS" -- -D warnings
+    ok "Clippy y todos los targets Rust correctos para $WINDOWS_TARGET"
+elif [[ "$CHECKS" -eq 1 && "$WINDOWS_WINE" -eq 1 ]]; then
+    step 'Clippy cruzado Windows'
+    run_logged cargo clippy --manifest-path "$MANIFEST" --workspace --target "$WINDOWS_TARGET" --all-targets "${cargo_args[@]}" --jobs "$JOBS" -- -D warnings
+    ok "Clippy y todos los targets Rust correctos para $WINDOWS_TARGET"
 elif [[ "$CHECKS" -eq 1 ]]; then
     warn "El target $WINDOWS_TARGET no está instalado; se omite la comprobación cruzada Windows."
 fi
@@ -1434,10 +1476,6 @@ EOF
             || die 'el AppImage CLI no pudo mostrar la ayuda sin argumentos'
         grep -Fq 'Uso: ltools' "$CLI_SMOKE_OUTPUT" || die 'el AppImage CLI no mostró la ayuda sin argumentos'
         ok 'AppImage CLI verificado: sin argumentos muestra la ayuda'
-        RUNNER_ARTIFACT="$LOCAL_PUBLISH_DIR/run-ltools.sh"
-        cp -a -- "$ROOT_DIR/appimage/run-ltools.sh" "$RUNNER_ARTIFACT"
-        chmod +x "$RUNNER_ARTIFACT"
-        ok "Lanzador con fallback FUSE generado: $RUNNER_ARTIFACT"
     fi
 
     # Publica solo después de que el empaquetado y las pruebas específicas
@@ -1455,7 +1493,6 @@ EOF
     if [[ "$APPIMAGE" -eq 1 ]]; then
         APPIMAGE_ARTIFACT="$OUTPUT_DIR/$PACKAGE_NAME.AppImage"
         CLI_APPIMAGE_ARTIFACT="$OUTPUT_DIR/$PACKAGE_NAME-cli.AppImage"
-        RUNNER_ARTIFACT="$OUTPUT_DIR/run-ltools.sh"
     fi
 else
     warn 'Se omitió la generación de artefactos distribuibles.'
@@ -1480,7 +1517,7 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
             -o -name 'ltools-capabilities.schema.json' -o -name 'ltools-terminal.schema.json' \
             -o -name 'ltools-project.schema.json' -o -name 'ltools-release.schema.json' \
             -o -name 'THIRD-PARTY-LICENSES-windows.zip' \
-            -o -name 'run-ltools.sh' -o -name 'SHA256SUMS.txt' \
+            -o -name 'SHA256SUMS.txt' \
             -o -name 'SHA256SUMS.txt.sig' -o -name 'SHA256SUMS.txt.sshsig' \
             -o -name 'LICENSE' \) -delete
     fi
@@ -1500,8 +1537,7 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
     while IFS= read -r -d '' file; do copy_to_release "$file"; done < <(
         find "$OUTPUT_DIR" -maxdepth 1 -type f \
             \( -name "ltools-$VERSION-*" -o -name 'ltools-capabilities.json' \
-            -o -name 'ltools-terminal.json' -o -name 'ltools-*.schema.json' \
-            -o -name 'run-ltools.sh' \) -print0
+            -o -name 'ltools-terminal.json' -o -name 'ltools-*.schema.json' \) -print0
     )
     if [[ -d "$ROOT_DIR/dist/windows" ]]; then
         while IFS= read -r -d '' file; do copy_to_release "$file"; done < <(
@@ -1553,6 +1589,11 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
         jq -e '.schema == "ltools-project-v1" and .repository == "Darkeiser003/Tools" and .platforms.linux and .platforms.windows' \
             "$OUTPUT_DIR/ltools-project.json" >/dev/null \
             || die 'el descriptor de proyecto no supera la validación estructural'
+        jq -e '.platforms.linux.runtime.appimage_requires_fuse == true and
+            .platforms.linux.runtime.appimage_extract_override == "APPIMAGE_EXTRACT_AND_RUN=1" and
+            (.platforms.windows.runtime // null) == null' \
+            "$OUTPUT_DIR/ltools-project.json" >/dev/null \
+            || die 'el descriptor de proyecto no declara correctamente el runtime AppImage por plataforma'
         jq -e '(.properties.schema.const == "ltools-project-v1") and ((.properties.platforms.required | index("linux")) != null) and ((.properties.platforms.required | index("windows")) != null)' \
             "$ROOT_DIR/distribution/ltools-project.schema.json" >/dev/null \
             || die 'el esquema de proyecto no supera la validación estructural'
@@ -1595,7 +1636,7 @@ if [[ "$SMOKE" -eq 1 ]]; then
     step 'Ejecutando smoke tests'
     smoke_args=(--binary "$BIN")
     if [[ "$APPIMAGE" -eq 1 ]]; then
-        smoke_args+=(--appimage "$APPIMAGE_ARTIFACT" --runner "$RUNNER_ARTIFACT" \
+        smoke_args+=(--appimage "$APPIMAGE_ARTIFACT" \
             --log "$OUTPUT_DIR/appimage-smoke.log")
     fi
     [[ "$FUSE_REQUIRED" -eq 1 ]] && smoke_args+=(--require-fuse)
@@ -1609,6 +1650,11 @@ if [[ "$E2E" -eq 1 ]]; then
     [[ "$APPIMAGE" -eq 1 ]] && e2e_args+=(--appimage "$APPIMAGE_ARTIFACT")
     run_logged "$ROOT_DIR/tests/linux/e2e.sh" --require-dependencies "${e2e_args[@]}"
     ok 'prueba E2E correcta'
+    step 'Ejecutando E2E de la CLI distribuible'
+    cli_e2e_args=(--binary "$BIN")
+    [[ "$APPIMAGE" -eq 1 ]] && cli_e2e_args+=(--cli-binary "$CLI_APPIMAGE_ARTIFACT")
+    run_logged "$ROOT_DIR/tests/linux/cli-e2e.sh" "${cli_e2e_args[@]}"
+    ok 'E2E de la CLI distribuible correcta'
 fi
 
 if [[ "$MENU_E2E" -eq 1 ]]; then
@@ -1618,12 +1664,16 @@ if [[ "$MENU_E2E" -eq 1 ]]; then
     run_logged "$ROOT_DIR/tests/linux/menu-e2e.sh" --require-gui "${menu_e2e_args[@]}"
     ok 'E2E de menús y funciones correcta'
 
-    step 'Ejecutando E2E de acciones reales del mapa GUI'
-    STORAGE_MAP_TMP="$OUTPUT_DIR/storage-map-$BUILD_ID"
-    mkdir -p -- "$STORAGE_MAP_TMP"
-    run_logged "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" \
-        --require-gui --binary "$BIN" --tmp "$STORAGE_MAP_TMP" --captures "$STORAGE_MAP_TMP/captures"
-    ok "acciones reales del mapa GUI correctas; capturas: $STORAGE_MAP_TMP/captures"
+    if [[ "$SMOKE" -eq 0 ]]; then
+        step 'Ejecutando E2E de acciones reales del mapa GUI'
+        STORAGE_MAP_TMP="$OUTPUT_DIR/storage-map-$BUILD_ID"
+        mkdir -p -- "$STORAGE_MAP_TMP"
+        run_logged "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" \
+            --require-gui --binary "$BIN" --tmp "$STORAGE_MAP_TMP" --captures "$STORAGE_MAP_TMP/captures"
+        ok "acciones reales del mapa GUI correctas; capturas: $STORAGE_MAP_TMP/captures"
+    else
+        ok 'acciones reales del mapa GUI cubiertas por el smoke; se omite la repetición'
+    fi
 
     step 'Ejecutando E2E de ayudas nativas y correspondencia GUI'
     run_logged "$ROOT_DIR/tests/linux/native-help-e2e.sh" --binary "$BIN"
@@ -1667,7 +1717,6 @@ if [[ "$NO_RUN" -eq 1 ]]; then
     [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]] && printf 'Checksums release: %s\n' "$RELEASE_DIR/SHA256SUMS.txt"
     [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]] && [[ -s "$RELEASE_DIR/SHA256SUMS.txt.sig" ]] && printf 'Firma Ed25519: %s\n' "$RELEASE_DIR/SHA256SUMS.txt.sig"
     [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]] && [[ -s "$RELEASE_DIR/SHA256SUMS.txt.sshsig" ]] && printf 'Firma OpenSSH: %s\n' "$RELEASE_DIR/SHA256SUMS.txt.sshsig"
-    [[ "$APPIMAGE" -eq 1 ]] && printf 'Lanzador recomendado: %s\n' "$RUNNER_ARTIFACT"
     [[ "$WINDOWS_WINE" -eq 1 && -f "$WINDOWS_WINE_ARTIFACT" ]] && printf 'Windows validado con Wine/Proton: %s\n' "$WINDOWS_WINE_ARTIFACT"
     [[ "$WINDOWS_WINE" -eq 1 && "$NO_LOG" -eq 0 && -s "$WINDOWS_WINE_LOG" ]] && printf 'Log Windows Wine/Proton: %s\n' "$WINDOWS_WINE_LOG"
     [[ "$NO_LOG" -eq 0 ]] && printf 'Log del build: %s\n' "$LOG_FILE"
