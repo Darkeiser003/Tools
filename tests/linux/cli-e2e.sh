@@ -174,9 +174,7 @@ expect_fail missing-plan rollback
 unexpected_state=0
 while IFS= read -r state_file; do
     case "$state_file" in
-        "$XDG_STATE_HOME"/ltools/plans/plan-rust-accounts.tsv|
-        "$XDG_STATE_HOME"/ltools/plans/plan-rust-native.tsv|
-        "$XDG_STATE_HOME"/ltools/plans/plan-rust-storage.tsv) ;;
+        "$XDG_STATE_HOME"/ltools/plans/plan-rust-accounts.tsv|"$XDG_STATE_HOME"/ltools/plans/plan-rust-native.tsv|"$XDG_STATE_HOME"/ltools/plans/plan-rust-storage.tsv) ;;
         *) printf 'Estado inesperado: %s\n' "$state_file" >&2; unexpected_state=1 ;;
     esac
 done < <(find "$XDG_STATE_HOME" -type f -print)

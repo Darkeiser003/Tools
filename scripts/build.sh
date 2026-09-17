@@ -501,6 +501,9 @@ duration_text() {
 
 CLEAN=0
 FAST=0
+COMPONENT='all'
+TEST_EXISTING=''
+PREVIEW=0
 CHECKS=1
 STRICT_SECURITY=0
 SECURITY_REVIEW=0
@@ -538,6 +541,7 @@ WINDOWS_WINE_ARTIFACT_DIR=""
 WINDOWS_WINE_ARTIFACT=""
 WINDOWS_WINE_CLI_ARTIFACT=""
 WINDOWS_WINE_LOG=""
+CLI_ONLY=0
 # Las publicaciones se firman por defecto. La excepción local debe ser
 # explícita mediante --allow-unsigned o LTOOLS_ALLOW_UNSIGNED=1.
 SIGNING_REQUIRED=1
@@ -723,6 +727,9 @@ Opciones:
                        Prefijo explícito; por defecto usa uno temporal y aislado.
   --windows-wine-install-mono
                        Permite instalar wine-mono si el runner no lo incluye.
+  --component NAME     Ejecuta solo backend|frontend|cli|tarball|appimage|windows o todo.
+  --test-existing PATH Ejecuta la matriz aplicable sobre un binario, AppImage o tarball ya creado.
+  --preview            Abre el preview GUI vigilado en un target aislado, sin empaquetar.
   --no-package         Compila, pero no genera el tar.gz.
   --appimage           Exige y genera el AppImage.
   --no-appimage        No genera el AppImage.
@@ -749,6 +756,11 @@ para una build local que no vaya a publicarse.
 Sin argumentos, scripts/build.sh abre el menú de tareas. Para ejecutar el
 pipeline Linux directamente, indica una o más opciones; con ellas no se hacen
 preguntas interactivas.
+
+Componentes: backend y frontend compilan el binario GUI; cli compila el
+perfil CLI aislado; tarball y appimage empaquetan solo ese formato; windows
+compila el ejecutable Windows mediante la etapa Wine/Proton; todo ejecuta el
+pipeline completo. --test-existing no recompila.
 EOF
 }
 
@@ -902,6 +914,13 @@ parse_args() {
         case "$1" in
             --clean) CLEAN=1 ;;
             --fast) FAST=1 ;;
+            --component)
+                (($# >= 2)) || die '--component necesita backend, frontend, cli, tarball, appimage, windows o all'
+                COMPONENT="${2,,}"; shift ;;
+            --test-existing)
+                (($# >= 2)) || die '--test-existing necesita la ruta de un binario, AppImage o tarball'
+                TEST_EXISTING="$2"; shift ;;
+            --preview) PREVIEW=1 ;;
             --skip-checks|--no-checks) CHECKS=0 ;;
             --strict-security) STRICT_SECURITY=1; SECURITY_REVIEW=1 ;;
             --security-review) SECURITY_REVIEW=1 ;;
@@ -954,6 +973,49 @@ parse_args() {
     done
 }
 
+apply_component_defaults() {
+    case "$COMPONENT" in
+        all) ;;
+        backend|frontend)
+            PACKAGE=0; APPIMAGE=0; WINDOWS_WINE=0; TESTS=0; SMOKE=0; E2E=0
+            MENU_E2E=0; SOFTWARE_GIT_E2E=0 ;;
+        cli)
+            CLI_ONLY=1; PACKAGE=0; APPIMAGE=0; WINDOWS_WINE=0; TESTS=0; SMOKE=0; E2E=0
+            MENU_E2E=0; SOFTWARE_GIT_E2E=0 ;;
+        tarball)
+            PACKAGE=1; APPIMAGE=0; WINDOWS_WINE=0; TESTS=0; SMOKE=0; E2E=0
+            MENU_E2E=0; SOFTWARE_GIT_E2E=0 ;;
+        appimage)
+            PACKAGE=0; APPIMAGE=1; WINDOWS_WINE=0; TESTS=0; SMOKE=0; E2E=0
+            MENU_E2E=0; SOFTWARE_GIT_E2E=0 ;;
+        windows)
+            PACKAGE=0; APPIMAGE=0; WINDOWS_WINE=1; TESTS=0; SMOKE=0; E2E=0
+            MENU_E2E=0; SOFTWARE_GIT_E2E=0 ;;
+        *) die "componente desconocido: $COMPONENT (usa backend, frontend, cli, tarball, appimage, windows o all)" ;;
+    esac
+    if (( CLI_ONLY )) && [[ "$WINDOWS_WINE" -eq 1 ]]; then
+        die '--component cli no se combina con la etapa Windows; usa --component windows para el CLI Windows'
+    fi
+}
+
+test_existing_artifact() {
+    local artifact="$1" failures=0
+    [[ -e "$artifact" ]] || die "no existe el artefacto a probar: $artifact"
+    if [[ "$artifact" == *.tar.gz ]]; then
+        run_suite_test 'Tarball existente' "$ROOT_DIR/tests/linux/tarball-e2e.sh" --tarball "$artifact" --require-gui || failures=$((failures + 1))
+    elif [[ "$artifact" == *-cli.AppImage ]]; then
+        run_suite_test 'CLI AppImage existente' "$ROOT_DIR/tests/linux/cli-e2e.sh" --binary "$artifact" || failures=$((failures + 1))
+    else
+        run_suite_test 'Smoke del artefacto existente' "$ROOT_DIR/tests/linux/smoke.sh" --require-gui --binary "$artifact" || failures=$((failures + 1))
+        run_suite_test 'CLI del artefacto existente' "$ROOT_DIR/tests/linux/cli-e2e.sh" --binary "$artifact" || failures=$((failures + 1))
+        run_suite_test 'E2E funcional del artefacto existente' "$ROOT_DIR/tests/linux/e2e.sh" --require-dependencies --binary "$artifact" || failures=$((failures + 1))
+        run_suite_test 'Menús del artefacto existente' "$ROOT_DIR/tests/linux/menu-e2e.sh" --require-gui --binary "$artifact" || failures=$((failures + 1))
+        run_suite_test 'Stores y Git del artefacto existente' "$ROOT_DIR/tests/linux/software-git-e2e.sh" --binary "$artifact" || failures=$((failures + 1))
+        run_suite_test 'Ayudas nativas del artefacto existente' "$ROOT_DIR/tests/linux/native-help-e2e.sh" --binary "$artifact" || failures=$((failures + 1))
+    fi
+    (( failures == 0 )) || return 1
+}
+
 cargo_args=(--locked)
 [[ "$OFFLINE" -eq 1 ]] && cargo_args+=(--offline)
 
@@ -981,6 +1043,14 @@ configure_cargo_profile() {
 }
 
 parse_args "$@"
+apply_component_defaults
+if (( PREVIEW )); then
+    exec bash "$ROOT_DIR/scripts/live-preview.sh"
+fi
+if [[ -n "$TEST_EXISTING" ]]; then
+    test_existing_artifact "$TEST_EXISTING"
+    exit $?
+fi
 if [[ "$STRICT_SECURITY" -eq 1 || "$SECURITY_REVIEW" -eq 1 || "$AUTO_FIX" -eq 1 ]]; then CHECKS=1; fi
 validate_output_paths
 init_logging "$@"
@@ -989,8 +1059,8 @@ configure_interactive
 if [[ "$STRICT_SECURITY" -eq 1 ]]; then SECURITY_REVIEW=1; fi
 if [[ "$STRICT_SECURITY" -eq 1 || "$SECURITY_REVIEW" -eq 1 || "$AUTO_FIX" -eq 1 ]]; then CHECKS=1; fi
 if [[ "$NO_LOG" -eq 0 ]]; then
-    printf '[CONFIG] clean=%s fast=%s checks=%s strict_security=%s security_review=%s auto_fix=%s tests=%s smoke=%s e2e=%s menu_e2e=%s software_git_e2e=%s package=%s appimage=%s offline=%s jobs=%s windows_wine=%s windows_target=%s release_dir=%s\n' \
-        "$CLEAN" "$FAST" "$CHECKS" "$STRICT_SECURITY" "$SECURITY_REVIEW" "$AUTO_FIX" "$TESTS" "$SMOKE" "$E2E" "$MENU_E2E" "$SOFTWARE_GIT_E2E" "$PACKAGE" "$APPIMAGE" "$OFFLINE" "$JOBS" "$WINDOWS_WINE" "$WINDOWS_TARGET" "$RELEASE_DIR"
+    printf '[CONFIG] component=%s test_existing=%s preview=%s clean=%s fast=%s checks=%s strict_security=%s security_review=%s auto_fix=%s tests=%s smoke=%s e2e=%s menu_e2e=%s software_git_e2e=%s package=%s appimage=%s offline=%s jobs=%s windows_wine=%s windows_target=%s release_dir=%s\n' \
+        "$COMPONENT" "$TEST_EXISTING" "$PREVIEW" "$CLEAN" "$FAST" "$CHECKS" "$STRICT_SECURITY" "$SECURITY_REVIEW" "$AUTO_FIX" "$TESTS" "$SMOKE" "$E2E" "$MENU_E2E" "$SOFTWARE_GIT_E2E" "$PACKAGE" "$APPIMAGE" "$OFFLINE" "$JOBS" "$WINDOWS_WINE" "$WINDOWS_TARGET" "$RELEASE_DIR"
     printf '[CONFIG] signing_required=%s private_key_file=%s public_key_file=%s\n' "$SIGNING_REQUIRED" "$SIGNING_PRIVATE_KEY_FILE" "$SIGNING_PUBLIC_KEY_FILE"
 fi
 
@@ -1071,6 +1141,18 @@ printf '    Versión del proyecto: %s\n' "$VERSION"
 [[ "$ARCH" == x86_64 || "$ARCH" == aarch64 || "$ARCH" == armv7l ]] || warn "arquitectura no probada: $ARCH"
 
 configure_cargo_profile
+
+if (( CLI_ONLY )); then
+    step 'Compilando perfil CLI Rust aislado'
+    CLI_TARGET_DIR="$ROOT_DIR/rust/target/cli-preview"
+    run_logged env CARGO_TARGET_DIR="$CLI_TARGET_DIR" cargo build --manifest-path "$MANIFEST" \
+        "${cargo_args[@]}" --features cli --release
+    CLI_BIN_ARTIFACT="$CLI_TARGET_DIR/release/ltools"
+    [[ -x "$CLI_BIN_ARTIFACT" ]] || die "Cargo terminó, pero no apareció $CLI_BIN_ARTIFACT"
+    run_logged "$CLI_BIN_ARTIFACT" --help >/dev/null
+    ok "perfil CLI generado: $CLI_BIN_ARTIFACT"
+    exit 0
+fi
 
 if [[ "$CLEAN" -eq 1 ]]; then
     step 'Limpiando artefactos Rust'

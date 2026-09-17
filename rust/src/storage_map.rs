@@ -1187,10 +1187,21 @@ fn explain_path_key(path: &Path) -> Option<&'static str> {
             ("/", "explain_system_root"),
             ("/boot", "explain_boot"),
             ("/etc", "explain_system_config"),
+            ("/root", "explain_admin_home"),
+            ("/bin", "explain_system_commands"),
+            ("/sbin", "explain_system_commands"),
+            ("/lib", "explain_system_libraries"),
+            ("/lib32", "explain_system_libraries"),
+            ("/lib64", "explain_system_libraries"),
             ("/usr", "explain_managed_programs"),
+            ("/opt", "explain_optional_software"),
             ("/var", "explain_variable_data"),
             ("/home", "explain_user_data"),
             ("/tmp", "explain_temporary"),
+            ("/mnt", "explain_mount_root"),
+            ("/media", "explain_removable_media"),
+            ("/srv", "explain_service_data"),
+            ("/lost+found", "explain_recovery_data"),
             ("/proc", "explain_virtual_proc"),
             ("/sys", "explain_virtual_sys"),
             ("/dev", "explain_device_nodes"),
@@ -2495,6 +2506,19 @@ mod tests {
                 explain_path_key(&PathBuf::from("/usr/share/example/.cache")),
                 Some("explain_managed_programs")
             );
+            for (path, key) in [
+                ("/root", "explain_admin_home"),
+                ("/bin", "explain_system_commands"),
+                ("/sbin", "explain_system_commands"),
+                ("/lib64", "explain_system_libraries"),
+                ("/opt/example", "explain_optional_software"),
+                ("/mnt/data", "explain_mount_root"),
+                ("/media/example", "explain_removable_media"),
+                ("/srv/example", "explain_service_data"),
+                ("/lost+found", "explain_recovery_data"),
+            ] {
+                assert_eq!(explain_path_key(&PathBuf::from(path)), Some(key), "{path}");
+            }
         }
         #[cfg(windows)]
         {

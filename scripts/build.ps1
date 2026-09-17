@@ -25,6 +25,10 @@ param(
     [switch]$NoRun,
     [switch]$NonInteractive,
     [switch]$NoLog,
+    [ValidateSet('all', 'backend', 'frontend', 'cli', 'package', 'exe')]
+    [string]$Component = 'all',
+    [switch]$Preview,
+    [string]$TestExisting,
     [switch]$RequireSigning,
     [switch]$AllowUnsigned,
     [string]$Log,
@@ -116,6 +120,7 @@ $CargoReleaseDir = Join-Path $TargetDir "$Target\release"
 $Binary = Join-Path $CargoReleaseDir "ltools.exe"
 $GuiBinary = Join-Path $CargoReleaseDir "ltools-gui.exe"
 $CliBinary = Join-Path $CargoReleaseDir "ltools-cli.exe"
+$LivePreviewScript = Join-Path $PSScriptRoot 'live-preview.ps1'
 $PackageArch = if ($Target -match '^aarch64') { 'arm64' } elseif ($Target -match '^i686') { 'x86' } else { 'x86_64' }
 $StatePath = Join-Path $CargoReleaseDir ".build-state.json"
 $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -142,6 +147,9 @@ con parámetros y -Help para mostrar esta ayuda.
   -NoSmoke        Omite solo el smoke Windows posterior a cargo test.
   -NoE2E          Omite solo la E2E Windows posterior a cargo test.
   -NoRun          Alias compatible: omite smoke y E2E, pero conserva cargo test.
+  -Component C    Ejecuta solo all|backend|frontend|cli|package|exe.
+  -Preview        Abre el preview GUI vigilado en un target debug aislado.
+  -TestExisting R Ejecuta smoke y E2E contra un ejecutable ya existente.
   -Target T       Target Windows: x86_64, aarch64 o i686; MSVC o GNU.
   -Output RUTA    Carpeta de salida.
   -ReleaseOutput RUTA
@@ -670,8 +678,38 @@ function Ensure-Target {
         if ($exitCode -ne 0) { throw "rustup terminó con código $exitCode" }
     }
 }
+function Invoke-ExistingWindowsTests([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "No existe el ejecutable que se quiere probar: $Path"
+    }
+    $existingCli = Join-Path (Split-Path -Parent $Path) 'ltools-cli.exe'
+    $smoke = Join-Path $WindowsDir 'tests\smoke.ps1'
+    $e2e = Join-Path $WindowsDir 'tests\e2e.ps1'
+    if ((Test-Path -LiteralPath $smoke -PathType Leaf) -and (Test-Path -LiteralPath $existingCli -PathType Leaf)) {
+        Invoke-Step 'Smoke Windows sobre ejecutable existente' {
+            $exitCode = Invoke-NativeCommand 'powershell.exe' @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $smoke, '-Binary', $Path, '-CliBinary', $existingCli, '-Version', $Version)
+            if ($exitCode -ne 0) { throw "smoke Windows terminó con código $exitCode" }
+        }
+    } else { Write-Log 'AVISO: no se encontró ltools-cli.exe junto al ejecutable; se omite el smoke de perfiles.' }
+    if (Test-Path -LiteralPath $e2e -PathType Leaf) {
+        Invoke-Step 'E2E Windows sobre ejecutable existente' {
+            $exitCode = Invoke-NativeCommand 'powershell.exe' @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $e2e, '-Binary', $Path)
+            if ($exitCode -ne 0) { throw "E2E Windows terminó con código $exitCode" }
+        }
+    }
+}
+
+switch ($Component) {
+    'backend' { $NoPackage = $true; $NoTests = $true; $NoSmoke = $true; $NoE2E = $true; $NoRun = $true }
+    'frontend' { $NoPackage = $true; $NoTests = $true; $NoSmoke = $true; $NoE2E = $true; $NoRun = $true }
+    'package' { $NoSmoke = $true; $NoE2E = $true; $NoRun = $true }
+    'exe' { $NoPackage = $true; $NoTests = $true; $NoSmoke = $true; $NoE2E = $true; $NoRun = $true }
+    'all' { }
+    'cli' { }
+}
 
 Write-Log "WinSlim-Tools Windows build $Version"
+Write-Log "Componente: $Component"
 Write-Log "Target: $Target"
 Write-Log "Perfil: $BuildProfile"
 Write-Log "Salida: $OutputDir"
@@ -698,6 +736,33 @@ if ($StrictSecurity) {
 }
 Invoke-StaticSecurityReview
 Ensure-Target
+
+if ($Preview) {
+    & $LivePreviewScript -Target $Target
+    exit $LASTEXITCODE
+}
+if ($TestExisting) {
+    Invoke-ExistingWindowsTests $TestExisting
+    exit 0
+}
+if ($Component -eq 'cli') {
+    $cliTargetDir = Join-Path $Root 'rust\target\windows-cli'
+    $previousTargetDir = $env:CARGO_TARGET_DIR
+    try {
+        $env:CARGO_TARGET_DIR = $cliTargetDir
+        Invoke-Step 'Compilando perfil CLI Windows aislado' {
+            Invoke-Cargo @('build', '--locked', '--manifest-path', $CargoManifest, '--release', '--target', $Target, '--features', 'cli')
+        }
+    } finally {
+        $env:CARGO_TARGET_DIR = $previousTargetDir
+    }
+    $cliArtifact = Join-Path $cliTargetDir "$Target\release\ltools.exe"
+    if (-not (Test-Path -LiteralPath $cliArtifact -PathType Leaf)) { throw "Cargo no generó el perfil CLI: $cliArtifact" }
+    $publishedCli = Join-Path $OutputDir "ltools-$Version-windows-$PackageArch-cli.exe"
+    Copy-Item -LiteralPath $cliArtifact -Destination $publishedCli -Force
+    Write-Log "Perfil CLI generado: $publishedCli"
+    exit 0
+}
 
 $oldState = $null
 if (Test-Path $StatePath) {

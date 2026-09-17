@@ -972,6 +972,11 @@ grep -Fq "Target -notmatch '^(x86_64|aarch64|i686)-pc-windows-(msvc|gnu)$'" "$RO
 grep -Fq 'localArtifactPrefix = "ltools-$Version-windows-$PackageArch"' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows borra artefactos de otras arquitecturas/versiones del staging'
 grep -Fq '"ltools-$Version-windows-$PackageArch*"' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows sustituye todos los perfiles Windows al publicar una arquitectura'
 grep -Fq 'validate_output_paths' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no valida rutas de salida antes de crear/borrar artefactos'
+grep -Fq -- '--component NAME' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no ofrece builds por componente'
+grep -Fq -- '--test-existing PATH' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no ofrece pruebas sobre artefactos existentes'
+grep -Fq -- '--preview' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no ofrece preview vigilado desde CLI'
+grep -Fq 'apply_component_defaults' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no aplica presets de componentes'
+grep -Fq 'test_existing_artifact' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no tiene matriz de pruebas sobre artefactos existentes'
 if preflight_output="$(TMPDIR="$ROOT_DIR/dist/contracts-tmp" bash "$ROOT_DIR/scripts/build.sh" --non-interactive --no-package --no-appimage --no-windows-wine --output "$ROOT_DIR/dist/contracts-output" --release-dir "$ROOT_DIR/dist/contracts-release" 2>&1)"; then
     fail 'builder Linux aceptó TMPDIR dentro del repositorio'
 fi
