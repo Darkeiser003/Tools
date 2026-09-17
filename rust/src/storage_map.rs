@@ -118,6 +118,15 @@ pub(crate) fn gui_nodes_with_progress(
     progress: &std::sync::atomic::AtomicUsize,
     cancelled: &std::sync::atomic::AtomicBool,
 ) -> Vec<Node> {
+    // Solo lo usa la E2E del botón Cancelar para mantener el trabajo activo
+    // mientras el evento GTK llega al hilo principal; no afecta a usuarios.
+    if let Some(delay) = std::env::var("LTOOLS_GUI_TREE_CANCEL_DELAY_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(|value| value.min(10_000))
+    {
+        std::thread::sleep(std::time::Duration::from_millis(delay));
+    }
     let options = MapOptions {
         roots: Vec::new(),
         depth: 3,

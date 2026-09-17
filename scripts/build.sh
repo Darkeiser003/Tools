@@ -503,6 +503,7 @@ CLEAN=0
 FAST=0
 COMPONENT='all'
 TEST_EXISTING=''
+TEST_EXISTING_CLI=''
 PREVIEW=0
 CHECKS=1
 STRICT_SECURITY=0
@@ -729,6 +730,8 @@ Opciones:
                        Permite instalar wine-mono si el runner no lo incluye.
   --component NAME     Ejecuta solo backend|frontend|cli|tarball|appimage|windows o todo.
   --test-existing PATH Ejecuta la matriz aplicable sobre un binario, AppImage o tarball ya creado.
+  --test-existing-cli PATH
+                       Ejecuta únicamente la E2E de CLI sobre un perfil CLI ya creado.
   --preview            Abre el preview GUI vigilado en un target aislado, sin empaquetar.
   --no-package         Compila, pero no genera el tar.gz.
   --appimage           Exige y genera el AppImage.
@@ -920,6 +923,9 @@ parse_args() {
             --test-existing)
                 (($# >= 2)) || die '--test-existing necesita la ruta de un binario, AppImage o tarball'
                 TEST_EXISTING="$2"; shift ;;
+            --test-existing-cli)
+                (($# >= 2)) || die '--test-existing-cli necesita la ruta de un perfil CLI'
+                TEST_EXISTING_CLI="$2"; shift ;;
             --preview) PREVIEW=1 ;;
             --skip-checks|--no-checks) CHECKS=0 ;;
             --strict-security) STRICT_SECURITY=1; SECURITY_REVIEW=1 ;;
@@ -1049,6 +1055,11 @@ if (( PREVIEW )); then
 fi
 if [[ -n "$TEST_EXISTING" ]]; then
     test_existing_artifact "$TEST_EXISTING"
+    exit $?
+fi
+if [[ -n "$TEST_EXISTING_CLI" ]]; then
+    [[ -e "$TEST_EXISTING_CLI" ]] || die "no existe el perfil CLI a probar: $TEST_EXISTING_CLI"
+    run_suite_test 'CLI existente' "$ROOT_DIR/tests/linux/cli-e2e.sh" --binary "$TEST_EXISTING_CLI"
     exit $?
 fi
 if [[ "$STRICT_SECURITY" -eq 1 || "$SECURITY_REVIEW" -eq 1 || "$AUTO_FIX" -eq 1 ]]; then CHECKS=1; fi

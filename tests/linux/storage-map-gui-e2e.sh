@@ -168,6 +168,8 @@ launch_map() {
     mkdir -p -- "$home" "$state" "$data" "$config" "$home/.local/share/Trash"
     export GDK_BACKEND=x11 GTK_USE_PORTAL=0
     unset WAYLAND_DISPLAY WAYLAND_SOCKET
+    unset LTOOLS_GUI_TREE_CANCEL LTOOLS_GUI_TREE_CANCEL_DELAY_MS \
+        LTOOLS_GUI_TREE_CANCEL_REQUESTED_MARKER LTOOLS_GUI_TREE_CANCELLED_MARKER
     export LTOOLS_NO_MOUNTS=1 LTOOLS_GUI_REQUIRED=1 LTOOLS_DISABLE_GUI=0
     export LTOOLS_GUI_TREE_SMOKE=1 LTOOLS_GUI_TREE_SMOKE_HOLD_MS=45000
     export LTOOLS_GUI_TREE_PATH="$path" LTOOLS_GUI_TREE_MARKER="$RUN_DIR/$tag.marker"
@@ -266,6 +268,49 @@ launch_map() {
     ACTION_ROW_Y=$((large_height - 90))
     xdotool mousemove --window "$MAP_WINDOW" 120 110 click 1
     sleep 0.15
+}
+
+launch_cancel_map() {
+    local path="$1" tag="$2" home="$HOME_DIR"
+    local state="$RUN_DIR/$2-state" data="$RUN_DIR/$2-data" config="$RUN_DIR/$2-config"
+    local requested_marker="$RUN_DIR/$tag.requested"
+    local cancelled_marker="$RUN_DIR/$tag.cancelled"
+    mkdir -p -- "$home" "$state" "$data" "$config" "$home/.local/share/Trash"
+    export GDK_BACKEND=x11 GTK_USE_PORTAL=0
+    unset WAYLAND_DISPLAY WAYLAND_SOCKET
+    export LTOOLS_NO_MOUNTS=1 LTOOLS_GUI_REQUIRED=1 LTOOLS_DISABLE_GUI=0
+    export LTOOLS_GUI_TREE_SMOKE=1 LTOOLS_GUI_TREE_SMOKE_HOLD_MS=45000
+    export LTOOLS_GUI_TREE_CANCEL=1 LTOOLS_GUI_TREE_CANCEL_DELAY_MS=250
+    export LTOOLS_GUI_TREE_PATH="$path" LTOOLS_GUI_TREE_MARKER="$RUN_DIR/$tag.marker"
+    export LTOOLS_GUI_TREE_CANCEL_REQUESTED_MARKER="$requested_marker"
+    export LTOOLS_GUI_TREE_CANCELLED_MARKER="$cancelled_marker"
+    export LTOOLS_GUI_TREE_READY_MARKER="$RUN_DIR/$tag.ready"
+    export LTOOLS_GUI_AUDIT_MARKER="$RUN_DIR/$tag.layout"
+    export LTOOLS_LANG=es HOME="$home" XDG_STATE_HOME="$state" XDG_DATA_HOME="$data" XDG_CONFIG_HOME="$config"
+    "$BIN" >"$RUN_DIR/$tag.log" 2>&1 &
+    GUI_PID=$!
+    MAP_WINDOW=""
+    for _ in {1..100}; do
+        MAP_WINDOW="$(xdotool search --onlyvisible --name "Mapa interactivo" 2>/dev/null | head -n1 || true)"
+        [[ -n "$MAP_WINDOW" ]] && break
+        sleep 0.1
+    done
+    if [[ -z "$MAP_WINDOW" ]]; then
+        cat "$RUN_DIR/$tag.log" >&2 || true
+        echo "No apareció el mapa interactivo para la cancelación ($tag)" >&2
+        return 1
+    fi
+    for _ in {1..100}; do
+        [[ -s "$cancelled_marker" ]] && break
+        sleep 0.1
+    done
+    if [[ ! -s "$requested_marker" || ! -s "$cancelled_marker" ]]; then
+        cat "$RUN_DIR/$tag.log" >&2 || true
+        echo "El mapa no registró correctamente la cancelación ($tag)" >&2
+        return 1
+    fi
+    capture_screen "$CAPTURE_DIR/linux-storage-map-$tag-screen.png"
+    capture_window "$MAP_WINDOW" "$CAPTURE_DIR/linux-storage-map-$tag-window.png"
 }
 
 open_path_form() {
@@ -423,14 +468,36 @@ grep -Fq 'STORAGE_TREE_COLLAPSE_ALL' "$RUN_DIR/map-tree-expansion.layout" || {
 close_gui
 echo 'OK: mapa GUI: flechas triangulares, navegación por teclado y expansión global'
 
+# Cancelación: el fixture tiene muchas entradas y el retardo controlado solo
+# para E2E mantiene el escaneo activo el tiempo suficiente para pulsar el
+# botón GTK real. Se verifican tanto la petición como el estado final.
+CANCEL_ROOT="$RUN_DIR/cancel-root"
+mkdir -p -- "$CANCEL_ROOT"
+for index in $(seq 1 240); do
+    mkdir -p -- "$CANCEL_ROOT/group-$index/nested"
+    printf 'cancel fixture %s\n' "$index" >"$CANCEL_ROOT/group-$index/nested/item.txt"
+done
+launch_cancel_map "$CANCEL_ROOT" map-cancel
+grep -Fq 'STORAGE_TREE_CANCEL_REQUESTED' "$RUN_DIR/map-cancel.layout" || {
+    echo 'La auditoría GUI no registró la petición de cancelación del mapa' >&2
+    exit 47
+}
+grep -Fq 'STORAGE_TREE_CANCELLED' "$RUN_DIR/map-cancel.layout" || {
+    echo 'La auditoría GUI no registró la finalización cancelada del mapa' >&2
+    exit 48
+}
+close_gui
+echo 'OK: mapa GUI: cancelación durante el escaneo y estado final verificables'
+
 # Copiar: Enter debe cancelar; solo un clic explícito en Sí ejecuta la acción.
 launch_map "$SOURCE" map-copy
-open_path_form 228 "Copiar ruta seleccionada" "$COPY"
+# En la fila ancha el botón Cancelar ocupa la posición que antes tenía Copiar.
+open_path_form 330 "Copiar ruta seleccionada" "$COPY"
 capture_screen "$CAPTURE_DIR/linux-storage-map-confirm-no-es.png"
 xdotool key Return
 sleep 0.3
 [[ ! -e "$COPY" ]] || { echo "Enter no respetó la negativa predeterminada" >&2; exit 31; }
-open_path_form 228 "Copiar ruta seleccionada" "$COPY"
+open_path_form 330 "Copiar ruta seleccionada" "$COPY"
 capture_screen "$CAPTURE_DIR/linux-storage-map-confirm-yes-es.png"
 CONFIRM_ACTION=copy
 confirm_yes
@@ -441,7 +508,7 @@ close_gui
 # Mover en una sesión limpia para que ningún modal de resultado intercepte la
 # siguiente pulsación; se comprueba la desaparición del origen y los bytes.
 launch_map "$SOURCE" map-move
-xdotool mousemove --window "$MAP_WINDOW" 320 "$ACTION_ROW_Y" click 1
+xdotool mousemove --window "$MAP_WINDOW" 410 "$ACTION_ROW_Y" click 1
 form=""
 for _ in {1..60}; do
     form="$(xdotool search --onlyvisible --name "Mover ruta seleccionada" 2>/dev/null | tail -n1 || true)"
@@ -467,7 +534,7 @@ echo "OK: mapa GUI: No predeterminado, Copiar y Mover"
 # Papelera: usa un XDG_DATA_HOME aislado; nunca toca la papelera real.
 if command -v gio >/dev/null || command -v trash-put >/dev/null; then
     launch_map "$MOVED" map-trash
-    xdotool mousemove --window "$MAP_WINDOW" 430 "$ACTION_ROW_Y" click 1
+    xdotool mousemove --window "$MAP_WINDOW" 520 "$ACTION_ROW_Y" click 1
     sleep 0.65
     capture_screen "$CAPTURE_DIR/linux-storage-map-confirm-trash-es.png"
     CONFIRM_ACTION=trash

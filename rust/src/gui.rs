@@ -422,6 +422,7 @@ mod linux {
     static GUI_SMOKE_ACTION_BUTTON: AtomicUsize = AtomicUsize::new(0);
     static GUI_GH_NATIVE_BUTTON: AtomicUsize = AtomicUsize::new(0);
     static GUI_STORAGE_TREE_BUTTON: AtomicUsize = AtomicUsize::new(0);
+    static GUI_STORAGE_TREE_CANCEL_BUTTON: AtomicUsize = AtomicUsize::new(0);
     static GUI_NAVIGATION: AtomicUsize = AtomicUsize::new(0);
     static GUI_MODAL_WINDOW: AtomicUsize = AtomicUsize::new(0);
     static GUI_MODAL_VIEW: AtomicUsize = AtomicUsize::new(0);
@@ -929,6 +930,7 @@ mod linux {
         copy: *mut Widget,
         move_: *mut Widget,
         delete: *mut Widget,
+        cancel: *mut Widget,
         close: *mut Widget,
         state: Arc<StorageTreeScanState>,
     }
@@ -945,7 +947,15 @@ mod linux {
         copy: *mut Widget,
         move_: *mut Widget,
         delete: *mut Widget,
+        cancel: *mut Widget,
         close: *mut Widget,
+        cancel_state: Arc<Mutex<Option<Arc<StorageTreeScanState>>>>,
+    }
+
+    struct StorageTreeCancelData {
+        status: *mut Widget,
+        cancel: *mut Widget,
+        cancel_state: Arc<Mutex<Option<Arc<StorageTreeScanState>>>>,
     }
 
     struct StorageTreeSmokeData {
@@ -3851,6 +3861,7 @@ mod linux {
         gtk_widget_set_sensitive(data.copy, 0);
         gtk_widget_set_sensitive(data.move_, 0);
         gtk_widget_set_sensitive(data.delete, 0);
+        gtk_widget_set_sensitive(data.cancel, 1);
         gtk_widget_set_sensitive(data.close, 0);
         gtk_window_set_deletable(data.dialog, 0);
         gtk_widget_show(data.progress);
@@ -3864,6 +3875,9 @@ mod linux {
             started: std::time::Instant::now(),
             result: Mutex::new(None),
         });
+        if let Ok(mut slot) = data.cancel_state.lock() {
+            *slot = Some(Arc::clone(&state));
+        }
         start_storage_tree_scan(Arc::clone(&state), true);
         g_timeout_add(
             120,
@@ -3880,11 +3894,32 @@ mod linux {
                 copy: data.copy,
                 move_: data.move_,
                 delete: data.delete,
+                cancel: data.cancel,
                 close: data.close,
                 state,
             }))
             .cast(),
         );
+    }
+
+    unsafe extern "C" fn on_storage_tree_cancel(_button: *mut Widget, pointer: *mut c_void) {
+        let data = &*(pointer as *const StorageTreeCancelData);
+        let state = data
+            .cancel_state
+            .lock()
+            .ok()
+            .and_then(|slot| slot.as_ref().cloned());
+        if let Some(state) = state {
+            state.timed_out.store(true, Ordering::Release);
+            gtk_widget_set_sensitive(data.cancel, 0);
+            let status =
+                CString::new(crate::i18n::gui_action_text("cancelling")).unwrap_or_default();
+            gtk_label_set_text(data.status, status.as_ptr());
+            gui_audit_event("STORAGE_TREE_CANCEL_REQUESTED");
+            if let Ok(marker) = std::env::var("LTOOLS_GUI_TREE_CANCEL_REQUESTED_MARKER") {
+                let _ = std::fs::write(marker, "cancel-requested\n");
+            }
+        }
     }
 
     unsafe fn add_storage_tree_node(
@@ -3969,6 +4004,7 @@ mod linux {
                 .unwrap_or_default();
                 gtk_label_set_text(data.status, status.as_ptr());
                 gtk_widget_hide(data.progress);
+                gtk_widget_set_sensitive(data.cancel, 0);
                 gtk_widget_set_sensitive(data.close, 1);
                 gtk_window_set_deletable(data.dialog, 1);
                 // This timeout removes the GLib source before the normal
@@ -3995,6 +4031,29 @@ mod linux {
             .lock()
             .ok()
             .and_then(|mut result| result.take());
+        if data.state.timed_out.load(Ordering::Acquire) {
+            gtk_tree_store_clear(data.store);
+            let status = CString::new(crate::i18n::gui_text("cancelled")).unwrap_or_default();
+            gtk_label_set_text(data.status, status.as_ptr());
+            gtk_widget_set_sensitive(data.expand, 0);
+            gtk_widget_set_sensitive(data.collapse, 0);
+            gtk_widget_set_sensitive(data.copy, 0);
+            gtk_widget_set_sensitive(data.move_, 0);
+            gtk_widget_set_sensitive(data.delete, 0);
+            gtk_widget_set_sensitive(
+                data.elevate,
+                crate::storage_map::gui_can_request_privileges() as c_int,
+            );
+            gtk_widget_set_sensitive(data.cancel, 0);
+            gtk_widget_set_sensitive(data.close, 1);
+            gtk_window_set_deletable(data.dialog, 1);
+            gtk_widget_hide(data.progress);
+            gui_audit_event("STORAGE_TREE_CANCELLED");
+            if let Ok(marker) = std::env::var("LTOOLS_GUI_TREE_CANCELLED_MARKER") {
+                let _ = std::fs::write(marker, "cancelled\n");
+            }
+            return 0;
+        }
         match result {
             Some(Ok(nodes)) => {
                 let inaccessible = count_inaccessible(&nodes);
@@ -4024,6 +4083,7 @@ mod linux {
                     data.elevate,
                     crate::storage_map::gui_can_request_privileges() as c_int,
                 );
+                gtk_widget_set_sensitive(data.cancel, 0);
                 gtk_widget_set_sensitive(data.close, 1);
                 gtk_window_set_deletable(data.dialog, 1);
                 gtk_widget_hide(data.progress);
@@ -4041,6 +4101,7 @@ mod linux {
                     data.elevate,
                     crate::storage_map::gui_can_request_privileges() as c_int,
                 );
+                gtk_widget_set_sensitive(data.cancel, 0);
                 gtk_widget_set_sensitive(data.close, 1);
                 gtk_window_set_deletable(data.dialog, 1);
                 gtk_widget_hide(data.progress);
@@ -4053,6 +4114,7 @@ mod linux {
                     data.elevate,
                     crate::storage_map::gui_can_request_privileges() as c_int,
                 );
+                gtk_widget_set_sensitive(data.cancel, 0);
                 gtk_widget_set_sensitive(data.close, 1);
                 gtk_window_set_deletable(data.dialog, 1);
                 gtk_widget_hide(data.progress);
@@ -4201,6 +4263,7 @@ mod linux {
             CString::new(crate::i18n::storage_map_text("expand")).unwrap_or_default();
         let collapse_label =
             CString::new(crate::i18n::storage_map_text("collapse")).unwrap_or_default();
+        let cancel_label = CString::new(crate::i18n::gui_action_text("cancel")).unwrap_or_default();
         let elevate_label =
             CString::new(crate::i18n::storage_map_text("elevate")).unwrap_or_default();
         let copy_label = CString::new(crate::i18n::storage_map_text("copy")).unwrap_or_default();
@@ -4209,6 +4272,8 @@ mod linux {
             CString::new(crate::i18n::storage_map_text("delete")).unwrap_or_default();
         let expand = gtk_button_new_with_label(expand_label.as_ptr());
         let collapse = gtk_button_new_with_label(collapse_label.as_ptr());
+        let cancel = gtk_button_new_with_label(cancel_label.as_ptr());
+        GUI_STORAGE_TREE_CANCEL_BUTTON.store(cancel as usize, Ordering::Release);
         let elevate = gtk_button_new_with_label(elevate_label.as_ptr());
         let copy = gtk_button_new_with_label(copy_label.as_ptr());
         let move_ = gtk_button_new_with_label(move_label.as_ptr());
@@ -4243,6 +4308,19 @@ mod linux {
         }
         let close_label = CString::new(crate::i18n::storage_map_text("close")).unwrap_or_default();
         let close = gtk_dialog_add_button(dialog, close_label.as_ptr(), -6);
+        let cancel_state: Arc<Mutex<Option<Arc<StorageTreeScanState>>>> =
+            Arc::new(Mutex::new(None));
+        let cancel_data = Box::into_raw(Box::new(StorageTreeCancelData {
+            status: scan_status,
+            cancel,
+            cancel_state: Arc::clone(&cancel_state),
+        }));
+        connect(
+            cancel,
+            "clicked",
+            on_storage_tree_cancel,
+            cancel_data.cast(),
+        );
         let elevate_data = Box::into_raw(Box::new(StorageTreeElevateData {
             dialog,
             store,
@@ -4255,7 +4333,9 @@ mod linux {
             copy,
             move_,
             delete,
+            cancel,
             close,
+            cancel_state: Arc::clone(&cancel_state),
         }));
         connect(
             elevate,
@@ -4268,6 +4348,7 @@ mod linux {
             // tree navigation/elevation first, then file management.
             gtk_box_pack_start(tree_controls, expand, 0, 0, 0);
             gtk_box_pack_start(tree_controls, collapse, 0, 0, 0);
+            gtk_box_pack_start(tree_controls, cancel, 0, 0, 0);
             gtk_box_pack_start(tree_controls, elevate, 0, 0, 0);
             gtk_box_pack_start(file_controls, copy, 0, 0, 0);
             gtk_box_pack_start(file_controls, move_, 0, 0, 0);
@@ -4277,6 +4358,7 @@ mod linux {
         } else {
             gtk_box_pack_start(tree_controls, expand, 0, 0, 0);
             gtk_box_pack_start(tree_controls, collapse, 0, 0, 0);
+            gtk_box_pack_start(tree_controls, cancel, 0, 0, 0);
             gtk_box_pack_start(tree_controls, copy, 0, 0, 0);
             gtk_box_pack_start(tree_controls, move_, 0, 0, 0);
             gtk_box_pack_start(tree_controls, delete, 0, 0, 0);
@@ -4299,6 +4381,7 @@ mod linux {
         gtk_widget_set_sensitive(copy, 0);
         gtk_widget_set_sensitive(move_, 0);
         gtk_widget_set_sensitive(delete, 0);
+        gtk_widget_set_sensitive(cancel, 1);
         gtk_widget_set_sensitive(elevate, 0);
         gtk_widget_set_sensitive(close, 0);
         gtk_window_set_deletable(dialog, 0);
@@ -4311,6 +4394,9 @@ mod linux {
             started: std::time::Instant::now(),
             result: Mutex::new(None),
         });
+        if let Ok(mut slot) = cancel_state.lock() {
+            *slot = Some(Arc::clone(&state));
+        }
         start_storage_tree_scan(Arc::clone(&state), false);
         g_timeout_add(
             120,
@@ -4327,6 +4413,7 @@ mod linux {
                 copy,
                 move_,
                 delete,
+                cancel,
                 close,
                 state: Arc::clone(&state),
             }))
@@ -4350,9 +4437,13 @@ mod linux {
                 }))
                 .cast(),
             );
+            if std::env::var_os("LTOOLS_GUI_TREE_CANCEL").is_some() {
+                g_timeout_add(10, Some(trigger_storage_tree_cancel), null_mut());
+            }
         }
         gtk_dialog_run(dialog);
         gtk_widget_destroy(dialog);
+        GUI_STORAGE_TREE_CANCEL_BUTTON.store(0, Ordering::Release);
         g_object_unref(store);
     }
 
@@ -4382,6 +4473,15 @@ mod linux {
 
     unsafe extern "C" fn trigger_storage_tree_smoke(_data: *mut c_void) -> c_int {
         let button = GUI_STORAGE_TREE_BUTTON.load(Ordering::Acquire) as *mut Widget;
+        if button.is_null() {
+            return 1;
+        }
+        gtk_button_clicked(button);
+        0
+    }
+
+    unsafe extern "C" fn trigger_storage_tree_cancel(_data: *mut c_void) -> c_int {
+        let button = GUI_STORAGE_TREE_CANCEL_BUTTON.load(Ordering::Acquire) as *mut Widget;
         if button.is_null() {
             return 1;
         }
