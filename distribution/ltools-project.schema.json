@@ -6,7 +6,7 @@
   "type": "object",
   "required": [
     "$schema", "schema", "id", "name", "repository", "homepage", "releases",
-    "latest_release_api", "release_manifest", "license", "integration", "distribution", "platforms", "verification"
+    "latest_release_api", "release_manifest", "license", "features", "integration", "action_catalog", "distribution", "platforms", "verification"
   ],
   "properties": {
     "$schema": { "type": "string", "format": "uri" },
@@ -20,6 +20,12 @@
     "latest_release_api": { "type": "string", "format": "uri" },
     "release_manifest": { "type": "string", "format": "uri" },
     "license": { "type": "string", "minLength": 1 },
+    "features": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
     "integration": {
       "type": "object",
       "required": ["optional", "descriptor", "descriptors", "hosts", "standalone_releases_require_it"],
@@ -35,8 +41,26 @@
           },
           "additionalProperties": false
         },
-        "hosts": { "const": ["LTerminal", "WinSlim Terminal"] },
+        "hosts": { "const": ["LTerminal", "WTools"] },
         "standalone_releases_require_it": { "const": false }
+      },
+      "additionalProperties": false
+    },
+    "action_catalog": {
+      "type": "object",
+      "required": ["catalog", "schema", "descriptors"],
+      "properties": {
+        "catalog": { "const": "ltools-actions.json" },
+        "schema": { "const": "ltools-actions.schema.json" },
+        "descriptors": {
+          "type": "object",
+          "required": ["linux", "windows"],
+          "properties": {
+            "linux": { "const": "ltools-actions.json" },
+            "windows": { "const": "ltools-actions-windows.json" }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },

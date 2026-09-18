@@ -71,6 +71,12 @@ try {
     Run @('doctor')
     Run @('defaults')
     Run @('storage', 'tools')
+    $snapshotStatus = Run @('snapshots', 'status')
+    if ($snapshotStatus -notmatch 'Backends de instantáneas') { throw 'El estado Windows de instantáneas no respondió.' }
+    $snapshotPlan = Run @('--dry-run', 'snapshots', 'create', '--backend', 'vss', '--volume', 'C:')
+    if ($snapshotPlan -notmatch 'vssadmin(?:\.exe)? create shadow /for=C:') {
+        throw 'El dry-run Windows de VSS no generó la orden nativa esperada.'
+    }
     Run @('registry', 'status')
     # Las acciones nativas Windows se prueban directamente, no solo mediante
     # el catálogo: así un cambio en PowerShell, DiskPart o la detección de
@@ -130,14 +136,36 @@ try {
     }
     $capabilityOutput = Run @('capabilities', '--format', 'json')
     $capabilityJson = $capabilityOutput | ConvertFrom-Json
-    if ($capabilityJson.application -ne 'WinSlim-Tools' -or $capabilityJson.platform -ne 'windows') {
-        throw 'La identidad Windows del contrato no es WinSlim-Tools.'
+    if ($capabilityJson.application -ne 'WTools' -or $capabilityJson.platform -ne 'windows') {
+        throw 'La identidad Windows del contrato no es WTools.'
     }
     $legacyCapabilityOutput = Run @('--ltools-capabilities', '--format', 'json')
     $legacyCapabilityJson = $legacyCapabilityOutput | ConvertFrom-Json
     if ($legacyCapabilityJson.schema -ne 'ltools-capabilities-v1' -or
         $legacyCapabilityJson.platform -ne 'windows') {
         throw 'El alias de capacidades usado por AppRun/terminales no funciona en Windows.'
+    }
+    $capabilityActions = @($capabilityJson.actions)
+    $capabilityKeys = @($capabilityActions | ForEach-Object { [string]$_.actionKey })
+    $capabilityOperations = @($capabilityActions | ForEach-Object { [string]$_.operation })
+    $capabilityActionIds = @($capabilityActions | ForEach-Object { [string]$_.actionId })
+    if ($capabilityActions.Count -eq 0 -or
+        ($capabilityKeys | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -ne 0 -or
+        (@($capabilityKeys | Sort-Object -Unique).Count -ne $capabilityKeys.Count) -or
+        ($capabilityOperations | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -ne 0 -or
+        (@($capabilityOperations | Sort-Object -Unique).Count -ne $capabilityOperations.Count) -or
+        ($capabilityActionIds | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -ne 0 -or
+        (@($capabilityActionIds | Sort-Object -Unique).Count -ne $capabilityActionIds.Count) -or
+        ($capabilityActions | Where-Object {
+            [string]$_.id -cne [string]$_.actionId -or
+            [string]$_.actionId -cne [string]$_.canonicalKey -or
+            [string]$_.actionKey -notmatch '^[a-z0-9]+(?:[.-][a-z0-9]+)+$' -or
+            [string]::IsNullOrWhiteSpace([string]$_.scope) -or
+            [string]::IsNullOrWhiteSpace([string]$_.operation) -or
+            ([string]$_.actionKey).Split('.')[0] -ne [string]$_.scope -or
+            [string]$_.operation -cne ([string]$_.actionKey -replace '\.', '-')
+        }).Count -ne 0) {
+        throw 'El contrato de capacidades Windows contiene actionKey/scope/operation vacíos, duplicados o inconsistentes.'
     }
     if ($capabilityJson.host_tools.Count -lt 12 -or
         -not ($capabilityJson.host_tools | Where-Object { $_.category -eq 'system' }) -or

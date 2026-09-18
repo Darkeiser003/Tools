@@ -18,12 +18,17 @@ if [[ ! -x "$ROOT_DIR/ltools-cli" && ! -x "$ROOT_DIR/ltools-cli.sh" ]]; then
 fi
 [[ -x "$ROOT_DIR/scripts/build.sh" ]] || fail 'falta el menú unificado Linux en scripts/build.sh'
 [[ -f "$ROOT_DIR/scripts/build.ps1" ]] || fail 'falta el builder/menú unificado Windows en scripts/build.ps1'
+[[ -x "$ROOT_DIR/tests/ltools-integration-contract.sh" ]] || fail 'falta la auditoría del contrato proveedor LTools/LTerminal'
+grep -Fq 'ltools-actions-v1' "$ROOT_DIR/tests/ltools-integration-contract.sh" || fail 'contrato proveedor sin validación del catálogo de acciones'
+grep -Fq 'ltools-terminal-integration-v1' "$ROOT_DIR/tests/ltools-integration-contract.sh" || fail 'contrato proveedor sin validación del descriptor de terminal'
 grep -Fq 'Preview y ejecutar' "$ROOT_DIR/scripts/build.sh" || fail 'menú Linux sin sección de preview'
 grep -Fq 'Probar lo ya compilado' "$ROOT_DIR/scripts/build.sh" || fail 'menú Linux sin sección de pruebas sin recompilar'
 grep -Fq 'E2E de menús GUI y flujos funcionales' "$ROOT_DIR/scripts/build.sh" || fail 'menú de pruebas Linux no distingue la auditoría nativa independiente'
 grep -Fq -- '--require-gui --binary "$RELEASE_BIN"' "$ROOT_DIR/scripts/build.sh" || fail 'pruebas manuales Linux permiten omitir la GUI'
 grep -Fq -- '--require-dependencies --binary "$RELEASE_BIN"' "$ROOT_DIR/scripts/build.sh" || fail 'pruebas manuales Linux permiten omitir dependencias'
 grep -Fq 'tests/scripts-syntax.sh' "$ROOT_DIR/scripts/build.sh" || fail 'builder/menú Linux no ofrece parseo de scripts sin compilar'
+grep -Fq 'tests/build-plan.sh' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no prueba su modo plan antes de compilar'
+[[ -x "$ROOT_DIR/tests/build-plan.sh" ]] || fail 'falta la prueba ejecutable del plan de build'
 grep -Fq 'third-party-licenses.sh' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no integra el paquete de licencias de dependencias'
 grep -Fq 'ssh-signing.sh' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no integra firmas SSH de release'
 [[ -f "$ROOT_DIR/LICENSE" ]] || fail 'falta la licencia MIT del proyecto'
@@ -64,9 +69,18 @@ grep -Fq 'fuzz/target fuzz/artifacts reports' "$ROOT_DIR/scripts/build.sh" || fa
 grep -Fq 'targets) generated=(rust/target fuzz/target' "$ROOT_DIR/scripts/build.sh" || fail 'limpiador de targets omite fuzz/target'
 grep -Fq 'fuzz/target' "$ROOT_DIR/README.md" && grep -Fq -- '--keep-release --yes' "$ROOT_DIR/README.md" || fail 'README no documenta la limpieza completa conservando release'
 grep -Fxq '/release/' "$ROOT_DIR/.gitignore" || fail 'Git no excluye la carpeta de releases locales predeterminada'
+grep -Fxq '/.release.*' "$ROOT_DIR/.gitignore" || fail 'Git no excluye staging temporal de publicación .release.*'
 grep -Fq 'fn cli_all_index()' "$ROOT_DIR/rust/src/guides.rs" || fail 'guide cli all no agrega las guías detalladas de sus familias'
+grep -Fq 'mod snapshots;' "$ROOT_DIR/rust/src/main.rs" || fail 'el backend Rust no integra el módulo de instantáneas'
+grep -Fq '"status" => status()' "$ROOT_DIR/rust/src/snapshots.rs" || fail 'falta la consulta de estado de instantáneas'
+grep -Fq 'snapshots.status' "$ROOT_DIR/rust/src/actions.rs" || fail 'el catálogo declarativo no publica snapshots.status'
+grep -Fq '"snapshots"' "$ROOT_DIR/distribution/ltools-project.json" || fail 'el descriptor de distribución no declara snapshots'
+grep -Fq '"features"' "$ROOT_DIR/distribution/ltools-project.schema.json" || fail 'el esquema del descriptor no valida features'
+grep -Fq 'SNAPSHOTS' "$ROOT_DIR/rust/src/guides.rs" || fail 'la guía no documenta instantáneas'
+grep -Fq 'tsnap' "$ROOT_DIR/rust/src/aliases.rs" || fail 'el gestor de alias no publica tsnap'
+grep -Fq 'snapshot-plan.tsv' "$ROOT_DIR/.gitignore" || fail 'gitignore no excluye planes de snapshot generados'
 grep -Fq 'ÍNDICE DETALLADO DE FAMILIAS CLI' "$ROOT_DIR/tests/linux/menu-e2e.sh" || fail 'E2E no valida el índice CLI detallado'
-for github_workflow in ci.yml workflow-security.yml dependency-review.yml scorecard.yml codeql.yml osv-scanner.yml; do
+for github_workflow in ci.yml release.yml workflow-security.yml dependency-review.yml scorecard.yml codeql.yml osv-scanner.yml; do
     [[ -f "$ROOT_DIR/.github/workflows/$github_workflow" ]] ||
         fail "falta el workflow GitHub Actions $github_workflow"
 done
@@ -84,6 +98,12 @@ grep -Fq '  pull_request:' "$ROOT_DIR/.github/workflows/dependency-review.yml" |
 grep -Fq -- '--windows-wine --no-appimage --allow-unsigned' "$ROOT_DIR/.github/workflows/ci.yml" || fail 'CI Linux no ejecuta build completa con Wine'
 grep -Fq -- '-Force -AllowUnsigned -NonInteractive' "$ROOT_DIR/.github/workflows/ci.yml" || fail 'CI Windows no fuerza build y pruebas nativas completas'
 grep -Fq -- '--strict-security' "$ROOT_DIR/.github/workflows/ci.yml" || fail 'la build Linux de CI no exige ambas auditorías Rust'
+grep -Fq 'needs: [linux, windows]' "$ROOT_DIR/.github/workflows/release.yml" || fail 'release workflow no espera a Linux y Windows nativos'
+grep -Fq 'release-signature' "$ROOT_DIR/.github/workflows/release.yml" || fail 'release workflow no firma el manifiesto Ed25519'
+grep -Fq 'ltools_ssh_sign_manifest' "$ROOT_DIR/.github/workflows/release.yml" || fail 'release workflow no firma el manifiesto con SSH'
+grep -Fq 'tests/release-e2e.sh' "$ROOT_DIR/.github/workflows/release.yml" || fail 'release workflow no ejecuta la E2E final antes de publicar'
+grep -Fq 'LTOOLS_SIGNING_PRIVATE_KEY' "$ROOT_DIR/.github/workflows/release.yml" || fail 'release workflow no exige la clave Ed25519 privada en el job aislado'
+grep -Fq 'LTOOLS_SSH_SIGNING_PRIVATE_KEY' "$ROOT_DIR/.github/workflows/release.yml" || fail 'release workflow no exige la clave SSH privada en el job aislado'
 grep -Fq 'ripgrep' "$ROOT_DIR/.github/workflows/ci.yml" || fail 'CI no instala ripgrep, requerido por los contratos y scripts de prueba'
 grep -Fq 'taiki-e/install-action@' "$ROOT_DIR/.github/workflows/ci.yml" || fail 'la build estricta de CI no instala las herramientas Cargo verificadas'
 grep -Fq 'tool: cargo-audit,cargo-deny' "$ROOT_DIR/.github/workflows/ci.yml" || fail 'la build estricta no prepara cargo-audit y cargo-deny'
@@ -100,7 +120,7 @@ grep -Fq 'crate = "libfuzzer-sys", allow = ["NCSA"]' "$ROOT_DIR/fuzz/deny.toml" 
 grep -Fq "LTOOLS_REQUIRE_LOOPBACK_TESTS: '1'" "$ROOT_DIR/.github/workflows/ci.yml" || fail 'CI permite omitir la integración HTTP local del actualizador'
 grep -Fq 'production_http_transport_fetches_metadata_and_streams_artifacts' "$ROOT_DIR/rust/src/updater.rs" || fail 'el cliente HTTP de producción no tiene una E2E de transporte'
 grep -Fq 'let account_label_width = (content_width * 48 / 100).clamp(120, 300);' "$ROOT_DIR/rust/src/gui.rs" || fail 'las etiquetas del formulario de cuentas Windows no se adaptan al ancho disponible'
-grep -Fq 'gui_account_text("field_details")' "$ROOT_DIR/rust/src/gui.rs" || fail 'el formulario Windows no localiza los argumentos de cuenta'
+grep -Fq 'gui_management_text("field_details")' "$ROOT_DIR/rust/src/gui.rs" || fail 'el formulario Windows no localiza los argumentos de gestión'
 grep -Fq 'options.write(true).create_new(true)' "$ROOT_DIR/rust/src/gui.rs" || fail 'el archivo temporal de contraseña no se crea de forma exclusiva'
 grep -Fq 'options.mode(0o600)' "$ROOT_DIR/rust/src/gui.rs" || fail 'el archivo temporal de contraseña no nace con permisos privados en Unix'
 grep -Fq 'TemporaryFileCleanup' "$ROOT_DIR/rust/src/gui.rs" || fail 'las GUI no limpian el archivo de contraseña al finalizar o fallar'
@@ -130,6 +150,14 @@ grep -Fq "advanced-security: \${{ github.event_name != 'pull_request' || github.
 grep -Fq 'permissions:' "$ROOT_DIR/.github/workflows/workflow-security.yml" || fail 'zizmor no declara permisos acotados'
 grep -Fq 'security-events: write' "$ROOT_DIR/.github/workflows/workflow-security.yml" || fail 'zizmor no publica hallazgos en Code Scanning'
 grep -Fq -- '--auto-fix' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no ofrece autocorrección Rust optativa'
+grep -Fq -- '--plan' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no ofrece plan sin ejecución'
+grep -Fq 'alias compatible; no existe un frontend separado' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no explica que frontend es un alias de la GUI Rust'
+grep -Fq '[switch]$Plan' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no ofrece plan sin ejecución'
+grep -Fq '[string]$TestExistingCli' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no ofrece pruebas del CLI existente'
+grep -Fq 'Invoke-ExistingWindowsCliTests' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no implementa pruebas del CLI existente'
+grep -Fq '[string]$TestExistingRelease' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no ofrece validación de una release existente'
+grep -Fq 'Invoke-ExistingWindowsReleaseTests' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no implementa validación de una release existente'
+grep -Fq 'Release existente: manifiesto, hashes y firmas' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no valida una release existente sin recompilar'
 grep -Fq 'cargo_args=(--locked)' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux puede reescribir Cargo.lock durante el análisis'
 grep -Fq 'if [[ "$OFFLINE" -eq 0 ]] && [[ -w "$cargo_home_dir/advisory-dbs" ]]; then' "$ROOT_DIR/scripts/build.sh" || fail 'cargo-deny offline no aísla su caché aunque el directorio advisory-dbs sea escribible'
 grep -Fq 'OUTPUT_DIR="$output_real"' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux conserva rutas de salida relativas al cambiar de directorio'
@@ -145,7 +173,9 @@ grep -Fq 'STRICT_SECURITY' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux n
 grep -Fq 'audit_args+=(--no-fetch)' "$ROOT_DIR/scripts/build.sh" || fail 'modo offline no impide que cargo-audit intente acceder a la red'
 grep -Fq '[switch]$StrictSecurity' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no ofrece auditoría de dependencias estricta'
 grep -Fq '[switch]$AutoFix' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no ofrece autocorrección Rust optativa'
-grep -Fq -- "-cnotin @('true', 'false')" "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no sanea el booleano de incremental heredado inválido para Cargo'
+grep -Fq 'Set-Item -LiteralPath "Env:$name" -Value $normalizedValue' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no normaliza variables de perfil antes de invocar Cargo'
+grep -Fq "-ieq 'true'" "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no acepta el valor true heredado de incremental'
+grep -Fq 'CARGO_PROFILE_RELEASE_CODEGEN_UNITS' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no sanea codegen_units heredado'
 grep -Fq "\$cargoArgs = @('build', '--locked'" "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows puede resolver dependencias distintas de Cargo.lock'
 grep -Fq '[AUTO-FIX]' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no marca las autocorrecciones'
 grep -Fq '[AUTO-FIXED]' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no enumera archivos Rust autocorregidos'
@@ -261,8 +291,8 @@ grep -Fq '(?im)^$([regex]::Escape($toolName))[\t ]{2,}' "$ROOT_DIR/windows/tests
 grep -Fq 'Salida recibida:' "$ROOT_DIR/windows/tests/e2e.ps1" || fail 'E2E Windows no conserva la salida de herramientas nativas cuando falla una fila'
 grep -Fq '"winslim" => Some((7, "winslim"' "$ROOT_DIR/rust/src/guides.rs" || fail 'guía Windows no reconoce la pantalla WinSlim condicional'
 grep -Fq "gui_pages+=(7)" "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'E2E Wine no abre/captura la página WinSlim cuando WSCore existe'
-grep -Fq 'no tiene disponible la pantalla WinSlim' "$ROOT_DIR/windows/tests/e2e.ps1" || fail 'E2E Windows no valida el caso WinSlim sin WSCore'
-grep -Fq "xdotool search --onlyvisible --name 'WinSlim-Tools'" "$ROOT_DIR/tests/linux/windows-wine-gui.sh" || fail 'E2E Windows/Wine busca un título distinto del producto Windows'
+grep -Fq 'no tiene disponible la pantalla WTools' "$ROOT_DIR/windows/tests/e2e.ps1" || fail 'E2E Windows no valida el caso WTools sin WSCore'
+grep -Fq "xdotool search --onlyvisible --name 'WTools'" "$ROOT_DIR/tests/linux/windows-wine-gui.sh" || fail 'E2E Windows/Wine busca un título distinto del producto Windows'
 grep -Fq 'button_y=$((87 + page * 50))' "$ROOT_DIR/tests/linux/windows-wine-gui.sh" || fail 'E2E Windows/Wine no deriva la coordenada real de cada categoría'
 grep -Fq 'GUI_PAGE_OK=%s' "$ROOT_DIR/tests/linux/windows-wine-gui.sh" || fail 'E2E Windows/Wine no registra la apertura individual de cada categoría'
 grep -Fq 'C:\\windows\\temp\\$gui_marker_name' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'E2E Windows/Wine guarda el marcador en una ruta visible desde Win32'
@@ -346,6 +376,8 @@ grep -Fq '"scripts"' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows sin 
 grep -Fq "^rust/(src/|crates/|tests/|Cargo" "$ROOT_DIR/scripts/lib/build-state.ps1" || fail 'builder Windows sin clasificar cambios de pruebas Rust'
 grep -Fq '"rust/crates"' "$ROOT_DIR/scripts/build.ps1" || fail 'fingerprint incremental Windows omite las bibliotecas Rust compartidas'
 grep -Fq '"$ROOT_DIR/rust/crates"' "$ROOT_DIR/scripts/live-preview.sh" || fail 'preview vigilado Linux omite las bibliotecas Rust compartidas'
+grep -Fq '0\.[0-9]+' "$ROOT_DIR/scripts/live-preview.sh" || fail 'preview Linux no acepta intervalos fraccionarios positivos'
+grep -Fq 'LTOOLS_GUI_REQUIRED=1' "$ROOT_DIR/scripts/live-preview.sh" || fail 'preview Linux puede ocultar un fallo GTK con el menú de consola'
 grep -Fq "Join-Path \$root 'rust\\crates'" "$ROOT_DIR/scripts/live-preview.ps1" || fail 'preview vigilado Windows omite las bibliotecas Rust compartidas'
 grep -Fq '"deny.toml", "fuzz\Cargo.toml", "fuzz\Cargo.lock", "fuzz\deny.toml"' "$ROOT_DIR/scripts/build.ps1" || fail 'fingerprint incremental Windows omite las políticas y lockfiles del fuzzer'
 grep -Fq 'foreach ($key in (Get-LToolsMapKeys $Old))' "$ROOT_DIR/scripts/lib/build-state.ps1" || fail 'builder Windows no incorpora archivos borrados a la matriz de impacto'
@@ -359,6 +391,7 @@ grep -Fq 'rust/target|windows/(target|bin|obj)|dist' "$ROOT_DIR/scripts/build.ps
 [[ -f "$ROOT_DIR/windows/build.cmd" ]] || fail 'falta el lanzador build.cmd Windows'
 [[ -f "$ROOT_DIR/windows/ltools.ps1" ]] || fail 'falta el lanzador PowerShell Windows'
 [[ -f "$ROOT_DIR/windows/ltools.cmd" ]] || fail 'falta el lanzador CMD Windows'
+[[ -f "$ROOT_DIR/windows/wtools.cmd" ]] || fail 'falta el lanzador CMD público WTools'
 [[ -f "$ROOT_DIR/windows/ltools-cli.ps1" ]] || fail 'falta el lanzador CLI PowerShell Windows'
 [[ -f "$ROOT_DIR/windows/ltools-cli.cmd" ]] || fail 'falta el lanzador CLI CMD Windows'
 [[ -f "$ROOT_DIR/windows/tests/smoke.ps1" ]] || fail 'falta el smoke Windows'
@@ -428,7 +461,8 @@ grep -Fq 'storage_tree_text_width_tracks_the_actual_viewport' "$ROOT_DIR/rust/sr
 grep -Fq 'small_height > 480' "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" || fail 'E2E del mapa no detecta recorte vertical en pantallas compactas'
 grep -Fq -- '--screen 640x480 --layout-only' "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" || fail 'E2E del mapa no abre en una pantalla real de 640x480'
 grep -Fq 'LTOOLS_GUI_TREE_READY_MARKER' "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" || fail 'E2E del mapa no espera al árbol poblado antes de validar el layout'
-grep -Fq 'ACTION_ROW_Y=$((large_height - 90))' "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" || fail 'E2E del mapa usa una coordenada obsoleta para la fila de acciones'
+grep -Fq 'ACTION_ROW_Y=$((large_height - 110))' "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" || fail 'E2E del mapa usa una coordenada obsoleta para la fila de acciones'
+grep -Fq 'STORAGE_TREE_CONTROLS_LAYOUT' "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" || fail 'E2E del mapa no detecta el layout completo de dos filas'
 grep -Fq 'capture_geometry" != "$SCREEN' "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" || fail 'E2E del mapa no comprueba la resolución real de la captura compacta'
 grep -Fq 'resized-640x480-on-${SCREEN}' "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" || fail 'captura redimensionada mal etiquetada como pantalla 640x480'
 grep -Fq 'xdotool getdisplaygeometry' "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" || fail 'E2E del mapa depende de coordenadas absolutas en el diálogo'
@@ -437,7 +471,7 @@ grep -Fq 'acciones reales del mapa GUI cubiertas por el smoke' "$ROOT_DIR/script
 grep -Fq 'Smoke fallido; temporales conservados para diagnóstico' "$ROOT_DIR/tests/linux/smoke.sh" || fail 'smoke elimina la evidencia temporal al fallar'
 grep -Fq 'body_scrolled' "$ROOT_DIR/rust/src/gui.rs" || fail 'el mapa no mantiene el contenido en un viewport acotado'
 grep -Fq 'gtk_box_pack_start(content, outer, 1, 1, 0)' "$ROOT_DIR/rust/src/gui.rs" || fail 'el contenido del mapa no se expande dentro del viewport'
-grep -Fq 'if screen_width < 820' "$ROOT_DIR/rust/src/gui.rs" || fail 'los controles del mapa no se reorganizan en pantallas estrechas'
+grep -Fq 'STORAGE_TREE_CONTROLS_LAYOUT\trows=2\tbuttons=7' "$ROOT_DIR/rust/src/gui.rs" || fail 'los controles del mapa no se reorganizan en filas completas'
 grep -Fq 'check_surface git git' "$ROOT_DIR/tests/linux/native-help-e2e.sh" || fail 'ayudas nativas sin contrato GUI para Git'
 grep -Fq 'check_surface gh git' "$ROOT_DIR/tests/linux/native-help-e2e.sh" || fail 'ayudas nativas sin contrato GUI para GitHub CLI'
 grep -Fq 'ssh|scp|sftp)' "$ROOT_DIR/tests/linux/native-help-e2e.sh" || fail 'la E2E usa el argumento de ayuda nativo de OpenSSH'
@@ -622,6 +656,10 @@ grep -Fq 'launch_standard_terminal' "$ROOT_DIR/appimage/AppRun" || fail 'AppRun 
 grep -Fq 'select_shell' "$ROOT_DIR/appimage/AppRun" || fail 'AppRun sin selección de shell autónoma'
 grep -Fq 'INTERACTIVE_TTY=0' "$ROOT_DIR/scripts/build.sh" || fail 'builder sin detección TTY previa al log'
 grep -Fq 'ltools-capabilities-v1' "$ROOT_DIR/rust/src/compat.rs" || fail 'backend sin contrato JSON de capacidades'
+grep -Fq 'qualifiedActionKey' "$ROOT_DIR/rust/src/compat.rs" || fail 'capabilities sin identidad cualificada por plataforma'
+grep -Fq 'canonicalKey' "$ROOT_DIR/rust/src/compat.rs" || fail 'capabilities sin clave canónica global'
+grep -Fq 'displayName' "$ROOT_DIR/appimage/ltools-capabilities.schema.json" || fail 'esquema de capacidades sin nombre descriptivo'
+grep -Fq 'menuPath' "$ROOT_DIR/appimage/ltools-terminal.schema.json" || fail 'esquema de terminal sin ruta de menú'
 grep -Fq 'host_tools' "$ROOT_DIR/rust/src/compat.rs" || fail 'contrato sin catálogo de herramientas del anfitrión'
 grep -Fq 'rsync' "$ROOT_DIR/rust/src/platform/linux.rs" || fail 'catálogo Linux sin migración verificada'
 grep -Fq 'sc.exe' "$ROOT_DIR/rust/src/platform/windows.rs" || fail 'catálogo Windows sin control de servicios'
@@ -640,6 +678,10 @@ grep -Fq 'restauró la release previa' "$ROOT_DIR/scripts/lib/publish.sh" || fai
 linux_release_e2e_line="$(grep -nF 'run_logged "$ROOT_DIR/tests/release-e2e.sh"' "$ROOT_DIR/scripts/build.sh" | head -n1 | cut -d: -f1)"
 linux_release_promote_line="$(grep -nF 'ltools_promote_release_staging ||' "$ROOT_DIR/scripts/build.sh" | head -n1 | cut -d: -f1)"
 [[ -n "$linux_release_e2e_line" && -n "$linux_release_promote_line" && "$linux_release_e2e_line" -lt "$linux_release_promote_line" ]] || fail 'builder Linux promueve release antes del E2E'
+linux_release_finalize_call_line="$(grep -nF '    finalize_release_after_runtime_tests' "$ROOT_DIR/scripts/build.sh" | tail -n1 | cut -d: -f1)"
+linux_runtime_test_line="$(grep -nF 'run_logged "$ROOT_DIR/tests/linux/software-git-e2e.sh"' "$ROOT_DIR/scripts/build.sh" | tail -n1 | cut -d: -f1)"
+[[ -n "$linux_release_finalize_call_line" && -n "$linux_runtime_test_line" && "$linux_runtime_test_line" -lt "$linux_release_finalize_call_line" ]] || fail 'builder Linux firma/promueve release antes de terminar las E2E funcionales'
+grep -Fq 'RELEASE_FINALIZE_PENDING=1' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no aplaza explícitamente la firma hasta el final'
 grep -Fq 'release_e2e_args+=(--no-package)' "$ROOT_DIR/scripts/build.sh" || fail 'build sin propagar --no-package a la E2E release'
 grep -Fq 'release_e2e_args+=(--no-appimage)' "$ROOT_DIR/scripts/build.sh" || fail 'build sin propagar --no-appimage a la E2E release'
 grep -Fq 'docker-compose-primary-installer' "$ROOT_DIR/rust/src/platform/linux.rs" || fail 'catálogo Linux sin instalador primario de Compose'
@@ -752,10 +794,63 @@ grep -Fq 'mod diagnostics;' "$ROOT_DIR/rust/src/main.rs" || fail 'backend sin m�
 grep -Fq 'native-diagnostics' "$ROOT_DIR/rust/src/compat.rs" || fail 'contrato sin diagnóstico nativo'
 grep -Fq 'ltools-diagnostics-v1' "$ROOT_DIR/rust/src/diagnostics/mod.rs" || fail 'diagnóstico sin esquema JSON propio'
 grep -Fq 'standalone_releases_require_it' "$ROOT_DIR/rust/src/compat.rs" || fail 'descriptor sin independencia del host de terminal'
-grep -Fq 'WinSlim Terminal' "$ROOT_DIR/rust/src/compat.rs" || fail 'descriptor sin host Windows WinSlim Terminal'
+grep -Fq '"WTools"' "$ROOT_DIR/rust/src/compat.rs" || fail 'descriptor sin host Windows WTools'
 grep -Fq 'requiresCommands' "$ROOT_DIR/rust/src/compat.rs" || fail 'descriptor sin requisitos declarativos de acciones'
+grep -Fq 'canonical_action_key' "$ROOT_DIR/rust/src/compat.rs" || fail 'descriptor sin identidad canónica namespaced de acciones'
+grep -Fq 'fn action_metadata' "$ROOT_DIR/rust/src/actions.rs" || fail 'catálogo backend sin nombres y descripciones explícitos'
+grep -Fq 'qualifiedActionKey' "$ROOT_DIR/rust/src/actions.rs" || fail 'catálogo backend sin identidad cualificada por plataforma'
+grep -Fq 'canonicalKey' "$ROOT_DIR/rust/src/actions.rs" || fail 'catálogo backend sin clave canónica global'
+grep -Fq 'actionId' "$ROOT_DIR/rust/src/actions.rs" || fail 'catálogo backend sin identificador global explícito'
+grep -Fq 'displayName' "$ROOT_DIR/appimage/ltools-actions.schema.json" || fail 'esquema de acciones sin nombre descriptivo'
+grep -Fq 'actionId' "$ROOT_DIR/appimage/ltools-actions.schema.json" || fail 'esquema de acciones sin identificador global explícito'
+grep -Fq 'action_group' "$ROOT_DIR/rust/src/actions.rs" || fail 'catálogo backend sin grupos legibles para usuarios'
+grep -Fq 'invocation' "$ROOT_DIR/rust/src/actions.rs" || fail 'catálogo backend sin invocación declarativa'
+if command -v jq >/dev/null 2>&1; then
+    jq -e '(.properties.actions.items.required | index("invocation")) != null and
+        (.properties.actions.items.required | index("legacyId")) != null and
+        .properties.actions.items.properties.id.pattern == "^(?:linux|windows)\\.[a-z0-9]+(?:[.-][a-z0-9]+)+$" and
+        .properties.actions.items.properties.invocation.required == ["executable", "args", "target"] and
+        .properties.actions.items.properties.invocation.properties.args.prefixItems[2].pattern == "^(?:linux|windows)\\.[a-z0-9]+(?:[.-][a-z0-9]+)+$" and
+        .properties.actions.items.properties.aliases.uniqueItems == true and
+        .properties.actions.items.properties.supports.uniqueItems == true' \
+        "$ROOT_DIR/appimage/ltools-actions.schema.json" >/dev/null \
+        || fail 'esquema de acciones no exige invocación completa ni listas sin duplicados'
+fi
+grep -Fq 'action_selector_matches(candidate, id)' "$ROOT_DIR/rust/src/actions.rs" || fail 'actions run no acepta la identidad canónica del catálogo'
+grep -Fq 'actionKey' "$ROOT_DIR/appimage/ltools-terminal.schema.json" || fail 'esquema terminal sin identidad canónica de acciones'
+grep -Fq 'actionId' "$ROOT_DIR/appimage/ltools-terminal.schema.json" || fail 'esquema terminal sin identificador global explícito'
+grep -Fq 'actionId' "$ROOT_DIR/appimage/ltools-capabilities.schema.json" || fail 'esquema de capacidades sin identificador global explícito'
+[[ -f "$ROOT_DIR/appimage/ltools-actions.schema.json" ]] || fail 'falta el esquema publicable del catálogo de acciones'
+if command -v jq >/dev/null 2>&1; then
+    jq -e '.additionalProperties == false and
+        (.properties.environment.required == ["language", "state_directory", "no_auto_terminal", "cli_profile"]) and
+        (.properties.terminal_integration.required | index("working_directory")) != null and
+        (."$defs" | has("ui_context") and has("entrypoint") and has("distribution_entry")) and
+        (."$defs".ui_context.properties.language.additionalProperties == false) and
+        (."$defs".ui_context.properties.theme.additionalProperties == false)' \
+        "$ROOT_DIR/appimage/ltools-capabilities.schema.json" >/dev/null \
+        || fail 'esquema de capacidades abierto o con definiciones anidadas incompletas'
+fi
+grep -Fq 'ltools-actions.json' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux sin catálogo de acciones publicable'
+grep -Fq 'ltools-actions.schema.json' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows sin esquema de acciones publicable'
+grep -Fq '(.invocation.args == ["actions", "run", .actionId])' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux valida invocaciones con selector corto en vez de actionId global'
+grep -Fq 'ltools-actions-windows.json' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows sin descriptor de acciones separado'
+grep -Fq '(Join-Path $OutputDir $licenseZipName)' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows intenta leer licencias desde un staging ya eliminado'
+grep -Fq 'action_catalog' "$ROOT_DIR/distribution/ltools-project.json" || fail 'descriptor de proyecto sin referencia al catálogo de acciones'
+grep -Fq 'ltools-actions-windows.json' "$ROOT_DIR/distribution/ltools-project.json" || fail 'descriptor de proyecto sin catálogo Windows separado'
+grep -Fq 'validate_action_descriptor' "$ROOT_DIR/tests/release-e2e.sh" || fail 'E2E de release no valida la identidad canónica de las acciones'
+grep -Fq 'actionKey vacíos o duplicados' "$ROOT_DIR/windows/tests/release-e2e.ps1" || fail 'E2E Windows de release no valida actionKey'
+grep -Fq 'operation vacíos o duplicados' "$ROOT_DIR/windows/tests/release-e2e.ps1" || fail 'E2E Windows de release no valida operaciones únicas'
+grep -Fq "operation -ceq (\$key -replace '\\.', '-')" "$ROOT_DIR/windows/tests/release-e2e.ps1" || fail 'E2E Windows de release no relaciona operation con actionKey'
+grep -Fq "application -eq 'WTools'" "$ROOT_DIR/windows/tests/release-e2e.ps1" || fail 'E2E Windows de release no valida identidad nativa WTools'
+grep -Fq 'operation == (.actionKey | gsub' "$ROOT_DIR/tests/release-e2e.sh" || fail 'E2E de release no relaciona operation con actionKey'
 grep -Fq 'workingDirectory' "$ROOT_DIR/rust/src/compat.rs" || fail 'descriptor sin directorio de trabajo declarativo'
 grep -Fq 'supports' "$ROOT_DIR/rust/src/compat.rs" || fail 'descriptor sin capacidades de acción'
+grep -Fq 'confirmation == "none"' "$ROOT_DIR/rust/src/compat.rs" || fail 'descriptor no protege la coherencia entre safe y confirmation'
+grep -Fq 'safe == true' "$ROOT_DIR/tests/release-e2e.sh" || fail 'E2E release no valida la política safe/confirmation'
+grep -Fq '[bool]$action.safe -eq ([string]$action.confirmation -ceq '\''none'\'')' "$ROOT_DIR/windows/tests/release-e2e.ps1" || fail 'E2E Windows release no valida la política safe/confirmation'
+grep -Fq 'native.network.status' "$ROOT_DIR/README.md" || fail 'README no documenta la identidad canónica de las acciones nativas'
+! grep -Fq '`native.network-status`' "$ROOT_DIR/README.md" || fail 'README conserva una identidad obsoleta de acción nativa'
 [[ -f "$ROOT_DIR/rust/src/automation.rs" ]] || fail 'falta el registro Rust de automatizaciones'
 grep -Fq '"modify" | "edit" | "update"' "$ROOT_DIR/rust/src/automation.rs" || fail 'automatizaciones sin edición CLI'
 grep -Fq 'automation-modify' "$ROOT_DIR/rust/src/automation.rs" || fail 'automatizaciones sin registro transaccional de edición'
@@ -773,6 +868,8 @@ grep -Fq 'capabilities --format json' "$ROOT_DIR/scripts/build.sh" || fail 'buil
 grep -Fq 'capabilities --format json' "$ROOT_DIR/scripts/build.ps1" || fail 'build Windows sin descriptor JSON generado'
 grep -Fq 'capabilities --format terminal-json' "$ROOT_DIR/scripts/build.sh" || fail 'build Linux sin descriptor JSON de terminal'
 grep -Fq 'capabilities --format terminal-json' "$ROOT_DIR/scripts/build.ps1" || fail 'build Windows sin descriptor JSON de terminal'
+grep -Fq '"id": { "enum": ["lterminal", "wtools"] }' "$ROOT_DIR/appimage/ltools-terminal.schema.json" || fail 'el esquema terminal conserva el identificador antiguo de Windows'
+grep -Fq '("ltools.exe", "WTools", "wtools")' "$ROOT_DIR/rust/src/compat.rs" || fail 'el descriptor Windows no usa host.id canónico wtools'
 grep -Fq 'CAPABILITIES_SCHEMA_ARTIFACT=' "$ROOT_DIR/scripts/build.sh" || fail 'build Linux no publica el esquema de capacidades'
 grep -Fq "ltools-capabilities.schema.json') -Destination \$packageStageDir" "$ROOT_DIR/scripts/build.ps1" || fail 'build Windows no prepara el esquema de capacidades en staging'
 grep -Fq 'ltools-capabilities.schema.json' "$ROOT_DIR/tests/release-e2e.sh" || fail 'E2E release no exige el esquema de capacidades'
@@ -802,7 +899,7 @@ grep -Fq '[[ -s "$WINDOWS_WINE_TARGET_EXE" ]]' "$ROOT_DIR/scripts/build.sh" || f
 grep -Fq 'pruebas bajo Wine omitidas por configuración' "$ROOT_DIR/scripts/build.sh" || fail 'build no distingue la compilación Windows de las pruebas Wine omitidas'
 grep -Fq 'run_windows_timeout --elevate native tools' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'E2E Wine no comprueba que el inventario nativo siga siendo de solo lectura con elevación predeterminada'
 grep -Fq 'run_windows_readonly_timeout()' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'E2E Wine no aísla los reintentos de consultas idempotentes'
-grep -Fq 'windows_winslim_status="$(run_windows_readonly_timeout winslim status' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'E2E Wine reintenta acciones potencialmente mutables en vez del estado WinSlim'
+grep -Fq 'windows_winslim_status="$(run_windows_readonly_timeout wtools status' "$ROOT_DIR/tests/linux/windows-wine.sh" || fail 'E2E Wine reintenta acciones potencialmente mutables en vez del estado WTools'
 grep -Fq 'WINDOWS_LAUNCHERS' "$ROOT_DIR/rust/src/games.rs" || fail 'inventario Windows sin catálogo nativo de lanzadores'
 grep -Fq 'games-windows-native' "$ROOT_DIR/rust/src/games.rs" || fail 'inventario Windows sin modo nativo explícito'
 grep -Fq 'No se buscan prefijos Wine' "$ROOT_DIR/rust/src/games.rs" || fail 'inventario Windows no documenta la exclusión de Wine'
@@ -870,7 +967,7 @@ grep -Fq 'Format-Table' "$ROOT_DIR/rust/src/accounts/windows.rs" || fail 'cuenta
 grep -Fq 'ACCOUNT_CREATE_FIELDS' "$ROOT_DIR/rust/src/gui.rs" || fail 'GUI sin formulario de creación de cuentas'
 grep -Fq 'ACCOUNT_MEMBERSHIP_FIELDS' "$ROOT_DIR/rust/src/gui.rs" || fail 'GUI sin formulario de membresías'
 grep -Fq 'on_account_password' "$ROOT_DIR/rust/src/gui.rs" || fail 'GUI sin cambio de contraseña seguro'
-grep -Fq 'crate::i18n::accounts_label()' "$ROOT_DIR/rust/src/gui.rs" || fail 'GUI sin submenú localizado propio de cuentas'
+grep -Fq 'crate::i18n::menu_section_label()' "$ROOT_DIR/rust/src/gui.rs" || fail 'GUI sin submenú localizado propio de gestión'
 grep -Fq 'findmnt' "$ROOT_DIR/rust/src/storage/linux.rs" || fail 'desmontaje Linux sin resolver dispositivo a punto de montaje'
 grep -Fq 'fn requires_privilege' "$ROOT_DIR/rust/src/native/linux.rs" || fail 'acciones nativas Linux sin política de elevación'
 grep -Fq '"firewall-disable"' "$ROOT_DIR/rust/src/native/linux.rs" || fail 'desactivación UFW sin operación transaccional propia'
@@ -924,7 +1021,7 @@ if command -v jq >/dev/null 2>&1; then
         .verification.additional_signatures[0].detached_signature == "SHA256SUMS.txt.sshsig"' \
         "$ROOT_DIR/distribution/ltools-project.json" >/dev/null \
         || fail 'descriptor declarativo sin contrato de firma Ed25519'
-    jq -e '.integration.hosts == ["LTerminal", "WinSlim Terminal"] and
+    jq -e '.integration.hosts == ["LTerminal", "WTools"] and
         .distribution.source == "github-releases" and
         .distribution.update_strategy == "stage-verify-promote" and
         .platforms.linux.install.entrypoint == "ltools" and
@@ -962,7 +1059,8 @@ grep -Fq 'Test-LToolsBuildBinariesUntrusted' "$ROOT_DIR/scripts/build.ps1" || fa
 grep -Fq '$forceCleanTarget = $buildBinariesTampered -or $buildBinariesUntrusted' "$ROOT_DIR/scripts/build.ps1" || fail 'la corrupción incremental no activa una limpieza real del target'
 grep -Fq 'if ($Clean -or $forceCleanTarget)' "$ROOT_DIR/scripts/build.ps1" || fail 'Cargo podría reutilizar una caché binaria alterada al repaquetar'
 grep -Fq '$StatePath = Join-Path $CargoReleaseDir ".build-state.json"' "$ROOT_DIR/scripts/build.ps1" || fail 'estado de perfil Windows no es compartido entre rutas de salida'
-grep -Fq "[Environment]::SetEnvironmentVariable(\$name, \$previousCargoProfile[\$name], 'Process')" "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows deja variables de perfil rápido contaminando builds posteriores'
+grep -Fq 'Set-Item -LiteralPath "Env:$name" -Value $previousValue' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no restaura las variables de perfil rápido tras Cargo'
+grep -Fq 'Remove-Item -LiteralPath "Env:$name"' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows no elimina entradas de entorno de Cargo que quedarían vacías'
 grep -Fq 'Assert-SafeOutputPath $OutputDir' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows permite borrar desde una ruta de salida raíz/peligrosa'
 grep -Fq "Assert-SafeOutputPath \$TargetDir 'Cargo target Windows'" "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows permite compilar o limpiar a través de una junction del target'
 grep -Fq 'Assert-DisjointOutputPaths $OutputDir $PublishDir' "$ROOT_DIR/scripts/build.ps1" || fail 'builder Windows permite staging y publicación solapados'
@@ -982,6 +1080,7 @@ grep -Fq -- '--test-existing-cli PATH' "$ROOT_DIR/scripts/build.sh" || fail 'bui
 grep -Fq -- '--preview' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no ofrece preview vigilado desde CLI'
 grep -Fq 'apply_component_defaults' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no aplica presets de componentes'
 grep -Fq 'test_existing_artifact' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no tiene matriz de pruebas sobre artefactos existentes'
+grep -Fq 'if [[ "$SIGNING_PUBLIC_KEY_ENV_ACTIVE" -eq 0 && -r "$SIGNING_PUBLIC_KEY_FILE" ]]; then' "$ROOT_DIR/scripts/build.sh" || fail 'builder Linux no reutiliza la clave pública configurada al probar releases existentes'
 if preflight_output="$(TMPDIR="$ROOT_DIR/dist/contracts-tmp" bash "$ROOT_DIR/scripts/build.sh" --non-interactive --no-package --no-appimage --no-windows-wine --output "$ROOT_DIR/dist/contracts-output" --release-dir "$ROOT_DIR/dist/contracts-release" 2>&1)"; then
     fail 'builder Linux aceptó TMPDIR dentro del repositorio'
 fi

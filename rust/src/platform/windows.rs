@@ -175,7 +175,7 @@ pub fn run_with_privilege(program: &str, args: &[String], dry_run: bool) -> io::
             );
             return Ok(Command::new(nsudo).args(nsudo_args).status()?.success());
         }
-        eprintln!("Se solicitó NSudo para esta sesión, pero no se encontró en WinSlim ni en PATH.");
+        eprintln!("Se solicitó NSudo para esta sesión, pero no se encontró en WTools ni en PATH.");
         return Ok(false);
     }
     let shell = if command_exists("powershell") {

@@ -28,6 +28,7 @@ mod release;
 mod report;
 mod shortcuts;
 mod signature;
+mod snapshots;
 mod software;
 mod storage;
 mod storage_map;
@@ -164,7 +165,7 @@ fn usage() {
     println!("  boot        {}", boot::help());
     // This is a fixed translated menu label, never account data or credentials.
     // codeql[rust/cleartext-logging]
-    println!("  accounts    {}", i18n::accounts_label());
+    println!("  accounts    {}", i18n::menu_section_label());
     println!("  native      {}", i18n::native_label());
     println!("              {}", native::help());
     println!("              {}", i18n::system_options());
@@ -174,11 +175,14 @@ fn usage() {
     println!("  rollback    {}", i18n::text("help.rollback"));
     println!("  storage     {}", i18n::storage_help());
     println!("              {}", storage_map::help());
+    println!("  snapshots   {}", snapshots::help());
     println!("  registry    {}", i18n::registry_help());
     println!("  capabilities  {}", i18n::text("help.capabilities"));
     println!("  privileges    {}", i18n::help_extra("privileges"));
     #[cfg(windows)]
-    println!("  winslim       {}", i18n::help_extra("winslim"));
+    println!("  wtools        {}", i18n::help_extra("winslim"));
+    #[cfg(windows)]
+    println!("                (winslim sigue disponible como alias técnico)");
     println!(
         "  release-manifest  {}",
         i18n::help_extra("release_manifest")
@@ -254,7 +258,7 @@ fn execute_action(command: &str, ctx: &Context, args: &[String]) -> Result<(), S
         "aliases" | "alias" => aliases::run(args),
         "actions" | "action-catalog" => actions::run(ctx, args),
         "privileges" | "privilege" | "elevation" => privilege::run(),
-        "winslim" => winslim::run(ctx, args),
+        "wtools" | "winslim" => winslim::run(ctx, args),
         "menu-audit-inventory" => category_menu(ctx, MenuCategory::AuditInventory),
         "menu-dependencies" => category_menu(ctx, MenuCategory::Dependencies),
         "menu-native-tools" => category_menu(ctx, MenuCategory::NativeTools),
@@ -288,6 +292,7 @@ fn execute_action(command: &str, ctx: &Context, args: &[String]) -> Result<(), S
         "native" | "native-tools" => native::run(ctx, args),
         "diagnostics" | "diag" | "health" => diagnostics::run(ctx, args),
         "storage" | "disks" | "partitions" => storage::run(ctx, args),
+        "snapshots" | "snapshot" | "restore-points" => snapshots::run(ctx, args),
         "registry" | "records" => registry::run(ctx, args),
         "doctor" | "diagnose" => doctor_action(ctx, args),
         "defaults" | "paths" => show_defaults(ctx),
@@ -438,6 +443,9 @@ fn command_needs_plan(command: &str, args: &[String], dry_run: bool, explicit: b
             "manage",
             "files",
         ]),
+        "snapshots" | "snapshot" | "restore-points" => {
+            has_any(&["create", "delete", "restore", "rollback"])
+        }
         "system" | "services" | "systemctl" => has_any(&[
             "start",
             "stop",
@@ -1201,7 +1209,7 @@ fn category_menu(ctx: &Context, category: MenuCategory) -> Result<(), String> {
                 println!("  3) {}", i18n::diagnostics_label());
                 // This is a fixed translated menu label, never account data or credentials.
                 // codeql[rust/cleartext-logging]
-                println!("  4) {}", i18n::accounts_label());
+                println!("  4) {}", i18n::menu_section_label());
                 println!("  5) {}", i18n::native_action_text("tools_status"));
                 println!("  6) {}", i18n::native_label());
                 println!("  7) {}", i18n::boot_label());
@@ -1426,7 +1434,7 @@ fn native_tools_menu(ctx: &Context) -> Result<(), String> {
         println!("  2) {}", i18n::text("menu.system"));
         // This is a fixed translated menu label, never account data or credentials.
         // codeql[rust/cleartext-logging]
-        println!("  3) {}", i18n::accounts_label());
+        println!("  3) {}", i18n::menu_section_label());
         println!("  4) {}", i18n::native_label());
         println!("  5) {}", i18n::boot_label());
         println!("  6) {}", i18n::registry_label());

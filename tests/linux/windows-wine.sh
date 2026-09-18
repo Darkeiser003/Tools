@@ -373,7 +373,7 @@ package_windows_artifact() {
     mkdir -p -- "$portable_dir"
     cp -a -- "$WINEXE" "$portable_dir/ltools.exe"
     cp -a -- "$WINEXE_CLI" "$portable_dir/ltools-cli.exe"
-    for launcher in ltools.ps1 ltools.cmd ltools-cli.ps1 ltools-cli.cmd; do
+    for launcher in ltools.ps1 ltools.cmd wtools.cmd ltools-cli.ps1 ltools-cli.cmd; do
         [[ -f "$ROOT_DIR/windows/$launcher" ]] || {
             rm -rf -- "$portable_dir"
             die "falta el lanzador Windows $launcher para el ZIP portable"
@@ -385,7 +385,7 @@ package_windows_artifact() {
     grep -Fq 'ISC' "$portable_dir/THIRD-PARTY-LICENSES/INDEX.txt" || die 'bundle Windows sin dependencias ISC'
     grep -Fq 'CDLA-Permissive-2.0' "$portable_dir/THIRD-PARTY-LICENSES/INDEX.txt" || die 'bundle Windows sin licencia de raíces CDLA'
     # Una release combinada puede tener el descriptor Linux como canónico;
-    # publica además la variante Windows para WinSlim Terminal.
+    # publica además la variante Windows para WTools.
     if [[ -z "${CAPABILITIES:-}" ]]; then
         CAPABILITIES="$(run_windows_timeout capabilities --format json 2>>"$LOG_PATH")" \
             || die 'no se pudo generar el descriptor de capacidades Windows'
@@ -394,16 +394,26 @@ package_windows_artifact() {
         TERMINAL_JSON="$(run_windows_timeout capabilities --format terminal-json 2>>"$LOG_PATH")" \
             || die 'no se pudo generar el descriptor de terminal Windows'
     fi
+    if [[ -z "${ACTIONS_JSON:-}" ]]; then
+        ACTIONS_JSON="$(run_windows_timeout actions list --format json 2>>"$LOG_PATH")" \
+            || die 'no se pudo generar el catálogo de acciones Windows'
+    fi
     printf '%s\n' "$CAPABILITIES" > "$ARTIFACT_STAGING/ltools-capabilities-windows.json"
+    printf '%s\n' "$ACTIONS_JSON" > "$ARTIFACT_STAGING/ltools-actions.json"
     printf '%s\n' "$TERMINAL_JSON" > "$ARTIFACT_STAGING/ltools-terminal-windows.json"
     cp -a -- "$ARTIFACT_STAGING/ltools-capabilities-windows.json" "$portable_dir/"
+    cp -a -- "$ARTIFACT_STAGING/ltools-actions.json" "$portable_dir/"
     cp -a -- "$ARTIFACT_STAGING/ltools-terminal-windows.json" "$portable_dir/"
     cp -a -- "$ROOT_DIR/appimage/ltools-capabilities.schema.json" "$portable_dir/"
+    cp -a -- "$ROOT_DIR/appimage/ltools-actions.schema.json" "$portable_dir/"
     cp -a -- "$ROOT_DIR/appimage/ltools-terminal.schema.json" "$portable_dir/"
+    cp -a -- "$ROOT_DIR/appimage/ltools-capabilities.schema.json" "$ARTIFACT_STAGING/"
+    cp -a -- "$ROOT_DIR/appimage/ltools-actions.schema.json" "$ARTIFACT_STAGING/"
+    cp -a -- "$ROOT_DIR/appimage/ltools-terminal.schema.json" "$ARTIFACT_STAGING/"
     cp -a -- "$ROOT_DIR/README.md" "$portable_dir/"
     cp -a -- "$ROOT_DIR/LICENSE" "$portable_dir/"
     cat > "$portable_dir/BUILD-INFO.txt" <<EOF
-WinSlim-Tools $VERSION
+WTools $VERSION
 Platform: Windows
 Target: $TARGET
 GUI: ltools.exe
@@ -434,12 +444,26 @@ EOF
     mkdir -p -- "$PACKAGE_TEST_DIR"
     unzip -q "$package_zip" -d "$PACKAGE_TEST_DIR" || die 'no se pudo extraer el ZIP portable Windows'
     for required_file in \
-        ltools.exe ltools-cli.exe ltools.ps1 ltools.cmd ltools-cli.ps1 ltools-cli.cmd \
-        ltools-capabilities-windows.json ltools-terminal-windows.json \
-        ltools-capabilities.schema.json ltools-terminal.schema.json README.md LICENSE BUILD-INFO.txt \
+        ltools.exe ltools-cli.exe ltools.ps1 ltools.cmd wtools.cmd ltools-cli.ps1 ltools-cli.cmd \
+        ltools-capabilities-windows.json ltools-actions.json ltools-terminal-windows.json \
+        ltools-capabilities.schema.json ltools-actions.schema.json ltools-terminal.schema.json README.md LICENSE BUILD-INFO.txt \
         THIRD-PARTY-LICENSES/INDEX.txt; do
         [[ -s "$PACKAGE_TEST_DIR/$required_file" ]] || die "el ZIP portable omite $required_file"
     done
+    if command -v jq >/dev/null 2>&1; then
+        jq -e '.schema == "ltools-actions-v1" and .platform == "windows" and
+            (.actions | type == "array" and length > 0) and
+            (([.actions[].actionKey] | unique | length) == (.actions | length)) and
+            (([.actions[].operation] | unique | length) == (.actions | length)) and
+            (([.actions[].qualifiedActionKey] | unique | length) == (.actions | length)) and
+            all(.actions[]; .scope == (.actionKey | split(".")[0]) and
+                .operation == (.actionKey | gsub("\\."; "-")) and
+                (.description | type == "string" and length > 0))' \
+            "$PACKAGE_TEST_DIR/ltools-actions.json" >/dev/null ||
+            die 'el catálogo de acciones Windows extraído no cumple el contrato'
+        jq empty "$PACKAGE_TEST_DIR/ltools-actions.schema.json" >/dev/null ||
+            die 'el esquema de acciones Windows extraído no es JSON válido'
+    fi
     grep -Fq 'ISC' "$PACKAGE_TEST_DIR/THIRD-PARTY-LICENSES/INDEX.txt" || die 'el ZIP Windows extraído omite ISC'
     grep -Fq 'CDLA-Permissive-2.0' "$PACKAGE_TEST_DIR/THIRD-PARTY-LICENSES/INDEX.txt" || die 'el ZIP Windows extraído omite CDLA'
     grep -Fq 'MIT License' "$PACKAGE_TEST_DIR/LICENSE" || die 'el ZIP Windows extraído omite la licencia MIT del proyecto'
@@ -477,7 +501,7 @@ EOF
 
     cat > "$metadata" <<EOF
 {
-  "application": "WinSlim-Tools",
+  "application": "WTools",
   "version": "$VERSION",
   "platform": "windows",
   "architecture": "$package_arch",
@@ -575,6 +599,30 @@ run_cli_timeout() {
     fi
 }
 
+# UMU-Wine puede reiniciar wineserver entre dos procesos CLI muy cortos. Las
+# consultas y `aliases ensure` son idempotentes, por lo que un reset de socket
+# no debe convertir una prueba funcional válida en un falso negativo. Las
+# operaciones mutables no usan este wrapper: sus fallos se conservan tal cual.
+run_cli_idempotent_timeout() {
+    local attempt output status
+    for attempt in 1 2 3; do
+        if output="$(run_cli_timeout "$@" 2>&1)"; then
+            printf '%s\n' "$output"
+            return 0
+        fi
+        status=$?
+        if (( attempt < 3 )) && grep -Eiq 'wine client error|connection reset by peer|wineserver.*(socket|connect)' <<<"$output"; then
+            printf 'AVISO Wine perdió la conexión durante una operación CLI idempotente; reintentando (%s/3).\n' \
+                "$attempt" >&2
+            printf '%s\n' "$output" >> "$LOG_PATH"
+            sleep 1
+            continue
+        fi
+        printf '%s\n' "$output" >&2
+        return "$status"
+    done
+}
+
 run_windows_executable_timeout() {
     local executable="$1"
     shift
@@ -617,7 +665,7 @@ else
     ok 'runner Windows inicia una consola aislada'
 
     # Solo en el prefijo temporal propio se simula C:\WSCore para cubrir el
-    # menú WinSlim condicional sin tocar instalaciones ni prefijos del usuario.
+    # menú WTools condicional sin tocar instalaciones ni prefijos del usuario.
     if [[ "$CREATED_TEMP_PREFIX" -eq 1 ]]; then
         mkdir -p -- "$PREFIX/drive_c/WSCore"
     fi
@@ -650,6 +698,16 @@ else
         die 'el ejecutable CLI Windows sin argumentos no muestra la ayuda'
     ok 'perfil CLI Windows separado abre en modo consola y sin argumentos no inicia la GUI'
 
+    snapshot_status_output="$(run_windows_timeout snapshots status 2>>"$LOG_PATH")" ||
+        die 'snapshots status Windows bajo Wine falló'
+    grep -Fq 'Backends de instantáneas' <<<"$snapshot_status_output" ||
+        die 'snapshots status Windows no devolvió el inventario esperado'
+    snapshot_plan_output="$(run_windows_timeout --dry-run snapshots create --backend vss --volume C: 2>>"$LOG_PATH")" ||
+        die 'snapshots VSS dry-run Windows bajo Wine falló'
+    grep -Eq 'vssadmin(\.exe)? create shadow /for=C:' <<<"$snapshot_plan_output" ||
+        die 'snapshots VSS Windows no generó el comando nativo esperado'
+    ok 'snapshots Windows: estado, backends de plataforma y dry-run VSS'
+
     # Validación real del gestor de alias dentro del prefijo Wine. Las rutas
     # son Windows deliberadamente: el registro y el lanzador deben respetar
     # APPDATA/LOCALAPPDATA y no reutilizar rutas POSIX.
@@ -660,12 +718,14 @@ else
     windows_alias_home="C:\\ltools-alias-config-${windows_alias_run_id}"
     windows_alias_bin="C:\\ltools-alias-bin-${windows_alias_run_id}"
     windows_alias_ensure="$(LTOOLS_ALIAS_HOME="$windows_alias_home" \
-        LTOOLS_ALIAS_BIN="$windows_alias_bin" run_cli_timeout aliases ensure 2>>"$LOG_PATH")" ||
+        LTOOLS_ALIAS_BIN="$windows_alias_bin" run_cli_idempotent_timeout aliases ensure)" ||
         die 'aliases ensure Windows bajo Wine falló'
     grep -Fq 'Alias predeterminados listos:' <<<"$windows_alias_ensure" ||
         die 'aliases ensure Windows no creó el registro'
     grep -Fq 'Lanzador creado:' <<<"$windows_alias_ensure" ||
         die 'aliases ensure Windows no creó el lanzador'
+    grep -Fq 'wtools.cmd' <<<"$windows_alias_ensure" ||
+        die 'aliases ensure Windows no creó el lanzador público wtools.cmd'
     windows_alias_list="$(LTOOLS_ALIAS_HOME="$windows_alias_home" run_cli_timeout aliases list 2>>"$LOG_PATH")" ||
         die 'aliases list Windows bajo Wine falló'
     grep -Fq 'tnet -> native network' <<<"$windows_alias_list" ||
@@ -748,6 +808,14 @@ else
         printf '%s\n' "$CAPABILITIES" | jq -e '
             (.schema == "ltools-capabilities-v1") and
             (.platform == "windows") and
+            (([.actions[].actionKey] | unique | length) == (.actions | length)) and
+            (([.actions[].operation] | unique | length) == (.actions | length)) and
+            (([.actions[].label] | unique | length) == (.actions | length)) and
+            (([.actions[].shortLabel] | unique | length) == (.actions | length)) and
+            (([.actions[].qualifiedActionKey] | unique | length) == (.actions | length)) and
+            (([.actions[].canonicalKey] | unique | length) == (.actions | length)) and
+            (([.actions[].displayName] | unique | length) == (.actions | length)) and
+            all(.actions[]; (.actionKey | type == "string" and test("^[a-z0-9]+(?:[.-][a-z0-9]+)+$")) and (.scope | type == "string" and length > 0) and (.operation | type == "string" and length > 0) and (.operation == (.actionKey | gsub("\\."; "-"))) and (.qualifiedActionKey == ("windows." + .actionKey)) and (.canonicalKey == .qualifiedActionKey) and (.displayName | type == "string" and length > 0) and (.menuPath | type == "array" and length == 2)) and
             any(.host_tools[]; .id == "docker-compose" and .installable == true) and
             any(.host_tools[]; .id == "kubectl" and .installable == true) and
             ([.host_tools[] | select((.id == "docker" or .id == "podman" or .id == "podman-compose" or .id == "helm" or .id == "kind" or .id == "minikube" or .id == "k3d" or .id == "k9s") and .installable == true)] | length == 0) and
@@ -767,11 +835,23 @@ else
     fi
     TERMINAL_JSON="$(run_windows_timeout capabilities --format terminal-json 2>>"$LOG_PATH")" ||
         die 'capabilities --format terminal-json falló'
-    printf '%s\n' "$TERMINAL_JSON" | grep -Fq 'WinSlim Terminal' ||
-        die 'el descriptor terminal Windows no declara WinSlim Terminal'
+    printf '%s\n' "$TERMINAL_JSON" | grep -Fq 'WTools' ||
+        die 'el descriptor terminal Windows no declara WTools'
+    printf '%s\n' "$TERMINAL_JSON" | grep -Fq '"id": "wtools"' ||
+        die 'el descriptor terminal Windows no declara host.id wtools'
     printf '%s\n' "$TERMINAL_JSON" | grep -Fq '"executable":"ltools.exe"' ||
         die 'el descriptor terminal Windows no usa ltools.exe'
-    ok 'descriptor declarativo WinSlim Terminal'
+    if command -v jq >/dev/null 2>&1; then
+        printf '%s\n' "$TERMINAL_JSON" | jq -e '
+            .schema == "ltools-terminal-integration-v1" and .platform == "windows" and
+            .host.id == "wtools" and
+            (([.actions[].qualifiedActionKey] | unique | length) == (.actions | length)) and
+            (([.actions[].canonicalKey] | unique | length) == (.actions | length)) and
+            (([.actions[].displayName] | unique | length) == (.actions | length)) and
+            all(.actions[]; .qualifiedActionKey == ("windows." + .actionKey) and .canonicalKey == .qualifiedActionKey and (.menuPath | type == "array" and length == 2))
+        ' >/dev/null || die 'el descriptor terminal Windows contiene identidades descriptivas inconsistentes'
+    fi
+    ok 'descriptor declarativo WTools'
     ok 'contrato JSON Windows'
     ACTIONS_JSON="$(run_windows_timeout actions list --format json 2>>"$LOG_PATH")" ||
         die 'actions list --format json falló bajo Wine'
@@ -788,9 +868,23 @@ else
             (.platform == "windows") and
             (([.actions[].id] | length) > 0) and
             (([.actions[].id] | unique | length) == ([.actions[].id] | length)) and
+            (([.actions[].actionKey] | unique | length) == (.actions | length)) and
+            (([.actions[].operation] | unique | length) == (.actions | length)) and
+            (([.actions[].canonicalKey] | unique | length) == (.actions | length)) and
             all(.actions[];
+                (.id == .actionId) and (.legacyId | type == "string" and length > 0) and (.qualifiedActionKey == ("windows." + .actionKey)) and (.canonicalKey == .qualifiedActionKey) and
+                (.actionKey | type == "string" and test("^[a-z0-9]+(?:[.-][a-z0-9]+)+$")) and
+                (.scope | type == "string" and length > 0) and
+                (.operation | type == "string" and length > 0) and (.operation == (.actionKey | gsub("\\."; "-"))) and
+                (.label | type == "string" and length > 0) and
+                (.shortLabel | type == "string" and length > 0) and
+                (.displayName | type == "string" and length > 0) and
+                (.menuPath | type == "array" and length == 2) and
+                (.description | type == "string" and length > 0) and
+                (.group | type == "string" and length > 0) and
+                (.invocation.args == ["actions", "run", .actionId]) and (.invocation.target == .target) and
                 (.category | type == "string" and length > 0) and
-                (.command | IN("audit", "packages", "games", "storage", "native", "system", "accounts", "defaults", "clean", "diagnostics", "automation", "boot", "wine")) and
+                (.command | IN("audit", "packages", "games", "storage", "snapshots", "native", "system", "accounts", "defaults", "clean", "diagnostics", "automation", "boot", "wine")) and
                 (.args | type == "array" and all(.[]; type == "string")) and
                 (.target | type == "string" and length > 0) and
                 (.profile | type == "string" and length > 0) and
@@ -821,22 +915,22 @@ else
         die 'guide wine Windows bajo Wine falló; revisa estado, salida y log'
     grep -Fq 'NO APLICA' <<<"$windows_wine_guide" ||
         die 'guide wine Windows no marcó la incompatibilidad nativa'
-    windows_winslim_guide="$(run_windows_guide gui winslim)" ||
-        die 'guide gui winslim Windows bajo Wine falló; revisa estado, salida y log'
+    windows_winslim_guide="$(run_windows_guide gui wtools)" ||
+        die 'guide gui wtools Windows bajo Wine falló; revisa estado, salida y log'
     windows_gui_index="$(run_windows_guide gui all)" ||
         die 'guide gui all Windows bajo Wine falló; revisa estado, salida y log'
-    if grep -Eq '^WinSlim:[[:space:]]*$' <<<"$windows_gui_index"; then
+    if grep -Eq '^WTools:[[:space:]]*$' <<<"$windows_gui_index"; then
         grep -Fq 'Estado de WSCore y NSudo' <<<"$windows_winslim_guide" ||
-            die 'la guía WinSlim no enumera la pantalla activa'
+            die 'la guía WTools no enumera la pantalla activa'
     else
-        grep -Fq 'no tiene disponible la pantalla WinSlim/NSudo' <<<"$windows_winslim_guide" ||
-            die 'la guía WinSlim no explica por qué el menú condicional no aparece'
+        grep -Fq 'no tiene disponible la pantalla WTools/NSudo' <<<"$windows_winslim_guide" ||
+            die 'la guía WTools no explica por qué el menú condicional no aparece'
     fi
-    windows_winslim_status="$(run_windows_readonly_timeout winslim status 2>>"$LOG_PATH")" ||
-        die 'winslim status Windows bajo Wine falló'
+    windows_winslim_status="$(run_windows_readonly_timeout wtools status 2>>"$LOG_PATH")" ||
+        die 'wtools status Windows bajo Wine falló'
     grep -Fq 'NSudo' <<<"$windows_winslim_status" || die 'winslim status no informa la detección de NSudo'
-    windows_nsudo_guide="$(run_windows_timeout winslim guide 2>>"$LOG_PATH")" ||
-        die 'winslim guide Windows bajo Wine falló'
+    windows_nsudo_guide="$(run_windows_timeout wtools guide 2>>"$LOG_PATH")" ||
+        die 'wtools guide Windows bajo Wine falló'
     for marker in 'TrustedInstaller' \
         '--identity current|elevated|system|trustedinstaller|process|drop-rights' \
         '--integrity system|high|medium|low' \
@@ -844,7 +938,7 @@ else
         --all-privileges --console --wait --dry-run --yes; do
         grep -Fq -- "$marker" <<<"$windows_nsudo_guide" || die "la guía NSudo omite $marker"
     done
-    windows_nsudo_plan="$(run_windows_timeout --dry-run winslim launch --identity system --program cmd.exe --arg /c --arg ver --all-privileges --integrity high --window maximize --wait --console 2>>"$LOG_PATH")" ||
+    windows_nsudo_plan="$(run_windows_timeout --dry-run wtools launch --identity system --program cmd.exe --arg /c --arg ver --all-privileges --integrity high --window maximize --wait --console 2>>"$LOG_PATH")" ||
         die 'el plan NSudo simulado falló en Windows bajo Wine'
     for marker in '-U:S -P:E -M:H -Wait -UseCurrentConsole' 'Modo de ventana: maximize' 'Programa: cmd.exe (2 argumento(s)' 'Simulación: no se inició'; do
         grep -Fq -- "$marker" <<<"$windows_nsudo_plan" || die "el plan NSudo no conserva $marker"
@@ -854,12 +948,12 @@ else
         grep -Fq "$gui_marker" <<<"$windows_gui_index" ||
             die "el índice GUI Windows no enumera la opción visible: $gui_marker"
     done
-    if grep -Eq '^WinSlim:[[:space:]]*$' <<<"$windows_gui_index"; then
-        grep -Eq '^WinSlim:[[:space:]]*$' <<<"$windows_gui_index" ||
-            die 'el índice GUI Windows no enumera la categoría WinSlim visible'
+    if grep -Eq '^WTools:[[:space:]]*$' <<<"$windows_gui_index"; then
+        grep -Eq '^WTools:[[:space:]]*$' <<<"$windows_gui_index" ||
+            die 'el índice GUI Windows no enumera la categoría WTools visible'
     else
-        ! grep -Eq '^WinSlim:[[:space:]]*$' <<<"$windows_gui_index" ||
-            die 'el índice GUI Windows anuncia WinSlim sin WSCore ni un lanzador NSudo'
+        ! grep -Eq '^WTools:[[:space:]]*$' <<<"$windows_gui_index" ||
+            die 'el índice GUI Windows anuncia WTools sin WSCore ni un lanzador NSudo'
     fi
     ! grep -Fq 'Crear prefijo' <<<"$windows_gui_index" ||
         die 'el índice GUI Windows anuncia gestión de prefijos Wine/Proton'
@@ -961,7 +1055,7 @@ else
         settings_gui_capture="$gui_capture_dir/windows-settings-wine.png"
         accounts_gui_capture="$gui_capture_dir/windows-accounts-wine.png"
         gui_pages=(0 1 2 3 4 5)
-        if grep -Eq '^WinSlim:[[:space:]]*$' <<<"$windows_gui_index"; then
+        if grep -Eq '^WTools:[[:space:]]*$' <<<"$windows_gui_index"; then
             gui_pages+=(7)
         fi
         gui_pages+=(6)

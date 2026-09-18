@@ -148,12 +148,13 @@ pub fn set_color_mode(value: &str) {
 }
 
 /// Tema para texto CLI. Los nombres propios de LTools tienen precedencia;
-/// después se consultan las variables que puede exportar LTerminal o WinSlim
-/// Terminal; finalmente se usa la paleta `ocean`.
+/// después se consultan las variables que puede exportar LTerminal o WTools;
+/// finalmente se usa la paleta `ocean`.
 pub fn current() -> Theme {
     let id = first_env(&[
         "LTOOLS_THEME",
         "LTERMINAL_THEME",
+        "WTOOLS_TERMINAL_THEME",
         "WINSLIM_TERMINAL_THEME",
         "TERMINAL_THEME",
     ])
@@ -176,6 +177,7 @@ pub fn gui() -> Theme {
     let id = first_env(&[
         "LTOOLS_GUI_THEME",
         "LTERMINAL_THEME",
+        "WTOOLS_TERMINAL_THEME",
         "WINSLIM_TERMINAL_THEME",
         "TERMINAL_THEME",
     ])

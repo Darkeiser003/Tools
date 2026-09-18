@@ -28,7 +28,10 @@ param(
     [ValidateSet('all', 'backend', 'frontend', 'cli', 'package', 'exe')]
     [string]$Component = 'all',
     [switch]$Preview,
+    [switch]$Plan,
     [string]$TestExisting,
+    [string]$TestExistingCli,
+    [string]$TestExistingRelease,
     [switch]$RequireSigning,
     [switch]$AllowUnsigned,
     [string]$Log,
@@ -149,7 +152,12 @@ con parámetros y -Help para mostrar esta ayuda.
   -NoRun          Alias compatible: omite smoke y E2E, pero conserva cargo test.
   -Component C    Ejecuta solo all|backend|frontend|cli|package|exe.
   -Preview        Abre el preview GUI vigilado en un target debug aislado.
+  -Plan           Muestra el plan efectivo y la matriz de pruebas sin compilar ni modificar archivos.
   -TestExisting R Ejecuta smoke y E2E contra un ejecutable ya existente.
+  -TestExistingCli R
+                  Ejecuta únicamente las comprobaciones CLI contra un perfil existente.
+  -TestExistingRelease R
+                  Valida una carpeta release existente: contenido, manifiesto, hashes y firmas.
   -Target T       Target Windows: x86_64, aarch64 o i686; MSVC o GNU.
   -Output RUTA    Carpeta de salida.
   -ReleaseOutput RUTA
@@ -193,7 +201,7 @@ function Show-Menu {
     $e2e = Join-Path $WindowsDir 'tests\e2e.ps1'
     $livePreview = Join-Path $PSScriptRoot 'live-preview.ps1'
     while ($true) {
-        Write-Host "`nWinSlim-Tools — desarrollo y distribución"
+        Write-Host "`nWTools — desarrollo y distribución"
         Write-Host '  1) Preview y ejecución'
         Write-Host '  2) Pruebas con binarios existentes (sin recompilar)'
         Write-Host '  3) Build y distribución'
@@ -276,6 +284,7 @@ function Show-Menu {
                     Write-Host '  4) Build local sin firma (no publicable)'
                     Write-Host '  5) Exigir auditoría estricta de seguridad y continuar la build incremental'
                     Write-Host '  6) Revisar scripts y workflows con ShellCheck, actionlint y zizmor si está disponible'
+                    Write-Host '  8) Mostrar el plan efectivo sin ejecutar ni modificar archivos'
                     Write-Host '  0) Volver'
                     $buildChoice = Read-Host 'Selecciona una opción'
                     if ($buildChoice -eq '0') { break }
@@ -286,6 +295,7 @@ function Show-Menu {
                         '4' { Invoke-MenuTask 'Build local sin firma' { & $PSCommandPath -Force -AllowUnsigned -Output $unsignedStaging -ReleaseOutput $unsignedRelease } }
                         '5' { Invoke-MenuTask 'Auditoría estricta de dependencias y build incremental' { & $PSCommandPath -StrictSecurity } }
                         '6' { Invoke-MenuTask 'Revisión estática estricta de scripts y workflows' { & $PSCommandPath -SecurityReview } }
+                        '8' { Invoke-MenuTask 'Plan de build' { & $PSCommandPath -Plan -Target $Target } }
                         default { Write-Host 'Opción no válida.'; Wait-Menu }
                     }
                 }
@@ -335,13 +345,15 @@ Assert-SafeOutputPath $PublishDir 'ReleaseOutput'
 Assert-SafeOutputPath $TargetDir 'Cargo target Windows'
 Assert-DisjointOutputPaths $OutputDir $PublishDir
 
-New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+if (-not $Plan) { New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null }
 $LogPath = if ($NoLog) { $null } elseif ($Log) { [IO.Path]::GetFullPath($Log) } else { Join-Path $OutputDir "build-windows-$Stamp-$PID.log" }
 if ($LogPath) {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $LogPath) | Out-Null
-    "WinSlim-Tools Windows build $Version - $(Get-Date -Format o)" | Set-Content -Encoding UTF8 $LogPath
+    "WTools Windows build $Version - $(Get-Date -Format o)" | Set-Content -Encoding UTF8 $LogPath
 }
-$TimingPath = if ($LogPath) { [IO.Path]::ChangeExtension($LogPath, $null) + "-timings.tsv" } else { $null }
+$TimingPath = if ($LogPath) {
+    Join-Path (Split-Path -Parent $LogPath) (([IO.Path]::GetFileNameWithoutExtension($LogPath)) + '-timings.tsv')
+} else { $null }
 if ($TimingPath) { ("step" + [char]9 + "seconds" + [char]9 + "status") | Set-Content -Encoding UTF8 $TimingPath }
 $script:BuildStart = [Diagnostics.Stopwatch]::StartNew()
 
@@ -414,19 +426,35 @@ function Invoke-NativeCommand([string]$Executable, [string[]]$Arguments) {
     # termina correctamente; usar ErrorAction=Stop aquí provocaba falsos
     # fallos durante líneas como «Compiling version_check».
     $previousErrorActionPreference = $ErrorActionPreference
-    $previousCargoIncremental = $null
-    $restoreCargoIncremental = $false
+    $previousCargoProfile = @{}
     if ($Executable -ieq 'cargo') {
-        $previousCargoIncremental = [Environment]::GetEnvironmentVariable('CARGO_PROFILE_RELEASE_INCREMENTAL', 'Process')
-        if ($null -ne $previousCargoIncremental -and $previousCargoIncremental -cnotin @('true', 'false')) {
-            # Cargo solo acepta booleanos minúsculos aquí. CI o shells de
-            # Windows pueden heredar 0/1/True/False y hacer fallar incluso
-            # fmt/clippy antes de llegar a la compilación.
-            [Environment]::SetEnvironmentVariable('CARGO_PROFILE_RELEASE_INCREMENTAL', $null, 'Process')
-            $restoreCargoIncremental = $true
-            if (-not $script:CargoIncrementalWarningLogged) {
-                Write-Log 'AVISO: se ignora temporalmente CARGO_PROFILE_RELEASE_INCREMENTAL heredado con formato no válido para Cargo.'
-                $script:CargoIncrementalWarningLogged = $true
+        $cargoBooleanProfiles = @(
+            'CARGO_PROFILE_RELEASE_LTO',
+            'CARGO_PROFILE_RELEASE_INCREMENTAL'
+        )
+        $cargoIntegerProfiles = @('CARGO_PROFILE_RELEASE_CODEGEN_UNITS')
+        foreach ($name in ($cargoBooleanProfiles + $cargoIntegerProfiles)) {
+            $previousValue = [Environment]::GetEnvironmentVariable($name, 'Process')
+            if ($null -eq $previousValue) { continue }
+            $normalizedValue = $null
+            if ($name -in $cargoBooleanProfiles) {
+                if ($previousValue -ieq 'true') { $normalizedValue = 'true' }
+                elseif ($previousValue -ieq 'false') { $normalizedValue = 'false' }
+                elseif ($BuildProfile -eq 'fast') { $normalizedValue = 'true' }
+                else { $normalizedValue = 'false' }
+            } elseif ($previousValue -match '^[1-9][0-9]*$') {
+                $normalizedValue = $previousValue
+            }
+            $previousCargoProfile[$name] = $previousValue
+            if ($null -eq $normalizedValue) {
+                Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+            } else {
+                Set-Item -LiteralPath "Env:$name" -Value $normalizedValue
+            }
+            if (-not $script:CargoProfileWarningLogged) {
+                $displayValue = if ($null -eq $normalizedValue) { '<retirada>' } else { $normalizedValue }
+                Write-Log ("AVISO: se normalizan temporalmente variables de perfil Cargo heredadas; '{0}' -> '{1}'." -f $name, $displayValue)
+                $script:CargoProfileWarningLogged = $true
             }
         }
     }
@@ -436,8 +464,8 @@ function Invoke-NativeCommand([string]$Executable, [string[]]$Arguments) {
         $exitCode = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previousErrorActionPreference
-        if ($restoreCargoIncremental) {
-            [Environment]::SetEnvironmentVariable('CARGO_PROFILE_RELEASE_INCREMENTAL', $previousCargoIncremental, 'Process')
+        foreach ($name in $previousCargoProfile.Keys) {
+            Set-Item -LiteralPath "Env:$name" -Value $previousCargoProfile[$name]
         }
     }
     return [int]$exitCode
@@ -698,17 +726,99 @@ function Invoke-ExistingWindowsTests([string]$Path) {
         }
     }
 }
+function Invoke-ExistingWindowsCliTests([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "No existe el perfil CLI que se quiere probar: $Path"
+    }
+    . (Join-Path $WindowsDir 'tests\native-process.ps1')
+    foreach ($arguments in @(@('--help'), @('--version'), @('capabilities', '--format', 'json'))) {
+        $result = Invoke-NativeProcess -FileName $Path -Arguments $arguments -TimeoutSeconds 30
+        if ($result.ExitCode -ne 0) {
+            throw (Format-NativeProcessFailure $result "CLI Windows existente: $($arguments -join ' ')")
+        }
+    }
+    Write-Log "Perfil CLI Windows existente validado: $Path"
+}
+function Invoke-ExistingWindowsReleaseTests([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        throw "No existe la carpeta release que se quiere probar: $Path"
+    }
+    $releaseBinary = Join-Path $Path "ltools-$Version-windows-$PackageArch.exe"
+    if (-not (Test-Path -LiteralPath $releaseBinary -PathType Leaf)) {
+        throw "La release no contiene el ejecutable esperado: $releaseBinary"
+    }
+    $releaseTest = Join-Path $WindowsDir 'tests\release-e2e.ps1'
+    $arguments = @(
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $releaseTest,
+        '-ReleaseDirectory', $Path, '-Version', $Version, '-Architecture', $PackageArch,
+        '-Binary', $releaseBinary
+    )
+    if (Test-Path -LiteralPath (Join-Path $Path 'SHA256SUMS.txt.sig') -PathType Leaf) { $arguments += '-RequireSignature' }
+    if (Test-Path -LiteralPath (Join-Path $Path 'SHA256SUMS.txt.sshsig') -PathType Leaf) { $arguments += '-RequireSshSignature' }
+    if ($SigningPublicKeyFile -and (Test-Path -LiteralPath $SigningPublicKeyFile -PathType Leaf)) {
+        $arguments += @('-PublicKeyFile', $SigningPublicKeyFile)
+    }
+    if ($SshSigningConfiguration.PublicKey -and (Test-Path -LiteralPath $SshSigningConfiguration.PublicKey -PathType Leaf)) {
+        $arguments += @('-SshPublicKeyFile', $SshSigningConfiguration.PublicKey)
+    }
+    if ($SshSigningConfiguration.Identity) { $arguments += @('-SshIdentity', $SshSigningConfiguration.Identity) }
+    $exitCode = Invoke-NativeCommand 'powershell.exe' $arguments
+    if ($exitCode -ne 0) { throw "E2E de release Windows terminó con código $exitCode" }
+}
+function Show-BuildPlan {
+    $componentLabel = switch ($Component) {
+        'backend' { 'backend GUI Rust (release)' }
+        'frontend' { 'frontend/GUI Rust (alias compatible; no existe un frontend separado)' }
+        'cli' { 'perfil CLI Rust aislado' }
+        'package' { 'backend Rust + paquete portable Windows' }
+        'exe' { 'ejecutables Windows GUI y CLI' }
+        default { 'pipeline Windows completo' }
+    }
+    Write-Output 'LTools — plan de build (sin ejecución)'
+    Write-Output "  Plataforma: Windows ($Target)"
+    Write-Output "  Componente: $componentLabel"
+    Write-Output "  Perfil: $(if ($Fast) { 'fast/incremental' } else { 'release optimizado' })"
+    Write-Output "  Salida: $OutputDir"
+    Write-Output "  Release: $PublishDir"
+    Write-Output ''
+    Write-Output 'Etapas previstas:'
+    if ($TestExisting) {
+        Write-Output "  - Validar smoke/E2E del ejecutable existente: $TestExisting (sin recompilar)"
+    } elseif ($TestExistingCli) {
+        Write-Output "  - Validar únicamente el perfil CLI existente: $TestExistingCli (sin recompilar)"
+    } elseif ($TestExistingRelease) {
+        Write-Output "  - Validar la carpeta release existente: $TestExistingRelease (sin recompilar)"
+    } elseif ($Preview) {
+        Write-Output '  - Preview Rust vigilado en target debug aislado (sin empaquetar)'
+    } else {
+        Write-Output '  - sintaxis PowerShell, Rust, seguridad y dependencias disponibles'
+        if (-not $NoTests) { Write-Output '  - tests Rust, matriz incremental y promoción segura' }
+        Write-Output "  - compilar $componentLabel"
+        if (-not $NoSmoke) { Write-Output '  - smoke Windows de GUI y CLI' }
+        if (-not $NoE2E) { Write-Output '  - E2E Windows de menús, acciones, guías y plataformas nativas' }
+        if (-not $NoPackage) { Write-Output '  - generar, validar y publicar ZIP portable, manifiesto, hashes y firmas' }
+    }
+    Write-Output ''
+    Write-Output 'No se ha compilado, empaquetado, firmado ni borrado nada.'
+}
 
 switch ($Component) {
     'backend' { $NoPackage = $true; $NoTests = $true; $NoSmoke = $true; $NoE2E = $true; $NoRun = $true }
     'frontend' { $NoPackage = $true; $NoTests = $true; $NoSmoke = $true; $NoE2E = $true; $NoRun = $true }
+    # El perfil CLI tiene su propio target y sale tras copiar el ejecutable;
+    # no ejecuta la matriz GUI ni publica un ZIP desde esta ruta.
+    'cli' { $NoPackage = $true; $NoTests = $true; $NoSmoke = $true; $NoE2E = $true; $NoRun = $true }
     'package' { $NoSmoke = $true; $NoE2E = $true; $NoRun = $true }
     'exe' { $NoPackage = $true; $NoTests = $true; $NoSmoke = $true; $NoE2E = $true; $NoRun = $true }
     'all' { }
-    'cli' { }
 }
 
-Write-Log "WinSlim-Tools Windows build $Version"
+if ($Plan) {
+    Show-BuildPlan
+    exit 0
+}
+
+Write-Log "WTools Windows build $Version"
 Write-Log "Componente: $Component"
 Write-Log "Target: $Target"
 Write-Log "Perfil: $BuildProfile"
@@ -743,6 +853,14 @@ if ($Preview) {
 }
 if ($TestExisting) {
     Invoke-ExistingWindowsTests $TestExisting
+    exit 0
+}
+if ($TestExistingCli) {
+    Invoke-ExistingWindowsCliTests $TestExistingCli
+    exit 0
+}
+if ($TestExistingRelease) {
+    Invoke-ExistingWindowsReleaseTests $TestExistingRelease
     exit 0
 }
 if ($Component -eq 'cli') {
@@ -873,7 +991,12 @@ if ($needCompile) {
     }
     try {
         foreach ($name in $cargoProfileVariables) {
-            [Environment]::SetEnvironmentVariable($name, $null, 'Process')
+            # En Windows PowerShell 5.1, SetEnvironmentVariable(..., $null)
+            # puede dejar una entrada vacía en el proveedor Env:. Cargo la
+            # interpreta como una configuración inválida (por ejemplo,
+            # CARGO_PROFILE_RELEASE_CODEGEN_UNITS=""). Eliminarla mediante
+            # Env: garantiza que el proceso hijo no la reciba.
+            Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
         }
         if ($Fast) {
             $env:CARGO_PROFILE_RELEASE_LTO = 'false'
@@ -887,7 +1010,12 @@ if ($needCompile) {
         Copy-Item -LiteralPath $GuiBinary -Destination $Binary -Force
     } finally {
         foreach ($name in $cargoProfileVariables) {
-            [Environment]::SetEnvironmentVariable($name, $previousCargoProfile[$name], 'Process')
+            $previousValue = $previousCargoProfile[$name]
+            if ($null -eq $previousValue) {
+                Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+            } else {
+                Set-Item -LiteralPath "Env:$name" -Value $previousValue
+            }
         }
     }
 } else { Write-Log "    SKIP: backend Rust sin cambios relevantes." }
@@ -956,6 +1084,7 @@ if ($needPackage -and -not $NoPackage) {
         Copy-Item -LiteralPath $CliBinary -Destination (Join-Path $portableStage 'ltools-cli.exe')
         Copy-Item -LiteralPath (Join-Path $WindowsDir 'ltools.ps1') -Destination $portableStage
         Copy-Item -LiteralPath (Join-Path $WindowsDir 'ltools.cmd') -Destination $portableStage
+        Copy-Item -LiteralPath (Join-Path $WindowsDir 'wtools.cmd') -Destination $portableStage
         Copy-Item -LiteralPath (Join-Path $WindowsDir 'ltools-cli.ps1') -Destination $portableStage
         Copy-Item -LiteralPath (Join-Path $WindowsDir 'ltools-cli.cmd') -Destination $portableStage
         Copy-Item -LiteralPath (Join-Path $Root 'README.md') -Destination $portableStage
@@ -976,6 +1105,12 @@ if ($needPackage -and -not $NoPackage) {
         Copy-Item -LiteralPath (Join-Path $portableStage 'ltools-capabilities.json') -Destination (Join-Path $portableStage 'ltools-capabilities-windows.json')
         Copy-Item -LiteralPath (Join-Path $portableStage 'ltools-capabilities.json') -Destination (Join-Path $packageStageDir 'ltools-capabilities.json')
         Copy-Item -LiteralPath (Join-Path $portableStage 'ltools-capabilities-windows.json') -Destination (Join-Path $packageStageDir 'ltools-capabilities-windows.json')
+        $actions = & $Binary actions list --format json 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "No se pudo generar ltools-actions.json: $actions" }
+        $actionsText = @($actions) -join [Environment]::NewLine
+        Write-Utf8NoBom (Join-Path $portableStage 'ltools-actions.json') $actionsText
+        Copy-Item -LiteralPath (Join-Path $portableStage 'ltools-actions.json') -Destination (Join-Path $packageStageDir 'ltools-actions.json')
+        Copy-Item -LiteralPath (Join-Path $portableStage 'ltools-actions.json') -Destination (Join-Path $packageStageDir 'ltools-actions-windows.json')
         $terminalDescriptor = & $Binary capabilities --format terminal-json 2>&1
         if ($LASTEXITCODE -ne 0) { throw "No se pudo generar ltools-terminal.json: $terminalDescriptor" }
         $terminalDescriptorText = @($terminalDescriptor) -join [Environment]::NewLine
@@ -984,15 +1119,37 @@ if ($needPackage -and -not $NoPackage) {
         Copy-Item -LiteralPath (Join-Path $portableStage 'ltools-terminal.json') -Destination (Join-Path $packageStageDir 'ltools-terminal.json')
         Copy-Item -LiteralPath (Join-Path $portableStage 'ltools-terminal-windows.json') -Destination (Join-Path $packageStageDir 'ltools-terminal-windows.json')
         Copy-Item -LiteralPath (Join-Path $Root 'appimage\ltools-capabilities.schema.json') -Destination $portableStage
+        Copy-Item -LiteralPath (Join-Path $Root 'appimage\ltools-actions.schema.json') -Destination $portableStage
         Copy-Item -LiteralPath (Join-Path $Root 'appimage\ltools-terminal.schema.json') -Destination $portableStage
         Copy-Item -LiteralPath (Join-Path $Root 'appimage\ltools-capabilities.schema.json') -Destination $packageStageDir
+        Copy-Item -LiteralPath (Join-Path $Root 'appimage\ltools-actions.schema.json') -Destination $packageStageDir
         Copy-Item -LiteralPath (Join-Path $Root 'appimage\ltools-terminal.schema.json') -Destination $packageStageDir
-        @("WinSlim-Tools $Version", "Platform: Windows", "Target: $Target", "Backend: ltools.exe", "CLI backend: ltools-cli.exe (no arguments prints help)", "Linux-only Bash modules and AppImage assets are not included.") |
+        @("WTools $Version", "Platform: Windows", "Target: $Target", "Backend: ltools.exe", "CLI backend: ltools-cli.exe (no arguments prints help)", "Linux-only Bash modules and AppImage assets are not included.") |
             Set-Content -Encoding UTF8 (Join-Path $portableStage 'BUILD-INFO.txt')
 
         $capabilitiesJson = Get-Content -Raw -LiteralPath (Join-Path $portableStage 'ltools-capabilities.json') | ConvertFrom-Json
         if ($capabilitiesJson.schema -ne 'ltools-capabilities-v1' -or $capabilitiesJson.platform -ne 'windows') {
             throw 'El descriptor JSON de capacidades Windows no es válido.'
+        }
+        $actionsJson = Get-Content -Raw -LiteralPath (Join-Path $portableStage 'ltools-actions.json') | ConvertFrom-Json
+        if ($actionsJson.schema -ne 'ltools-actions-v1' -or $actionsJson.platform -ne 'windows' -or @($actionsJson.actions).Count -lt 1) {
+            throw 'El catálogo JSON de acciones Windows no es válido.'
+        }
+        $actionKeys = @($actionsJson.actions | ForEach-Object { [string]$_.actionKey })
+        $qualifiedActionKeys = @($actionsJson.actions | ForEach-Object { [string]$_.qualifiedActionKey })
+        if ((@($actionKeys | Sort-Object -Unique).Count -ne $actionKeys.Count) -or
+            (@($qualifiedActionKeys | Sort-Object -Unique).Count -ne $qualifiedActionKeys.Count)) {
+            throw 'El catálogo JSON de acciones Windows contiene claves duplicadas.'
+        }
+        foreach ($action in @($actionsJson.actions)) {
+            if ([string]$action.id -cne [string]$action.actionId -or
+                [string]::IsNullOrWhiteSpace([string]$action.legacyId) -or
+                [string]$action.qualifiedActionKey -cne ('windows.' + [string]$action.actionKey) -or
+                [string]$action.invocation.executable -cne 'ltools.exe' -or
+                (@($action.invocation.args) -join '|') -cne ('actions|run|' + [string]$action.actionId) -or
+                [string]$action.invocation.target -cne [string]$action.target) {
+                throw "La acción JSON Windows $($action.id) carece de identidad o invocación declarativa consistente."
+            }
         }
         $terminalJson = Get-Content -Raw -LiteralPath (Join-Path $portableStage 'ltools-terminal.json') | ConvertFrom-Json
         if ($terminalJson.schema -ne 'ltools-terminal-integration-v1' -or
@@ -1001,8 +1158,8 @@ if ($needPackage -and -not $NoPackage) {
             $terminalJson.integration.optional -ne $true -or
             $terminalJson.integration.standalone_releases_require_it -ne $false -or
             $terminalJson.integration.exclusive_host_family -ne 'lterminal' -or
-            $terminalJson.host.product -ne 'WinSlim Terminal') {
-            throw 'El descriptor JSON de integración Windows no declara WinSlim Terminal correctamente.'
+            $terminalJson.host.product -ne 'WTools') {
+            throw 'El descriptor JSON de integración Windows no declara WTools correctamente.'
         }
 
         Invoke-Step 'Empaquetando ZIP portable Windows en staging' {
@@ -1016,10 +1173,10 @@ if ($needPackage -and -not $NoPackage) {
         $archiveCheckDir = Join-Path $packageStageDir 'zip-extracted'
         Expand-Archive -LiteralPath $stagedZip -DestinationPath $archiveCheckDir
         foreach ($requiredFile in @(
-            'ltools.exe', 'ltools-cli.exe', 'ltools.ps1', 'ltools.cmd', 'ltools-cli.ps1', 'ltools-cli.cmd',
+            'ltools.exe', 'ltools-cli.exe', 'ltools.ps1', 'ltools.cmd', 'wtools.cmd', 'ltools-cli.ps1', 'ltools-cli.cmd',
             'ltools-capabilities.json', 'ltools-capabilities-windows.json',
-            'ltools-terminal.json', 'ltools-terminal-windows.json',
-            'ltools-capabilities.schema.json', 'ltools-terminal.schema.json', 'README.md', 'LICENSE', 'BUILD-INFO.txt',
+            'ltools-actions.json', 'ltools-terminal.json', 'ltools-terminal-windows.json',
+            'ltools-capabilities.schema.json', 'ltools-actions.schema.json', 'ltools-terminal.schema.json', 'README.md', 'LICENSE', 'BUILD-INFO.txt',
             'THIRD-PARTY-LICENSES\INDEX.txt'
         )) {
             if (-not (Test-Path -LiteralPath (Join-Path $archiveCheckDir $requiredFile) -PathType Leaf)) {
@@ -1085,12 +1242,15 @@ if ($needPackage -and -not $NoPackage) {
             $ExecutableArtifact,
             $CliExecutableArtifact,
             $zip,
-            (Join-Path $packageStageDir $licenseZipName),
+            (Join-Path $OutputDir $licenseZipName),
             (Join-Path $OutputDir 'ltools-capabilities.json'),
             (Join-Path $OutputDir 'ltools-capabilities-windows.json'),
+            (Join-Path $OutputDir 'ltools-actions.json'),
+            (Join-Path $OutputDir 'ltools-actions-windows.json'),
             (Join-Path $OutputDir 'ltools-terminal.json'),
             (Join-Path $OutputDir 'ltools-terminal-windows.json'),
             (Join-Path $OutputDir 'ltools-capabilities.schema.json'),
+            (Join-Path $OutputDir 'ltools-actions.schema.json'),
             (Join-Path $OutputDir 'ltools-terminal.schema.json')
         )) {
             if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Falta un fichero requerido para la release: $file" }
@@ -1114,7 +1274,7 @@ if ($needPackage -and -not $NoPackage) {
             if ($LASTEXITCODE -ne 0) { throw 'no se pudo generar ltools-release.json' }
         }
         $manifest = Get-Content -Raw -LiteralPath $releaseManifestOutput | ConvertFrom-Json
-        if ($manifest.schema -ne 'ltools-release-v1' -or $manifest.application -notin @('LTools', 'WinSlim-Tools') -or
+        if ($manifest.schema -ne 'ltools-release-v1' -or $manifest.application -notin @('LTools', 'WTools') -or
             $manifest.version -ne $Version -or $manifest.hash_algorithm -ne 'sha256' -or @($manifest.artifacts).Count -lt 1) {
             throw 'El manifiesto de release Windows no supera la validación estructural.'
         }

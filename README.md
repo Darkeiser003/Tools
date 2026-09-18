@@ -1,15 +1,21 @@
 # LTools
 
-Centro de acciones rápidas multiplataforma para LTerminal y WinSlim Terminal.
+Centro de acciones rápidas multiplataforma para LTerminal y WTools.
 LTools usa un backend Rust nativo y ofrece una aplicación autónoma con menú,
 un perfil CLI para automatización y paquetes portables para Linux y Windows.
 Los scripts Bash y PowerShell se limitan a lanzadores, builders y pruebas; no
 son el backend funcional.
 
 La variante Linux se presenta como `LTools`; la variante Windows se presenta
-como `WinSlim-Tools`. Los nombres técnicos `ltools`, `ltools.exe`, los IDs de
+como `WTools`. Los nombres técnicos `ltools`, `ltools.exe`, los IDs de
 los contratos y las rutas de compatibilidad se conservan para no romper los
 lanzadores ni las terminales anfitrionas.
+
+El comando público de Windows es `wtools`; `winslim` permanece como alias de
+compatibilidad para scripts existentes. También se aceptan las variables
+`WTOOLS_TERMINAL_LANGUAGE`, `WTOOLS_TERMINAL_LANG` y
+`WTOOLS_TERMINAL_THEME`; las antiguas variables `WINSLIM_TERMINAL_*` siguen
+funcionando como migración.
 
 | | |
 |---|---|
@@ -25,6 +31,16 @@ LTools no es una herramienta de borrado ciego. Sus operaciones de limpieza y
 migración comprueban rutas críticas, dependencias, espacio disponible,
 bloqueos y contenido. Las operaciones modificadoras piden confirmación,
 admiten `--dry-run` y generan planes reversibles cuando corresponde.
+
+La diferencia de lenguajes entre este repositorio y LTerminal es deliberada:
+LTools no tiene un frontend web separado. La GUI, la CLI, los contratos JSON,
+las acciones y los adaptadores de Linux/Windows viven en Rust; Bash y
+PowerShell solo proporcionan la integración nativa de cada plataforma, el
+empaquetado y los harnesses de prueba. Por eso GitHub puede mostrar mucho más
+Rust y menos PowerShell sin que la release Windows sea más básica. La paridad
+se comprueba ejecutando el mismo backend Rust y sus contratos en Linux,
+Windows nativo y Windows bajo Wine/Proton, con las diferencias nativas
+declaradas únicamente donde cambian las APIs del sistema.
 
 ## Índice
 
@@ -107,19 +123,48 @@ ltools --dry-run actions run storage.mount /dev/sdb1
 ltools actions run system.service-status sshd.service
 ```
 
-Cada acción publica su categoría, objetivo, perfil (`safe-default` o
-`advanced`), si modifica el sistema, confirmación requerida y compatibilidad
-con `--dry-run` y planes. Los botones de consulta usan valores seguros; las
+Cada acción publica su `id` estable y cualificado, `legacyId` heredado,
+`actionId` global y `actionKey` local compatible,
+`qualifiedActionKey` y `canonicalKey` globales con la plataforma (`linux.` o
+`windows.`), `scope`, `operation`, `label`, `shortLabel`, `displayName` y
+`menuPath`, grupo legible y una `description` explícita,
+además de categoría, objetivo, perfil (`safe-default` o `advanced`), si
+modifica el sistema, confirmación requerida y compatibilidad con `--dry-run` y
+planes. `invocation` declara el ejecutable y los argumentos separados para
+ejecutar la acción; así un consumidor no tiene que reconstruir ni adivinar el
+comando.
+Los botones de consulta usan valores seguros; las
 acciones que requieren un objetivo nunca lo inventan. En Windows, `C:` está
 excluido de la selección guiada y solo puede introducirse manualmente en una
 acción avanzada. En Linux, `/`, `/boot` y `/home` no se usan como objetivos
 predeterminados. El particionado destructivo no se ejecuta desde una cadena
 oculta: se abre el gestor nativo para que el usuario revise cada paso.
 
-Este contrato (`ltools-actions-v1`) permite que LTerminal, WinSlim Terminal,
-la GUI y futuros scripts de WinSlim compartan botones y parámetros sin
+Este contrato (`ltools-actions-v1`) permite que LTerminal, WTools,
+la GUI y futuros scripts de WTools compartan botones y parámetros sin
 duplicar comandos de shell. Las acciones se compilan por plataforma: Linux no
 publica acciones Windows y Windows no publica acciones Linux.
+
+Los contratos `capabilities` y `terminal-json` repiten esta identidad en sus
+acciones de integración: también incluyen `qualifiedActionKey`, `canonicalKey`,
+`displayName` y `menuPath`. Así un host puede combinar ambos descriptores con
+el catálogo ejecutable sin volver a inferir nombres desde etiquetas o desde el
+orden de los botones.
+
+En el catálogo ejecutable, `id`, `actionId`, `canonicalKey` y
+`qualifiedActionKey` son la identidad estable y cualificada de la plataforma;
+`legacyId` conserva el selector corto heredado para compatibilidad. Las
+integraciones deben guardar `actionId` (que coincide con `canonicalKey` y
+`qualifiedActionKey`) y mostrar `displayName` y
+`menuPath`. Por ejemplo, `linux.native.network.status` identifica sin
+ambigüedad la consulta de red Linux, mientras `native.network.status` queda
+como selector local compatible. No se debe usar una etiqueta genérica como
+`Estado` ni el texto visible de un botón. `actions run` acepta el `id` heredado,
+`actionKey`, `qualifiedActionKey` y `canonicalKey`, y
+conserva la misma política de plan, confirmación y objetivo para los tres.
+La invocación declarada en el JSON usa siempre `actionId`, por ejemplo
+`actions run linux.native.network.status`; los selectores cortos solo son una
+compatibilidad de entrada del binario.
 
 En la GUI, las operaciones largas se ejecutan fuera del hilo visual. Mientras
 una acción está activa se muestra un indicador animado y su estado en la salida,
@@ -161,8 +206,9 @@ Windows, desde el paquete portable:
 .\windows\ltools-cli.ps1 aliases doctor
 ```
 
-El lanzador gestionado queda en `%LOCALAPPDATA%\LTools\bin\ltools.cmd` y el
-registro en `%APPDATA%\LTools\aliases.tsv`. En CMD se puede usar
+El lanzador gestionado público queda en `%LOCALAPPDATA%\LTools\bin\wtools.cmd`;
+`ltools.cmd` se crea también como alias técnico de compatibilidad. El registro
+queda en `%APPDATA%\LTools\aliases.tsv`. En CMD se puede usar
 `windows\ltools-cli.cmd` con los mismos argumentos. PowerShell y CMD tienen
 reglas de rutas diferentes: no se deben copiar rutas `/home`, `/dev` o
 `systemctl` a Windows, ni `C:\` o cmdlets PowerShell a Linux.
@@ -170,6 +216,7 @@ reglas de rutas diferentes: no se deben copiar rutas `/home`, `/dev` o
 Operaciones disponibles en ambos perfiles:
 
 ```text
+# Linux
 ltools aliases list
 ltools aliases add mi-red native network status
 ltools aliases disable mi-red
@@ -177,11 +224,54 @@ ltools aliases enable mi-red
 ltools aliases remove mi-red
 ltools aliases path
 ltools aliases shell-init
+
+# Windows (PowerShell/CMD)
+wtools aliases list
+wtools aliases add mi-red native network status
+wtools aliases disable mi-red
+wtools aliases enable mi-red
+wtools aliases remove mi-red
+wtools aliases path
+wtools aliases shell-init
 ```
 
 Los alias predeterminados no se borran: se desactivan para conservar la
 compatibilidad. `doctor` permite comprobar registro, lanzador y `PATH` antes
 de usar `ltools` desde cualquier terminal.
+
+### Integración con LTerminal y contratos
+
+LTools publica dos contratos JSON para que LTerminal (y WTools en Windows)
+pueda descubrir acciones sin interpretar comandos de shell:
+
+- `capabilities --format json` describe plataforma, entrypoints, requisitos,
+  actualizaciones y acciones listas para el host.
+- `actions list --format json` publica la matriz de acciones, objetivos,
+  confirmaciones, `dry-run` y si requieren elevación.
+
+Son dos catálogos relacionados, pero no intercambiables: las entradas de
+`capabilities.actions` son acciones rápidas de integración y se lanzan con su
+`executable` y `args[]`; las de `actions list` son operaciones backend que se
+ejecutan con `actions run`. En ambos casos `canonicalKey` es la identidad
+global; `actionKey` es el selector local compatible y `id` puede ser un
+selector corto heredado. Ninguno de estos selectores debe usarse para deducir
+el grupo ni la operación: se deben consumir `displayName`, `menuPath` y
+`operation` explícitamente.
+
+La prueba del proveedor comprueba también los descriptores de la release y
+puede ejecutarse sin recompilar o contra un artefacto real:
+
+```text
+bash tests/ltools-integration-contract.sh --static-only
+bash tests/ltools-integration-contract.sh --binary ./rust/target/release/ltools
+```
+
+La misma comprobación está disponible en el menú `Pruebas sin volver a
+compilar`. Si falla, no se debe integrar esa release en LTerminal: primero
+hay que revisar el catálogo, el descriptor `ltools-terminal*.json` y la
+correspondencia `executable`/`args[]`. Las acciones se ejecutan como lista de
+argumentos, nunca como una cadena concatenada, y el host debe ocultar las que
+no tengan sus requisitos disponibles.
 
 ### Arranque, firmware y recuperación
 
@@ -197,8 +287,8 @@ En CLI, `boot status`, `boot efi-entries`, `boot grub-entries`, `boot
 systemd-boot` y `boot secure-boot` son consultas. `boot set-next --entry
 "Título exacto"` usa `grub-reboot` para programar el siguiente arranque, exige elevación
 y confirmación (o `--yes` desde una interfaz que ya confirmó); nunca reinicia
-el equipo automáticamente. `boot plan` explica el flujo protegido para una
-operación de arranque. Wine no emula el firmware ni el arranque real del
+el equipo automáticamente. `boot plan` explica el flujo protegido para esta
+clase de operación. Wine no emula el firmware ni el arranque real del
 equipo, así que esas consultas no se consideran una prueba válida de EFI,
 Secure Boot o cargadores instalados en el anfitrión.
 
@@ -349,7 +439,7 @@ fallback controlado a una terminal externa.
 Los artefactos con sufijo `-cli` no abren ninguna ventana: sin argumentos
 muestran la ayuda y con argumentos ejecutan exclusivamente la acción solicitada.
 El JSON de integración sigue siendo opcional y solo sirve para que LTerminal o
-WinSlim Terminal lancen acciones declarativas; no es necesario para la GUI ni
+WTools lancen acciones declarativas; no es necesario para la GUI ni
 para el funcionamiento autónomo de las releases.
 
 La CLI y la GUI usan la misma navegación jerárquica para evitar un menú principal
@@ -373,16 +463,16 @@ Los comandos antiguos (`menu-storage`, `menu-services`, `menu-import`, etc.) sig
 aceptándose como compatibilidad de terminal, pero ya no aparecen como botones ni
 categorías duplicadas en la portada.
 
-En Windows aparece una categoría **WinSlim / NSudo** si existe `C:\WSCore` o se
+En Windows aparece una categoría **WTools / NSudo** si existe `C:\WSCore` o se
 detecta un lanzador compatible. Busca `NSudoLC.exe`, `NSudoLG.exe` o `NSudo.exe`
-en la raíz de WinSlim, sus subdirectorios de herramientas y el `PATH` (o el
+en la raíz de WTools, sus subdirectorios de herramientas y el `PATH` (o el
 archivo explícito `LTOOLS_NSUDO_PATH`); prioriza la variante de consola y no
 confunde complementos como `NSudoDM.exe` con un lanzador. El estado también
-está disponible con `ltools winslim status`.
+está disponible con `ltools wtools status`.
 
-La guía y el asistente están en `ltools winslim guide` y `ltools winslim menu`;
+La guía y el asistente están en `ltools wtools guide` y `ltools wtools menu`;
 la GUI abre el asistente en una consola independiente. Para automatizar una
-acción, usa `ltools winslim launch --identity PERFIL --program PROGRAMA`, añade
+acción, usa `ltools wtools launch --identity PERFIL --program PROGRAMA`, añade
 cualquier argumento con `--arg VALOR` repetido y registra esa orden mediante
 el gestor de automatizaciones. Perfiles admitidos: `current`, `elevated`,
 `system`, `trustedinstaller`, `process` y `drop-rights`. `--integrity`,
@@ -474,7 +564,8 @@ y tests; no incluye builders ni código de otra plataforma.
 
 ### Windows portable
 
-Descomprime el ZIP y ejecuta `ltools.exe`, `ltools.cmd` o:
+Descomprime el ZIP y ejecuta `wtools.cmd` (nombre público), `ltools.exe` o
+`ltools.cmd` (compatibilidad), o:
 
 ```powershell
 .\ltools.ps1
@@ -634,17 +725,33 @@ máquinas:
 ```
 
 El descriptor se incluye también en el tarball Linux, el AppImage y el ZIP
-portable Windows junto con `ltools-capabilities.schema.json`. Un frontend puede
+portable Windows junto con `ltools-capabilities.schema.json`. El catálogo
+ejecutable independiente `ltools-actions.json` viaja con su propio esquema
+`ltools-actions.schema.json`, para que una integración pueda validar y mostrar
+las acciones sin invocar primero al binario. Un frontend puede
 usar `entrypoints.menu` para abrir el menú y `terminal_integration` para saber
 qué protocolo necesita la terminal anfitriona.
 La carpeta `release/` publica además el descriptor y su esquema por separado,
 para que los integradores puedan validarlos sin extraer el paquete completo.
+En una release combinada, `ltools-actions.json` es el catálogo Linux y
+`ltools-actions-windows.json` conserva el catálogo nativo de WTools; el ZIP
+Windows autónomo mantiene su descriptor como `ltools-actions.json`.
 
 El descriptor específico incluye además `actions`: un catálogo directamente
-convertible en botones de acciones rápidas. Cada acción ofrece `id`, `label`,
-`shortLabel`, `group`, `description`, `executable`, `args`, `command`,
+convertible en botones de acciones rápidas. Cada acción ofrece `id`, `legacyId`,
+`actionId`,
+`actionKey`, `qualifiedActionKey`, `canonicalKey`, `scope`, `operation`,
+`label`, `shortLabel`, `displayName`, `menuPath`, `group`, `description`, `executable`, `args`, `command`,
 `workingDirectory`, `interactive`, `requiresAdmin`, `confirmation`, `safe`,
-`supports` y `requiresCommands`. La terminal debe preferir `executable` +
+`supports` y `requiresCommands`. `id` es la identidad cualificada estable y
+`legacyId` el selector corto heredado; `actionKey` es la identidad local y
+`canonicalKey`/`qualifiedActionKey` son la identidad global, única y namespaced
+(por ejemplo `linux.storage.partitions` o
+`linux.native.network.flush-dns`). `scope` y `operation` permiten agrupar y mostrar
+la acción sin deducirla de una etiqueta traducida; `operation` es además una
+forma cualificada y única (`storage-partitions`, `git-clone`, etc.), por lo que
+no se convierte en el ambiguo `status` al mostrarlo sin su grupo. La terminal debe preferir
+`executable` +
 `args` (argv separado, sin interpretar una cadena de shell); `command` queda
 como representación legible y compatibilidad con hosts antiguos. Por ejemplo,
 un botón de auditoría puede usar `executable: "ltools"`, `args: ["audit"]`,
@@ -675,7 +782,7 @@ del usuario. En Windows, Winget y Chocolatey pueden usar UAC cuando la opción
 por defecto está activada; Scoop nunca se inicia desde un LTools elevado. Una
 acción incompatible con elevación lo informa y continúa sin sudo/UAC.
 
-El flujo recomendado para LTerminal/WinSlim Terminal es: leer
+El flujo recomendado para LTerminal/WTools es: leer
 `distribution/ltools-project.json` desde el catálogo de proyectos, descargar
 la release estable indicada para el sistema, seleccionar el descriptor de
 `integration.descriptors` para la plataforma (`ltools-terminal.json` en Linux,
@@ -698,7 +805,7 @@ antes de instalarlo.
 
 El mismo contrato sirve para las dos variantes del host: el descriptor Linux
 identifica `LTerminal` y usa `ltools`; el descriptor generado por el builder
-Windows identifica `WinSlim Terminal` y usa `ltools.exe`. Esto prepara la
+Windows identifica `WTools` y usa `ltools.exe`. Esto prepara la
 compatibilidad cruzada sin mezclar los lanzamientos autónomos con la
 integración del host.
 
@@ -776,7 +883,7 @@ procesos, discos o configuración.
 En Linux puede utilizar `ip`, `ss`, `resolvectl`, `lsblk`, `lscpu`, `free`,
 `lspci`, `lsusb`, `who` y `loginctl`. En Windows utiliza PowerShell, CIM/WMI,
 `query` y cmdlets nativos de red, discos, memoria y vídeo. La salida JSON usa
-el esquema `ltools-diagnostics-v1`, por lo que LTerminal, WinSlim Terminal u
+el esquema `ltools-diagnostics-v1`, por lo que LTerminal, WTools u
 otro frontend puede mostrar cada comprobación y su disponibilidad sin
 interpretar texto humano.
 
@@ -837,10 +944,15 @@ informa y, cuando el catálogo conoce un paquete seguro, se ofrece instalar
 solo esa dependencia desde el gestor existente; LTools no instala Wine,
 juegos, virtualización ni una colección de terceros.
 
-Las operaciones se publican como `native.network-status`,
-`native.hardware-status`, `native.power-status`, `native.security-status` y
-`native.dns-flush` en `ltools actions list --format json`, para que una GUI o
-una terminal cree botones sin duplicar la lógica.
+Las acciones se publican con `actionKey` locales estables
+`native.network.status`, `native.hardware.status`, `native.power.status`,
+`native.security.status` y `native.network.flush-dns` en
+`capabilities --format json`; sus `canonicalKey` correspondientes incluyen el
+prefijo de plataforma (`linux.` o `windows.`). El catálogo backend equivalente
+se consulta con `ltools actions list --format json`. Su campo `operation` se
+deriva de forma estable (`native-network-status`, `native-network-flush-dns`,
+etc.), para que una GUI o una terminal cree botones sin duplicar la lógica ni
+inventar nombres.
 
 ## Discos, particiones y configuración nativa
 
@@ -970,6 +1082,33 @@ ltools --dry-run storage operate lvm --operation lvcreate --vg datos --name home
 `clean` y `delete`, marcando las operaciones destructivas y sin generarlas
 automáticamente. El selector guiado excluye `/`, raíces de montaje y `C:` de
 cualquier preselección.
+
+### Instantáneas y puntos de restauración
+
+`ltools snapshots status` detecta los backends nativos disponibles sin
+modificar nada; `ltools snapshots list` enumera sus instantáneas. En Linux se
+integran Timeshift, Snapper, Btrfs y ZFS. En Windows nativo se consultan VSS y
+WBAdmin. Los backends de otra plataforma no se simulan bajo Wine.
+
+Las operaciones mutadoras requieren backend y objetivo explícitos:
+
+```text
+ltools snapshots create --backend timeshift --name antes-de-actualizar --dry-run
+ltools snapshots create --backend btrfs --path /home --target /snapshots/home-1 --dry-run
+ltools snapshots create --backend zfs --volume tank/data --name antes-cambio --dry-run
+ltools snapshots delete --backend zfs --target tank/data@antes-cambio --yes
+```
+
+Tras revisar la simulación se puede ejecutar la operación real con `--yes`.
+`--plan FICHERO` conserva el registro de la operación y las acciones que
+requieren permisos usan la política de elevación configurada. Btrfs no ofrece
+un `restore` ambiguo: se rechaza y se exige una copia o destino explícito.
+VSS tampoco se presenta como restauración arbitraria; para recuperar Windows
+se usa la herramienta nativa adecuada (System Restore/WBAdmin) después de
+identificar la sombra. Una instantánea no sustituye una copia externa.
+
+La guía completa está en `ltools guide snapshots`; el alias gestionado `tsnap`
+se crea con `ltools aliases ensure` y mantiene los argumentos separados.
 
 La acción native tools status consulta dependencias y muestra qué componentes
 puede instalar LTools. `native tools install --tool ID` abre la instalación
@@ -1273,6 +1412,21 @@ En Linux ejecuta `bash scripts/build.sh`; en Windows ejecuta
 builds de backend/paquetes y limpieza. Los argumentos avanzados siguen
 disponibles en los mismos dos scripts.
 
+Antes de gastar tiempo puede verse el plan efectivo de cada plataforma:
+
+```bash
+bash scripts/build.sh --plan --component all
+pwsh -NoProfile -File scripts/build.ps1 -Plan -Component all
+```
+
+El plan no crea targets, logs, paquetes ni firmas. `--component frontend` (o
+`-Component frontend`) se conserva por compatibilidad con builders que separan
+frontend y backend, pero en LTools significa la GUI Rust completa. Para validar
+sin recompilar, `--test-existing` acepta un ejecutable, AppImage, tarball o una
+carpeta `release/`; la carpeta se verifica con manifiesto, SHA-256, firmas y
+artefactos presentes. En Windows, `-TestExistingCli` valida el perfil CLI y
+`-TestExistingRelease` valida la carpeta de release nativa.
+
 En Linux, el menú ofrece smoke y E2E del binario existente sin compilar,
 compilación del backend GUI, perfil CLI en un target aislado, tarball, AppImages,
 build rápida de desarrollo y release completa. La opción de build rápida del
@@ -1287,6 +1441,13 @@ El preview vigilado recompila y relanza únicamente el perfil debug aislado al
 cambiar Rust, Cargo o cualquiera de las bibliotecas compartidas bajo
 `rust/crates/`; nunca empaqueta ni modifica `release/`. En Windows se usa
 `scripts\live-preview.ps1` con el mismo alcance y un target separado.
+En Linux se puede ajustar la frecuencia con `LTOOLS_PREVIEW_INTERVAL=0.5` (solo
+valores positivos, en segundos) si se necesita una recarga más rápida; requiere
+una sesión gráfica activa y falla explícitamente si GTK no puede abrirla.
+Cuando se define `LTOOLS_GUI_CAPTURE_DIR`, el smoke GUI conserva las capturas
+y escribe `manifest.tsv` con cada pantalla, sus dimensiones y los colores
+detectados. Esto permite revisar el lote visual completo y evita considerar
+suficiente que solo exista un archivo PNG.
 En Windows, `scripts/build.ps1` ofrece preview, pruebas sin recompilar,
 builds y limpieza para el ejecutable nativo y el ZIP portable. Su perfil rápido
 de desarrollo conserva las pruebas; solo la opción explícita de compilar
@@ -1405,6 +1566,11 @@ bash scripts/build.sh --appimage --require-fuse
 incremental con menos optimización para iterar durante el desarrollo. No debe
 usarse para el artefacto final que se vaya a publicar.
 El builder Windows está en `scripts/build.ps1` y usa MSVC por defecto:
+normaliza antes de cada llamada a Cargo las variables heredadas de perfil
+(`CARGO_PROFILE_RELEASE_LTO`, `CARGO_PROFILE_RELEASE_CODEGEN_UNITS` y
+`CARGO_PROFILE_RELEASE_INCREMENTAL`), porque algunos runners exportan `0`, `1`
+o valores vacíos que Cargo no acepta. La build conserva y restaura el entorno
+del proceso al terminar cada llamada.
 
 Los builders Linux comprueban las rutas ya resueltas antes de crear logs o
 retirar paquetes: no aceptan `/`, la raíz del proyecto, un directorio que la
@@ -1438,8 +1604,9 @@ oficial continúa compilándose con el builder nativo Windows.
 
 ### Automatización y seguridad en GitHub
 
-La carpeta `.github/` automatiza controles independientes; ninguno publica una
-release ni necesita una clave de firma:
+La carpeta `.github/` automatiza controles independientes. Los workflows de
+validación no necesitan claves de firma; el workflow `release.yml` sí las
+solicita únicamente en su job aislado de publicación:
 
 - `CI` ejecuta el builder completo de Linux con sus pruebas y Windows bajo Wine,
   y en paralelo la build nativa Windows con tests, smoke y E2E. Guarda logs y
@@ -1494,6 +1661,18 @@ release ni necesita una clave de firma:
   reglas distintas, por lo que un hallazgo se debe revisar en el contexto del
   paquete y la versión afectados. La sintaxis y las opciones del workflow
   siguen la [guía oficial de OSV-Scanner](https://google.github.io/osv-scanner/github-action/).
+
+- `release.yml` se activa con una etiqueta `vMAJOR.MINOR.PATCH` o manualmente.
+  Ejecuta la build completa Linux con AppImage, tarball, pruebas GUI y Wine, y
+  en paralelo la build completa Windows nativa MSVC. Solo cuando ambas terminan
+  correctamente, el job `publish` combina los artefactos, genera de nuevo el
+  manifiesto, calcula los hashes, firma y verifica `SHA256SUMS.txt` con Ed25519
+  y OpenSSH, ejecuta la E2E final y publica la release con `gh`.
+  Requiere estos secretos de repositorio: `LTOOLS_SIGNING_PRIVATE_KEY`
+  (Ed25519 PKCS#8 PEM), `LTOOLS_UPDATE_PUBLIC_KEY` (64 hex),
+  `LTOOLS_SSH_SIGNING_PRIVATE_KEY` y `LTOOLS_SSH_SIGNING_PUBLIC_KEY`
+  (pareja OpenSSH), y `LTOOLS_SSH_SIGNING_IDENTITY` (normalmente el correo
+  verificado de GitHub). Las claves nunca se incluyen en artefactos ni en logs.
 
 Cada cambio de `rust/Cargo.toml` o `rust/Cargo.lock` vuelve a pasar por build y
 pruebas Linux/Wine y Windows nativo, además de `cargo audit`, `cargo deny` y
@@ -1763,6 +1942,7 @@ como implementación funcional ni se empaquetan en el tarball/AppImage.
 
 El idioma se obtiene, por orden, de `LTOOLS_LANG`, de las variables que puede
 proporcionar una terminal anfitriona (`LTERMINAL_LANGUAGE`, `LTERMINAL_LANG`,
+`WTOOLS_TERMINAL_LANGUAGE`, `WTOOLS_TERMINAL_LANG` y las heredadas
 `WINSLIM_TERMINAL_LANGUAGE`, `WINSLIM_TERMINAL_LANG`) y de
 `LC_ALL`, `LC_MESSAGES` o `LANG`. También se puede forzar en una ejecución:
 
@@ -1805,7 +1985,7 @@ idioma y visibilidad se guardan para el siguiente arranque en
 Windows). Una elección manual
 se guarda en la configuración de LTools y tiene prioridad sobre el tema/idioma
 recibido de la terminal; mientras no exista, se hereda el contexto de
-LTerminal o WinSlim Terminal. La integración declarativa para hosts documenta
+LTerminal o WTools. La integración declarativa para hosts documenta
 el mismo contrato en `ui_context`.
 
 ## Logs, planes y rollback

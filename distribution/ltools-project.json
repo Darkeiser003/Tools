@@ -10,6 +10,10 @@
   "latest_release_api": "https://api.github.com/repos/Darkeiser003/Tools/releases/latest",
   "release_manifest": "https://github.com/Darkeiser003/Tools/releases/latest/download/ltools-release.json",
   "license": "MIT",
+  "features": [
+    "audit", "storage", "snapshots", "system-control", "native-actions",
+    "dry-run", "plans", "verified-updates"
+  ],
   "integration": {
     "optional": true,
     "descriptor": "ltools-terminal.json",
@@ -17,8 +21,16 @@
       "linux": "ltools-terminal.json",
       "windows": "ltools-terminal-windows.json"
     },
-    "hosts": ["LTerminal", "WinSlim Terminal"],
+    "hosts": ["LTerminal", "WTools"],
     "standalone_releases_require_it": false
+  },
+  "action_catalog": {
+    "catalog": "ltools-actions.json",
+    "schema": "ltools-actions.schema.json",
+    "descriptors": {
+      "linux": "ltools-actions.json",
+      "windows": "ltools-actions-windows.json"
+    }
   },
   "distribution": {
     "source": "github-releases",
@@ -68,7 +80,7 @@
       },
       "install": {
         "portable": true,
-        "recommended_directory": "%LOCALAPPDATA%\\WinSlim-Tools",
+        "recommended_directory": "%LOCALAPPDATA%\\WTools",
         "executable": true,
         "entrypoint": "ltools.exe",
         "gui_entrypoint": "ltools.exe",

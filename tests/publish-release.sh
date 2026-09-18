@@ -7,6 +7,17 @@ source "$ROOT_DIR/scripts/lib/publish.sh"
 workspace="$(mktemp -d "${TMPDIR:-/tmp}/ltools-publish-release.XXXXXX")"
 trap 'ltools_cleanup_release_staging; rm -rf -- "$workspace"' EXIT
 
+# El wrapper se define antes de cualquier llamada para que ShellCheck pueda
+# analizar también las ramas que simulan un fallo de `mv`. En el resto del
+# fixture delega íntegramente en el comando real.
+simulate_move_failure=0
+mv() {
+    if [[ "$simulate_move_failure" == 1 && ( "${1:-}" == --exchange || "${1:-}" == -Tn ) ]]; then
+        return 1
+    fi
+    command mv "$@"
+}
+
 destination="$workspace/release"
 mkdir -p -- "$destination/user-data"
 printf 'old\n' >"$destination/old-release.txt"
@@ -44,15 +55,11 @@ command mv -- "$workspace/original-release" "$destination"
 ltools_create_release_staging "$destination"
 stage="$LTOOLS_RELEASE_STAGING"
 printf 'failed-new\n' >"$stage/failed-new.txt"
-mv() {
-    if [[ "${1:-}" == --help ]]; then command mv --help; return; fi
-    if [[ "${1:-}" == --exchange || "${1:-}" == -Tn ]]; then return 1; fi
-    command mv "$@"
-}
+simulate_move_failure=1
 if ltools_promote_release_staging; then
     printf 'ERROR: se informó éxito a pesar del fallo de promoción simulado.\n' >&2; exit 1
 fi
-unset -f mv
+simulate_move_failure=0
 [[ -f "$destination/old-release.txt" && -f "$destination/new-release.txt" &&
     ! -f "$destination/failed-new.txt" && -f "$stage/failed-new.txt" ]] || {
     printf 'ERROR: el fallo no restauró la release previa y conservó el staging nuevo.\n' >&2; exit 1;
@@ -89,11 +96,21 @@ if command -v jq >/dev/null 2>&1; then
     printf 'ignored temp\n' >"$release_fixture/.build-fragment.tmp"
     printf 'ignored backup\n' >"$release_fixture/.previous.bak"
     printf 'case-sensitive uppercase\n' >"$release_fixture/case-sensitive.TMP"
-    for json in ltools-capabilities.json ltools-terminal.json ltools-project.json \
-        ltools-capabilities.schema.json ltools-terminal.schema.json \
+    for json in ltools-capabilities.json ltools-actions.json ltools-terminal.json ltools-project.json \
+        ltools-capabilities.schema.json ltools-actions.schema.json ltools-terminal.schema.json \
         ltools-project.schema.json ltools-release.schema.json; do
         printf '{}\n' >"$release_fixture/$json"
     done
+    jq -n '{schema:"ltools-capabilities-v1", application:"LTools", version:$version, platform:"linux", actions:[{id:"linux.fixture.check", legacyId:"fixture-check", actionId:"linux.fixture.check", actionKey:"fixture.check", qualifiedActionKey:"linux.fixture.check", canonicalKey:"linux.fixture.check", scope:"fixture", operation:"fixture-check", label:"Fixture check", shortLabel:"Fixture", displayName:"Linux · Fixture · Fixture check", menuPath:["Fixture","Fixture check"], group:"Fixture", description:"Acción de prueba", command:"fixture", executable:"ltools", args:[], shell:"none", workingDirectory:"current", terminal:true, interactive:false, requiresAdmin:false, confirmation:"none", safe:true, supports:["dry-run"], requiresCommands:[]}]}' --arg version "$fixture_version" \
+        >"$release_fixture/ltools-capabilities.json"
+    jq -n '{schema:"ltools-terminal-integration-v1", application:"LTools", version:$version, platform:"linux", actions:[{id:"linux.fixture.check", legacyId:"fixture-check", actionId:"linux.fixture.check", actionKey:"fixture.check", qualifiedActionKey:"linux.fixture.check", canonicalKey:"linux.fixture.check", scope:"fixture", operation:"fixture-check", label:"Fixture check", shortLabel:"Fixture", displayName:"Linux · Fixture · Fixture check", menuPath:["Fixture","Fixture check"], group:"Fixture", description:"Acción de prueba", command:"fixture", executable:"ltools", args:[], shell:"none", workingDirectory:"current", terminal:true, interactive:false, requiresAdmin:false, confirmation:"none", safe:true, supports:["dry-run"], requiresCommands:[]}]}' --arg version "$fixture_version" \
+        >"$release_fixture/ltools-terminal.json"
+    jq -n '{schema:"ltools-actions-v1", platform:"linux", safety:{excluded_defaults:[], target_selection:"explicit-only"}, actions:[{id:"linux.fixture.check", legacyId:"fixture.check", actionId:"linux.fixture.check", actionKey:"fixture.check", qualifiedActionKey:"linux.fixture.check", canonicalKey:"linux.fixture.check", scope:"fixture", operation:"fixture-check", label:"Fixture check", shortLabel:"Fixture", displayName:"Linux · Fixture · Fixture check", menuPath:["Fixture","Fixture check"], group:"fixture", description:"Acción de prueba", category:"fixture", command:"fixture", args:[], target:"none", targetPolicy:"none", invocation:{executable:"ltools",args:["actions","run","linux.fixture.check"],target:"none"}, mutating:false, confirmation:"none", safe:true, profile:"safe-default", aliases:[], supports:["dry-run","plan"]}]}' \
+        >"$release_fixture/ltools-actions.json"
+    jq -n '{additionalProperties:false, properties:{schema:{}, application:{}, version:{}, platform:{}, actions:{}, environment:{required:["cli_profile"]}, terminal_integration:{required:["working_directory"]}}, "$defs":{ui_context:{}, entrypoint:{}, distribution_entry:{}}}' \
+        >"$release_fixture/ltools-capabilities.schema.json"
+    jq -n '{additionalProperties:false, properties:{schema:{}, application:{}, version:{}, platform:{}, actions:{}}}' \
+        >"$release_fixture/ltools-terminal.schema.json"
     fixture_hash="$(sha256sum -- "$release_fixture/$fixture_artifact" | awk '{print $1}')"
     fixture_size="$(stat -c '%s' -- "$release_fixture/$fixture_artifact")"
     jq -n --arg version "$fixture_version" --arg filename "$fixture_artifact" \

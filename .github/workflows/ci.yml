@@ -94,6 +94,10 @@ jobs:
         shell: pwsh
         env:
           LTOOLS_REQUIRE_LOOPBACK_TESTS: '1'
+          # Reproduce the value exported by some Windows CI/toolchain
+          # environments. Cargo requires the profile override to be the
+          # lowercase boolean true/false; the builder must normalize it.
+          CARGO_PROFILE_RELEASE_INCREMENTAL: '0'
         run: |
           $dist = Join-Path $env:RUNNER_TEMP 'ltools-windows-dist'
           $release = Join-Path $env:RUNNER_TEMP 'ltools-windows-release'

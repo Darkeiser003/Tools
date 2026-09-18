@@ -65,7 +65,9 @@ BACKEND="$PACKAGE_DIR/rust/target/release/ltools"
 [[ -s "$PACKAGE_DIR/LICENSE" ]] || die 'falta la licencia MIT del proyecto en el tarball'
 grep -Fq 'MIT License' "$PACKAGE_DIR/LICENSE" || die 'la licencia del proyecto en el tarball no identifica MIT'
 [[ -s "$PACKAGE_DIR/ltools-capabilities.json" ]] || die 'falta el descriptor de capacidades'
+[[ -s "$PACKAGE_DIR/ltools-actions.json" ]] || die 'falta el catálogo de acciones'
 [[ -s "$PACKAGE_DIR/ltools-terminal.json" ]] || die 'falta el descriptor de integración de terminal'
+[[ -s "$PACKAGE_DIR/ltools-actions.schema.json" ]] || die 'falta el esquema del catálogo de acciones'
 LICENSE_INDEX="$PACKAGE_DIR/THIRD-PARTY-LICENSES/INDEX.txt"
 [[ -s "$LICENSE_INDEX" ]] || die 'falta el índice de avisos/licencias de dependencias'
 grep -Fq 'ISC' "$LICENSE_INDEX" || die 'los avisos del tarball omiten dependencias ISC'
@@ -94,10 +96,13 @@ ok 'tarball extraído: índice y textos de licencias de las dependencias present
 ok 'tarball extraído: licencia MIT del proyecto presente'
 
 if command -v jq >/dev/null 2>&1; then
-    jq -e '.schema == "ltools-capabilities-v1"' "$PACKAGE_DIR/ltools-capabilities.json" >/dev/null ||
+    jq -e '.schema == "ltools-capabilities-v1" and (.actions | type == "array" and length > 0) and (([.actions[].actionKey] | unique | length) == (.actions | length)) and (([.actions[].actionId] | unique | length) == (.actions | length)) and (([.actions[].qualifiedActionKey] | unique | length) == (.actions | length)) and (([.actions[].canonicalKey] | unique | length) == (.actions | length)) and (([.actions[].displayName] | unique | length) == (.actions | length)) and (([.actions[].operation] | unique | length) == (.actions | length)) and (.platform as $platform | all(.actions[]; (.id == .actionId) and (.legacyId | length > 0) and (.actionId == .qualifiedActionKey) and (.actionId == .canonicalKey) and (.qualifiedActionKey == ($platform + "." + .actionKey)) and (.displayName | length > 0) and (.menuPath | type == "array" and length == 2) and (.actionKey | test("^[a-z0-9]+(?:[.-][a-z0-9]+)+$")) and .scope and .operation and (.operation == (.actionKey | gsub("\\."; "-")))))' "$PACKAGE_DIR/ltools-capabilities.json" >/dev/null ||
         die 'el descriptor incluido en el tarball es inválido'
-    jq -e '.schema == "ltools-terminal-integration-v1"' "$PACKAGE_DIR/ltools-terminal.json" >/dev/null ||
+    jq -e '.schema == "ltools-terminal-integration-v1" and (.actions | type == "array" and length > 0) and (([.actions[].actionKey] | unique | length) == (.actions | length)) and (([.actions[].actionId] | unique | length) == (.actions | length)) and (([.actions[].qualifiedActionKey] | unique | length) == (.actions | length)) and (([.actions[].canonicalKey] | unique | length) == (.actions | length)) and (([.actions[].displayName] | unique | length) == (.actions | length)) and (([.actions[].operation] | unique | length) == (.actions | length)) and (.platform as $platform | all(.actions[]; (.id == .actionId) and (.legacyId | length > 0) and (.actionId == .qualifiedActionKey) and (.actionId == .canonicalKey) and (.qualifiedActionKey == ($platform + "." + .actionKey)) and (.displayName | length > 0) and (.menuPath | type == "array" and length == 2) and (.actionKey | test("^[a-z0-9]+(?:[.-][a-z0-9]+)+$")) and .scope and .operation and (.operation == (.actionKey | gsub("\\."; "-")))))' "$PACKAGE_DIR/ltools-terminal.json" >/dev/null ||
         die 'el descriptor de terminal incluido en el tarball es inválido'
+    jq -e '.schema == "ltools-actions-v1" and (.safety.target_selection == "explicit-only") and (.actions | type == "array" and length > 0) and (([.actions[].actionKey] | unique | length) == (.actions | length)) and (([.actions[].qualifiedActionKey] | unique | length) == (.actions | length)) and (([.actions[].canonicalKey] | unique | length) == (.actions | length)) and (([.actions[].operation] | unique | length) == (.actions | length)) and (([.actions[].label] | unique | length) == (.actions | length)) and (([.actions[].shortLabel] | unique | length) == (.actions | length)) and all(.actions[]; (.id == .actionId) and (.legacyId | type == "string" and length > 0) and (.qualifiedActionKey == ("linux." + .actionKey)) and (.canonicalKey == .qualifiedActionKey) and .scope == (.actionKey | split(".")[0]) and .operation == (.actionKey | gsub("\\."; "-")) and (.displayName | length > 0) and (.menuPath | type == "array" and length == 2) and (.description | length > 0) and (.invocation.args == ["actions", "run", .actionId]) and (.invocation.target == .target))' "$PACKAGE_DIR/ltools-actions.json" >/dev/null ||
+        die 'el catálogo de acciones incluido en el tarball es inválido'
+    jq empty "$PACKAGE_DIR/ltools-actions.schema.json" >/dev/null || die 'el esquema del catálogo de acciones no es JSON válido'
     ok 'descriptores JSON del tarball válidos'
 fi
 

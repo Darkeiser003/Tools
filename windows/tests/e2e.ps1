@@ -252,8 +252,8 @@ try {
         throw 'El contrato JSON Windows anuncia o mezcla funciones Linux/Wine.'
     }
     $capabilityJson = $capabilities | ConvertFrom-Json
-    if ($capabilityJson.application -ne 'WinSlim-Tools' -or $capabilityJson.platform -ne 'windows') {
-        throw 'La identidad Windows del contrato no es WinSlim-Tools.'
+    if ($capabilityJson.application -ne 'WTools' -or $capabilityJson.platform -ne 'windows') {
+        throw 'La identidad Windows del contrato no es WTools.'
     }
     if ($capabilityJson.features -notcontains 'verified-updates' -or
         $capabilityJson.features -notcontains 'verified-update-download' -or
@@ -280,13 +280,76 @@ try {
         (@($actionIds | Sort-Object -Unique).Count -ne $actionIds.Count)) {
         throw 'El catálogo JSON Windows contiene IDs de acciones vacíos o duplicados.'
     }
+    $actionKeys = @($actionEntries | ForEach-Object { [string]$_.actionKey })
+    $qualifiedActionKeys = @($actionEntries | ForEach-Object { [string]$_.qualifiedActionKey })
+    $canonicalActionKeys = @($actionEntries | ForEach-Object { [string]$_.canonicalKey })
+    $actionIdsCanonical = @($actionEntries | ForEach-Object { [string]$_.actionId })
+    $actionOperations = @($actionEntries | ForEach-Object { [string]$_.operation })
+    $actionLabels = @($actionEntries | ForEach-Object { [string]$_.label })
+    $actionShortLabels = @($actionEntries | ForEach-Object { [string]$_.shortLabel })
+    $actionDisplayNames = @($actionEntries | ForEach-Object { [string]$_.displayName })
+    if (($actionKeys | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -ne 0 -or
+        (@($actionKeys | Sort-Object -Unique).Count -ne $actionKeys.Count)) {
+        throw 'El catálogo JSON Windows contiene actionKey vacíos o duplicados.'
+    }
+    if (($qualifiedActionKeys | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -ne 0 -or
+        (@($qualifiedActionKeys | Sort-Object -Unique).Count -ne $qualifiedActionKeys.Count)) {
+        throw 'El catálogo JSON Windows contiene qualifiedActionKey vacíos o duplicados.'
+    }
+    if (($canonicalActionKeys | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -ne 0 -or
+        (@($canonicalActionKeys | Sort-Object -Unique).Count -ne $canonicalActionKeys.Count)) {
+        throw 'El catálogo JSON Windows contiene canonicalKey vacíos o duplicados.'
+    }
+    if (($actionIdsCanonical | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -ne 0 -or
+        (@($actionIdsCanonical | Sort-Object -Unique).Count -ne $actionIdsCanonical.Count)) {
+        throw 'El catálogo JSON Windows contiene actionId vacíos o duplicados.'
+    }
+    if (($actionOperations | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -ne 0 -or
+        (@($actionOperations | Sort-Object -Unique).Count -ne $actionOperations.Count)) {
+        throw 'El catálogo JSON Windows contiene operation vacíos o duplicados.'
+    }
+    if (($actionLabels | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -ne 0 -or
+        (@($actionLabels | Sort-Object -Unique).Count -ne $actionLabels.Count) -or
+        ($actionShortLabels | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -ne 0 -or
+        (@($actionShortLabels | Sort-Object -Unique).Count -ne $actionShortLabels.Count)) {
+        throw 'El catálogo JSON Windows contiene nombres descriptivos vacíos o duplicados.'
+    }
+    if (($actionDisplayNames | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -ne 0 -or
+        (@($actionDisplayNames | Sort-Object -Unique).Count -ne $actionDisplayNames.Count)) {
+        throw 'El catálogo JSON Windows contiene displayName vacíos o duplicados.'
+    }
     $knownActionBackends = @(
         'audit', 'packages', 'games', 'storage', 'native', 'system', 'accounts',
         'defaults', 'clean', 'diagnostics', 'automation', 'boot', 'wine'
     )
     foreach ($action in $actionEntries) {
+        $actionKey = [string]$action.actionKey
+        if ([string]$action.id -cne [string]$action.actionId -or
+            [string]::IsNullOrWhiteSpace([string]$action.legacyId) -or
+            [string]$action.actionId -cne [string]$action.canonicalKey -or
+            [string]$action.qualifiedActionKey -cne ('windows.' + $actionKey) -or
+            [string]$action.canonicalKey -cne [string]$action.qualifiedActionKey -or
+            @($action.menuPath).Count -ne 2 -or
+            [string]::IsNullOrWhiteSpace([string]$action.displayName) -or
+            [string]$action.invocation.executable -notin @('ltools.exe', 'ltools') -or
+            (@($action.invocation.args) -join '|') -cne ('actions|run|' + [string]$action.actionId) -or
+            [string]$action.invocation.target -cne [string]$action.target) {
+            throw "La acción Windows $($action.id) no publica identidad cualificada o invocación declarativa consistente."
+        }
+        $scope = [string]$action.scope
+        $operation = [string]$action.operation
+        if ($actionKey -notmatch '^[a-z0-9]+(?:[.-][a-z0-9]+)+$' -or
+            [string]::IsNullOrWhiteSpace($scope) -or
+            [string]::IsNullOrWhiteSpace($operation) -or
+            $actionKey.Split('.')[0] -ne $scope -or
+            $operation -cne ($actionKey -replace '\.', '-')) {
+            throw "La acción Windows $($action.id) carece de actionKey/scope/operation consistentes."
+        }
         if ([string]::IsNullOrWhiteSpace([string]$action.category) -or
             [string]::IsNullOrWhiteSpace([string]$action.command) -or
+            [string]::IsNullOrWhiteSpace([string]$action.label) -or
+            [string]::IsNullOrWhiteSpace([string]$action.shortLabel) -or
+            [string]::IsNullOrWhiteSpace([string]$action.description) -or
             $knownActionBackends -notcontains [string]$action.command -or
             [string]::IsNullOrWhiteSpace([string]$action.target) -or
             [string]::IsNullOrWhiteSpace([string]$action.profile) -or
@@ -308,12 +371,12 @@ try {
     }
     Write-Host ("  [OK] catálogo Windows de acciones: {0} IDs, backends, argumentos y políticas verificados" -f $actionEntries.Count)
     foreach ($nativeActionId in @('native-network', 'native-hardware', 'native-security')) {
-        $nativeActions = @($capabilityJson.actions | Where-Object { $_.id -eq $nativeActionId })
+        $nativeActions = @($capabilityJson.actions | Where-Object { $_.legacyId -eq $nativeActionId })
         if ($nativeActions.Count -ne 1 -or @($nativeActions[0].requiresCommands).Count -ne 0) {
             throw "El contrato Windows marca $nativeActionId como dependiente de una herramienta opcional pese a disponer de fallbacks nativos."
         }
     }
-    $powerAction = @($capabilityJson.actions | Where-Object { $_.id -eq 'native-power' })
+    $powerAction = @($capabilityJson.actions | Where-Object { $_.legacyId -eq 'native-power' })
     if ($powerAction.Count -ne 1 -or
         @($powerAction[0].requiresCommands) -notcontains 'powercfg') {
         throw 'El contrato Windows no conserva powercfg como dependencia nativa de energía.'
@@ -348,6 +411,12 @@ try {
     Run-WithInput @('system', '--dry-run', 'service', 'restart', 'EventLog') ("y" + [Environment]::NewLine)
     $storageOutput = Run @('storage', 'tools')
     if ($storageOutput -notmatch 'diskpart') { throw 'El módulo Windows de almacenamiento falló.' }
+    $snapshotStatus = Run @('snapshots', 'status')
+    if ($snapshotStatus -notmatch 'Backends de instantáneas') { throw 'El E2E Windows no pudo consultar snapshots.' }
+    $snapshotPlan = Run @('--dry-run', 'snapshots', 'create', '--backend', 'vss', '--volume', 'C:')
+    if ($snapshotPlan -notmatch 'vssadmin(?:\.exe)? create shadow /for=C:') {
+        throw 'El E2E Windows no generó el plan VSS esperado.'
+    }
     $storageStatus = Run @('storage', 'status')
     if ($storageStatus -notmatch 'Almacenamiento Windows') { throw 'El estado de almacenamiento Windows falló.' }
     $storagePartitions = Run @('storage', 'partitions')
@@ -537,7 +606,7 @@ try {
             throw "La guía Git Windows omite la integración de Git LFS: $gitLfsMarker"
         }
     }
-    $windowsGuideTopics = @('audit','packages','software','git','aliases','automation','automation-register','clean','storage','storage-partitions','storage-filesystems','storage-volumes','system','services','accounts','native','network','boot','registry','diagnostics','defaults','installable','settings','updates','containers','containers-lifecycle','containers-images','containers-volumes','containers-compose','kubernetes','ssh','connectivity','adb','utilities','privileges','wine','prefix','winslim')
+    $windowsGuideTopics = @('audit','packages','software','git','aliases','automation','automation-register','clean','storage','storage-partitions','storage-filesystems','storage-volumes','system','services','accounts','native','network','boot','registry','diagnostics','defaults','installable','settings','updates','containers','containers-lifecycle','containers-images','containers-volumes','containers-compose','kubernetes','ssh','connectivity','adb','utilities','privileges','wine','prefix','wtools')
     foreach ($guideTopic in $windowsGuideTopics) {
         $guide = Run @('guide', 'gui', $guideTopic)
         if ([string]::IsNullOrWhiteSpace($guide) -or $guide -notmatch 'GUÍA (CLI|GRÁFICA)') {
@@ -605,36 +674,36 @@ try {
     if ($allGuides -match 'Crear prefijo|Migrar prefijo|Mapa desplegable') {
         throw 'El índice Windows anuncia una opción Linux o una función GUI Windows no implementada.'
     }
-    $winslimGuide = Run @('guide', 'gui', 'winslim')
-    $winslimIndexVisible = $allGuides -match '(?m)^WinSlim:\s*$'
-    if ($winslimGuide -match 'no tiene disponible la pantalla WinSlim/NSudo') {
-        if ($allGuides -match '(?m)^WinSlim:\s*$') {
-            throw 'El índice GUI anuncia WinSlim/NSudo sin WSCore ni un lanzador detectado.'
+    $winslimGuide = Run @('guide', 'gui', 'wtools')
+    $winslimIndexVisible = $allGuides -match '(?m)^WTools:\s*$'
+    if ($winslimGuide -match 'no tiene disponible la pantalla WTools/NSudo') {
+        if ($allGuides -match '(?m)^WTools:\s*$') {
+            throw 'El índice GUI anuncia WTools/NSudo sin WSCore ni un lanzador detectado.'
         }
     } else {
         if ($winslimGuide -notmatch 'Estado de WSCore y NSudo' -or -not $winslimIndexVisible) {
-            throw 'La guía o el índice no reflejan el menú WinSlim condicional disponible.'
+            throw 'La guía o el índice no reflejan el menú WTools condicional disponible.'
         }
     }
-    $winslimStatus = Run @('winslim', 'status')
-    if ($winslimStatus -notmatch 'WSCore|WinSlim' -or $winslimStatus -notmatch 'NSudo') {
-        throw 'El estado WinSlim no informa de forma diferenciada WSCore y NSudo.'
+    $winslimStatus = Run @('wtools', 'status')
+    if ($winslimStatus -notmatch 'WSCore|WTools' -or $winslimStatus -notmatch 'NSudo') {
+        throw 'El estado WTools no informa de forma diferenciada WSCore y NSudo.'
     }
     if ($winslimStatus -notmatch [regex]::Escape($nsudoFixture)) {
         throw 'LTOOLS_NSUDO_PATH no detectó la ruta explícita del lanzador de prueba.'
     }
-    $winslimGuideText = Run @('winslim', 'guide')
+    $winslimGuideText = Run @('wtools', 'guide')
     foreach ($nsudoMarker in @('TrustedInstaller', 'drop-rights', '--integrity', '--all-privileges', '--yes')) {
         if ($winslimGuideText -notmatch [regex]::Escape($nsudoMarker)) {
             throw "La guía NSudo omite una identidad u opción compatible: $nsudoMarker"
         }
     }
-    $nsudoMenuResult = Invoke-NativeProcess -FileName $Binary -Arguments @('winslim', 'menu') -InputText ("q" + [Environment]::NewLine) -TimeoutSeconds 15
+    $nsudoMenuResult = Invoke-NativeProcess -FileName $Binary -Arguments @('wtools', 'menu') -InputText ("q" + [Environment]::NewLine) -TimeoutSeconds 15
     $nsudoMenu = [string]$nsudoMenuResult.Stdout + [string]$nsudoMenuResult.Stderr
     if ($nsudoMenuResult.ExitCode -ne 0 -or $nsudoMenu -notmatch 'Lanzar proceso con contexto elegido') {
-        throw 'El menú WinSlim no muestra el asistente cuando se detecta un lanzador NSudo.'
+        throw 'El menú WTools no muestra el asistente cuando se detecta un lanzador NSudo.'
     }
-    $nsudoPlan = Run @('--dry-run', 'winslim', 'launch', '--identity', 'system', '--program', 'cmd.exe', '--arg', '/c', '--arg', 'ver', '--all-privileges', '--integrity', 'high', '--window', 'maximize', '--wait', '--console')
+    $nsudoPlan = Run @('--dry-run', 'wtools', 'launch', '--identity', 'system', '--program', 'cmd.exe', '--arg', '/c', '--arg', 'ver', '--all-privileges', '--integrity', 'high', '--window', 'maximize', '--wait', '--console')
     foreach ($nsudoMarker in @('-U:S -P:E -M:H -Wait -UseCurrentConsole', 'Modo de ventana: maximize', 'Programa: cmd.exe (2 argumento(s)', 'Simulación: no se inició')) {
         if ($nsudoPlan -notmatch [regex]::Escape($nsudoMarker)) {
             throw "El plan NSudo no conserva el contexto/parámetros esperados: $nsudoMarker"

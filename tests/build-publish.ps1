@@ -127,14 +127,51 @@ try {
             executable = ($index -lt 2)
         }
     }
+    $fixtureActions = @(@{
+        id = 'windows.fixture.check'; legacyId = 'fixture-check'; actionId = 'windows.fixture.check'; actionKey = 'fixture.check'; qualifiedActionKey = 'windows.fixture.check'; canonicalKey = 'windows.fixture.check'; scope = 'fixture'; operation = 'fixture-check'
+        label = 'Fixture check'; shortLabel = 'Fixture'; displayName = 'Windows · Fixture · Fixture check'; menuPath = @('Fixture', 'Fixture check'); group = 'Fixture'; description = 'Acción de prueba'
+        category = 'fixture'; command = 'fixture'; args = @(); target = 'none'; targetPolicy = 'none'
+        invocation = @{ executable = 'ltools.exe'; args = @('actions', 'run', 'windows.fixture.check'); target = 'none' }
+        mutating = $false; confirmation = 'none'; safe = $true; profile = 'safe-default'; aliases = @(); supports = @('dry-run','plan')
+    })
+    $fixtureLinuxActions = @($fixtureActions | ForEach-Object {
+        $copy = $_.Clone()
+        $copy.qualifiedActionKey = 'linux.fixture.check'
+        $copy.canonicalKey = 'linux.fixture.check'
+        $copy.actionId = 'linux.fixture.check'
+        $copy.id = 'linux.fixture.check'
+        $copy.displayName = 'Linux · Fixture · Fixture check'
+        $copy.invocation = @{ executable = 'ltools'; args = @('actions', 'run', 'linux.fixture.check'); target = 'none' }
+        $copy
+    })
+    $fixtureDescriptorActions = @($fixtureActions | ForEach-Object {
+        $copy = $_.Clone()
+        $copy.id = $copy.actionId
+        $copy
+    })
+    $fixtureLinuxDescriptorActions = @($fixtureDescriptorActions | ForEach-Object {
+        $copy = $_.Clone()
+        $copy.actionId = 'linux.fixture.check'
+        $copy.qualifiedActionKey = 'linux.fixture.check'
+        $copy.canonicalKey = 'linux.fixture.check'
+        $copy.id = $copy.actionId
+        $copy.displayName = 'Linux · Fixture · Fixture check'
+        $copy
+    })
     $fixtureJson = @{
-        'ltools-release.json' = [ordered]@{ schema = 'ltools-release-v1'; application = 'WinSlim-Tools'; version = $fixtureVersion; hash_algorithm = 'sha256'; artifacts = $fixtureArtifacts }
-        'ltools-capabilities.json' = @{ schema = 'ltools-capabilities-v1'; application = 'WinSlim-Tools'; version = $fixtureVersion; platform = 'windows' }
-        'ltools-capabilities-windows.json' = @{ schema = 'ltools-capabilities-v1'; application = 'WinSlim-Tools'; version = $fixtureVersion; platform = 'windows' }
-        'ltools-terminal.json' = @{ schema = 'ltools-terminal-integration-v1'; application = 'WinSlim-Tools'; version = $fixtureVersion; platform = 'windows'; entrypoint = @{ command = 'ltools.exe' }; integration = @{ optional = $true; standalone_releases_require_it = $false }; host = @{ product = 'WinSlim Terminal' } }
-        'ltools-terminal-windows.json' = @{ schema = 'ltools-terminal-integration-v1'; application = 'WinSlim-Tools'; version = $fixtureVersion; platform = 'windows'; entrypoint = @{ command = 'ltools.exe' }; integration = @{ optional = $true; standalone_releases_require_it = $false }; host = @{ product = 'WinSlim Terminal' } }
-        'ltools-project.json' = @{ schema = 'ltools-project-v1'; repository = 'example/project'; platforms = @{ windows = @{ install = @{ entrypoint = 'ltools.exe' } } } }
+        # Una release combinada puede conservar LTools como identidad global
+        # aunque el descriptor nativo Windows sea WTools; la E2E debe validar
+        # cada descriptor por plataforma, no compararlo ciegamente con esto.
+        'ltools-release.json' = [ordered]@{ schema = 'ltools-release-v1'; application = 'LTools'; version = $fixtureVersion; hash_algorithm = 'sha256'; artifacts = $fixtureArtifacts }
+        'ltools-capabilities.json' = @{ schema = 'ltools-capabilities-v1'; application = 'LTools'; version = $fixtureVersion; platform = 'linux'; actions = $fixtureLinuxDescriptorActions }
+        'ltools-capabilities-windows.json' = @{ schema = 'ltools-capabilities-v1'; application = 'WTools'; version = $fixtureVersion; platform = 'windows'; actions = $fixtureDescriptorActions }
+        'ltools-actions.json' = @{ schema = 'ltools-actions-v1'; platform = 'linux'; safety = @{ excluded_defaults = @('/'); target_selection = 'explicit-only' }; actions = $fixtureLinuxActions }
+        'ltools-actions-windows.json' = @{ schema = 'ltools-actions-v1'; platform = 'windows'; safety = @{ excluded_defaults = @('C:'); target_selection = 'explicit-only' }; actions = $fixtureActions }
+        'ltools-terminal.json' = @{ schema = 'ltools-terminal-integration-v1'; application = 'LTools'; version = $fixtureVersion; platform = 'linux'; entrypoint = @{ command = 'ltools' }; integration = @{ optional = $true; standalone_releases_require_it = $false }; host = @{ id = 'lterminal'; family = 'lterminal'; product = 'LTerminal'; known_products = @('LTerminal','WTools') }; actions = $fixtureLinuxDescriptorActions }
+        'ltools-terminal-windows.json' = @{ schema = 'ltools-terminal-integration-v1'; application = 'WTools'; version = $fixtureVersion; platform = 'windows'; entrypoint = @{ command = 'ltools.exe' }; integration = @{ optional = $true; standalone_releases_require_it = $false }; host = @{ id = 'wtools'; family = 'lterminal'; product = 'WTools'; known_products = @('LTerminal','WTools') }; actions = $fixtureDescriptorActions }
+        'ltools-project.json' = @{ schema = 'ltools-project-v1'; repository = 'example/project'; action_catalog = @{ catalog = 'ltools-actions.json'; schema = 'ltools-actions.schema.json'; descriptors = @{ linux = 'ltools-actions.json'; windows = 'ltools-actions-windows.json' } }; platforms = @{ windows = @{ install = @{ entrypoint = 'ltools.exe' } } } }
         'ltools-capabilities.schema.json' = @{ '$id' = 'https://example.invalid/capabilities.json' }
+        'ltools-actions.schema.json' = @{ '$id' = 'https://example.invalid/actions.json' }
         'ltools-terminal.schema.json' = @{ '$id' = 'https://example.invalid/terminal.json' }
         'ltools-project.schema.json' = @{ '$id' = 'https://example.invalid/project.json' }
         'ltools-release.schema.json' = @{ '$id' = 'https://example.invalid/release.json' }

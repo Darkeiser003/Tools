@@ -325,7 +325,7 @@ fn fetch_latest_at_with(
     if string_field(&parsed, "schema")? != "ltools-release-v1"
         || !matches!(
             string_field(&parsed, "application")?,
-            "LTools" | "WinSlim-Tools"
+            "LTools" | "WTools" | "WinSlim-Tools"
         )
         || string_field(&parsed, "repository")? != repository
         || string_field(&parsed, "manifest_name")? != "ltools-release.json"

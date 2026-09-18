@@ -106,7 +106,7 @@ expect_ok capabilities capabilities --format json
 jq -e '.schema == "ltools-capabilities-v1" and (.entrypoints.cli.no_arguments == "shows-help") and (.actions | type == "array") and (.host_tools | type == "array")' \
     "$TMP_DIR/capabilities.out" >/dev/null || die 'capabilities no cumple el contrato JSON'
 expect_ok actions actions list --format json
-jq -e '.schema == "ltools-actions-v1" and (.actions | length > 10) and all(.actions[]; .id and (.args | type == "array") and (.mutating | type == "boolean"))' \
+jq -e '.schema == "ltools-actions-v1" and (.actions | length > 10) and (([.actions[].actionKey] | unique | length) == (.actions | length)) and (([.actions[].operation] | unique | length) == (.actions | length)) and (([.actions[].label] | unique | length) == (.actions | length)) and (([.actions[].shortLabel] | unique | length) == (.actions | length)) and (([.actions[].qualifiedActionKey] | unique | length) == (.actions | length)) and (([.actions[].canonicalKey] | unique | length) == (.actions | length)) and all(.actions[]; .id and (.id == .actionId) and (.legacyId | type == "string" and length > 0) and .actionKey and .qualifiedActionKey and (.canonicalKey == .qualifiedActionKey) and .scope and .operation and .label and .shortLabel and .displayName and (.menuPath | type == "array" and length == 2) and .description and (.operation == (.actionKey | gsub("\\."; "-"))) and (.args | type == "array") and (.invocation.args == ["actions", "run", .actionId]) and (.invocation.target == .target) and (.mutating | type == "boolean"))' \
     "$TMP_DIR/actions.out" >/dev/null || die 'actions no cumple el contrato JSON'
 expect_ok diagnostics-json diagnostics health --format json
 jq -e '.schema == "ltools-diagnostics-v1" and (.probes | length > 0) and all(.probes[]; .key and (.status_code == null or (.status_code | type == "number")))' \
@@ -153,6 +153,11 @@ expect_ok diagnostics-health diagnostics health
 expect_ok storage-map storage map --path "$FIXTURE" --depth 1 --max-children 10 --format json
 jq -e '.schema == "ltools-storage-map-v1" and (.roots | length == 1)' "$TMP_DIR/storage-map.out" >/dev/null ||
     die 'storage map CLI no devolvió su esquema JSON'
+expect_ok snapshots-status snapshots status
+expect_ok snapshots-list snapshots list
+grep -Fq 'Backends de instantáneas' "$TMP_DIR/snapshots-status.out" || die 'snapshots status no mostró el inventario de backends'
+expect_ok snapshots-alias aliases list
+grep -Fq 'tsnap -> snapshots' "$TMP_DIR/snapshots-alias.out" || die 'el alias tsnap no se registró automáticamente'
 expect_ok registry registry status
 expect_ok privileges privileges
 expect_ok doctor doctor
@@ -165,6 +170,14 @@ expect_ok dry-run-account --dry-run accounts create --user ltools-cli-user --hom
 grep -Fq 'useradd' "$TMP_DIR/dry-run-account.out" || die 'accounts --dry-run no generó el plan nativo'
 expect_ok dry-run-network --dry-run native network set-interface --interface lo --state up --yes
 grep -Eq 'Simulación|Plan:' "$TMP_DIR/dry-run-network.out" || die 'native --dry-run no informó simulación ni plan'
+expect_ok canonical-action actions run native.network.status
+grep -Fq 'Acción: native.network.status — Consultar red nativa' "$TMP_DIR/canonical-action.out" || die 'actions run no aceptó o no describió la actionKey canónica'
+expect_ok qualified-action actions run linux.native.network.status
+grep -Fq 'Acción: native.network.status — Consultar red nativa' "$TMP_DIR/qualified-action.out" || die 'actions run no aceptó el actionId global cualificado'
+expect_ok dry-run-snapshot --dry-run snapshots create --backend btrfs --path "$FIXTURE" --target "$TMP_DIR/snapshot"
+grep -Fq 'btrfs subvolume snapshot' "$TMP_DIR/dry-run-snapshot.out" || die 'snapshots --dry-run no conservó los argumentos nativos'
+expect_fail unsafe-snapshot snapshots delete --backend zfs --volume pool/data
+expect_fail unsupported-snapshot-restore --dry-run snapshots restore --backend btrfs --path "$FIXTURE" --target "$TMP_DIR/snapshot"
 expect_fail unknown-command does-not-exist
 grep -Fq 'comando desconocido: does-not-exist' "$TMP_DIR/unknown-command.out" || die 'el error de comando desconocido no es accionable'
 expect_fail missing-format diagnostics health --format

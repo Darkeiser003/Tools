@@ -7,12 +7,12 @@ use crate::common::Context;
 
 #[cfg(windows)]
 pub fn help() -> &'static str {
-    "guide [cli|gui] [all|audit|packages|software|installable|git|gh|aliases|automation|automation-register|clean|storage|storage-partitions|storage-filesystems|storage-volumes|system|services|accounts|native|network|connectivity|boot|registry|diagnostics|wine|defaults|settings|updates|containers|containers-lifecycle|containers-images|containers-volumes|containers-compose|kubernetes|ssh|adb|utilities|actions|privileges|winslim]"
+    "guide [cli|gui] [all|audit|packages|software|installable|git|gh|aliases|automation|automation-register|clean|storage|storage-partitions|storage-filesystems|storage-volumes|snapshots|system|services|accounts|native|network|connectivity|boot|registry|diagnostics|wine|defaults|settings|updates|containers|containers-lifecycle|containers-images|containers-volumes|containers-compose|kubernetes|ssh|adb|utilities|actions|privileges|wtools|winslim]"
 }
 
 #[cfg(not(windows))]
 pub fn help() -> &'static str {
-    "guide [cli|gui] [all|audit|packages|software|installable|git|gh|aliases|automation|automation-register|clean|storage|storage-partitions|storage-filesystems|storage-volumes|system|services|accounts|native|network|connectivity|boot|registry|diagnostics|wine|defaults|settings|updates|containers|containers-lifecycle|containers-images|containers-volumes|containers-compose|kubernetes|ssh|adb|utilities|actions|privileges]"
+    "guide [cli|gui] [all|audit|packages|software|installable|git|gh|aliases|automation|automation-register|clean|storage|storage-partitions|storage-filesystems|storage-volumes|snapshots|system|services|accounts|native|network|connectivity|boot|registry|diagnostics|wine|defaults|settings|updates|containers|containers-lifecycle|containers-images|containers-volumes|containers-compose|kubernetes|ssh|adb|utilities|actions|privileges]"
 }
 
 const INDEX: &str = r#"GUÍAS DE USO DE LTOOLS
@@ -40,6 +40,7 @@ Familias disponibles:
   storage     discos, particiones, formatos y volúmenes
   storage-partitions / storage-filesystems / storage-volumes
                menús especializados de almacenamiento
+  snapshots    instantáneas, puntos de restauración y límites por backend
   system      estado del sistema y herramientas nativas
   services    servicios, scopes, origen y gestión
   accounts    usuarios, grupos, sesiones y permisos
@@ -186,8 +187,9 @@ Seguridad y automatización:
   Nunca se concatena la entrada en una shell. URL, repositorio, rama y rutas
   se pasan como argumentos separados. Usa `--dry-run` antes de clone/pull/
   push/release y `--plan FICHERO` en flujos modificadores. En CI usa el
-  catálogo: `ltools actions list --format json` y después
-  `ltools actions run native.git-status RUTA` (consulta el ID exacto).
+  catálogo backend: `ltools actions list --format json` y después
+  `ltools actions run storage.overview --dry-run` (consulta siempre el
+  `actionKey` exacto de ese catálogo; no uses un ID de `capabilities.actions`).
   Revisa el remoto, la rama y el diff antes de publicar; `push --force` no es
   una opción predeterminada y un release afecta al repositorio remoto.
 "#;
@@ -346,11 +348,15 @@ const AUTOMATION: &str = r#"GUÍA: AUTOMATIZACIÓN Y ACCIONES
 
 `automation list` muestra automatizaciones registradas; add/modify/run/remove
 las gestionan con campos explícitos. `actions list` publica el catálogo
-estable con categoría, objetivo, perfil, mutación, confirmación y compatibilidad.
+backend estable con categoría, objetivo, perfil, mutación, confirmación y
+compatibilidad. Es distinto de `capabilities.actions`, que contiene acciones
+rápidas para que LTerminal o WTools abra `executable` con su lista `args[]`;
+ambos tienen `actionKey`, `scope` y `operation` únicos dentro de su catálogo.
 
 Para integrar LTerminal, usa executable y args[] separados, nunca una cadena
-de shell. Ejemplo: `ltools actions list --format json`; valida el ID y ejecuta
-`ltools actions run ID OBJETIVO --dry-run`. Los IDs mutadores crean plan y
+de shell. Ejemplo: `ltools actions list --format json`; valida el ID o
+`actionKey` y ejecuta `ltools actions run ID-o-actionKey OBJETIVO --dry-run`.
+Los IDs mutadores crean plan y
 requieren confirmación. Registra salida y revisa el resultado antes de repetir.
 "#;
 
@@ -532,14 +538,47 @@ comprueba disponibilidad y versión con `doctor` y registra el resultado.
 
 const ACTIONS: &str = r#"GUÍA: CATÁLOGO DE ACCIONES
 
-`actions list` es el contrato para botones, CLI y frontends. Cada entrada
-indica ID, categoría, argumentos, perfil, mutación, confirmación, alias y
-compatibilidad. `actions run ID [objetivo] --dry-run` valida un flujo antes de
-aplicarlo; los IDs mutadores conservan un plan y piden confirmación.
+`actions list` es el contrato backend para botones, CLI y frontends. Cada
+entrada indica `id` heredado, `actionKey` canónico, `scope`, `operation`,
+`label`, `shortLabel`, `description`, categoría, argumentos, perfil, mutación,
+confirmación, alias y compatibilidad. Los nombres canónicos son únicos y no
+dependen del idioma. `actions run ID-o-actionKey [objetivo] --dry-run` valida
+un flujo antes de aplicarlo; los IDs mutadores conservan un plan y piden
+confirmación.
+
+No confundas los catálogos: `capabilities --format json` publica acciones
+rápidas de integración con `executable` y `args[]`; esas entradas se lanzan
+con esos argumentos separados. `actions list --format json` publica acciones
+backend que sí se ejecutan con `actions run`. Usa `actionKey` como identidad,
+no una etiqueta traducida ni el `id` corto heredado.
 
 No construyas shell a partir de campos del usuario: pasa executable y args[]
 por separado. Si un ID no existe en la plataforma actual, el catálogo lo
 marca y la acción se rechaza de forma segura.
+"#;
+
+const SNAPSHOTS: &str = r#"GUÍA: INSTANTÁNEAS Y PUNTOS DE RESTAURACIÓN
+
+Consulta segura:
+  `ltools snapshots status` detecta backends sin elevarse.
+  `ltools snapshots list` enumera instantáneas; usa `--backend` para limitar
+  la consulta a `timeshift`, `snapper`, `btrfs`, `zfs` o `vss`.
+
+Operaciones:
+  `create` necesita backend y objetivo. Timeshift usa `--name`; Snapper usa
+  `--config` y `--name`; Btrfs usa `--path` y `--target`; ZFS usa `--volume`
+  y `--name` o un objetivo `dataset@snapshot`; VSS usa `--volume C:`.
+  `delete` exige `--target` explícito. `restore` solo está disponible para
+  backends con una operación nativa segura; Btrfs y VSS se rechazan porque
+  una copia/rollback ambiguo puede sobrescribir datos.
+
+Seguridad:
+  primero ejecuta `--dry-run`, revisa el plan y después añade `--yes`.
+  Las operaciones reales requieren elevación según el backend. No se elevan
+  las consultas ni se confunde un snapshot con una copia externa: conserva
+  además una copia independiente y verifica que el volumen de destino tenga
+  espacio. Windows nativo usa VSS/WBAdmin; los backends POSIX no se simulan
+  bajo Wine.
 "#;
 
 const CLI_INDEX: &str = r#"GUÍAS CLI DE LTOOLS
@@ -554,7 +593,7 @@ Modos:
   guide all            índice de todas las familias
 
 Familias: audit, packages, software, git, gh, aliases, automation, clean,
-storage, system, services, accounts, network, boot, registry, diagnostics,
+storage, snapshots, system, services, accounts, network, boot, registry, diagnostics,
 wine, defaults, updates, containers, kubernetes, ssh, adb, utilities, actions
 y privileges.
 "#;
@@ -601,6 +640,13 @@ fn cli_guide(topic: &str) -> String {
             "mapa desplegable de discos y rutas; copiar, mover, borrar a papelera, zip, tar y abrir con el gestor nativo; además de particiones, sistemas de archivos, montajes, swap, cifrado, LVM, Btrfs, ZFS y RAID",
             "--path, --depth, --max-children, --format text|json|tsv, --out, --source, --destination, --device, --mountpoint, --filesystem, --label y --yes",
             "árbol con tamaños acumulados, permisos observados, rutas protegidas, errores de acceso, dispositivos, volúmenes, planes y resultado de la operación",
+        ),
+        "snapshots" => (
+            "INSTANTÁNEAS Y PUNTOS DE RESTAURACIÓN",
+            "status y list para descubrir y enumerar backends nativos",
+            "create, delete y restore con backend y objetivo explícitos; no se ofrecen operaciones que el backend no soporte con seguridad",
+            "--backend, --name, --path, --volume, --target, --config, --yes, --dry-run y --plan",
+            "backend, objetivo, comando separado, plan, salida nativa, permisos y motivo de una omisión",
         ),
         "wine" => (
             "WINE Y PROTON",
@@ -792,6 +838,7 @@ fn cli_all_index() -> String {
         "automation",
         "clean",
         "storage",
+        "snapshots",
         "system",
         "services",
         "accounts",
@@ -1306,7 +1353,7 @@ fn windows_gui_topic_page(topic: &str) -> Option<(usize, &'static str)> {
         }
         "automation" | "automation-register" => Some((5, "automation")),
         "accounts" => Some((8, "accounts")),
-        "winslim" => Some((7, "winslim")),
+        "wtools" | "winslim" => Some((7, "winslim")),
         "updates" => Some((6, "settings")),
         _ => None,
     }
@@ -1322,7 +1369,7 @@ fn windows_gui_unavailable(topic: &str) -> String {
         "ssh" | "connectivity" => "SSH/SCP/SFTP no tienen acciones gráficas en este ejecutable. El menú de Herramientas instalables solo ofrece el estado de ADB; no anuncia transferencias SSH inexistentes.",
         "utilities" => "El catálogo de utilidades instalables no tiene una pantalla propia en esta GUI Windows.",
         "aliases" => "El gestor de alias se administra desde la CLI y no tiene una pantalla gráfica Windows.",
-        "winslim" => "Este anfitrión no tiene disponible la pantalla WinSlim/NSudo; solo aparece en Windows cuando existe C:\\WSCore o se detecta un lanzador NSudo compatible.",
+        "winslim" => "Este anfitrión no tiene disponible la pantalla WTools/NSudo; solo aparece en Windows cuando existe C:\\WSCore o se detecta un lanzador NSudo compatible.",
         "wine" | "prefix" => "Wine y Proton no aplican al ejecutable Windows nativo y no tienen pantalla gráfica aquí.",
         "storage-partitions" | "storage-filesystems" | "storage-volumes" => "Las operaciones Linux de parted, sistemas de archivos POSIX, LUKS, LVM, Btrfs, ZFS y RAID no se implementan en la GUI Windows.",
         _ => "Este tema no tiene una pantalla propia en la GUI Windows.",
@@ -1342,7 +1389,7 @@ fn windows_gui_page_guide(topic: &str) -> Option<String> {
     }
     let (page, category) = windows_gui_topic_page(topic)?;
     let title = if topic == "accounts" {
-        crate::i18n::accounts_label().to_owned()
+        crate::i18n::menu_section_label().to_owned()
     } else {
         crate::gui::windows_menu_title(page)
             .unwrap_or_else(|| crate::i18n::category_text(category).to_owned())
@@ -1374,9 +1421,9 @@ fn windows_gui_page_guide(topic: &str) -> Option<String> {
             "Descarga solo tras revisar que el paquete corresponde a Windows y a GUI/CLI. La firma Ed25519 y los hashes deben validarse; cierra el programa antes de reemplazar el ejecutable y conserva una copia. No se eleva ni se instala automáticamente.",
         ),
         8 => (
-            crate::i18n::gui_account_text("guide_fields"),
-            crate::i18n::gui_account_text("guide_simple"),
-            crate::i18n::gui_account_text("guide_complex"),
+            crate::i18n::gui_management_text("guide_fields"),
+            crate::i18n::gui_management_text("guide_simple"),
+            crate::i18n::gui_management_text("guide_complex"),
         ),
         7 => (
             if crate::platform::nsudo_path().is_some() {
@@ -1385,7 +1432,7 @@ fn windows_gui_page_guide(topic: &str) -> Option<String> {
                 "No hay campos. NSudo no está detectado, así que el botón de lanzamiento no se muestra; la elevación normal sigue usando UAC."
             },
             "Consulta la detección de WSCore y NSudo antes de abrir el asistente.",
-            "Si NSudo está disponible, abre el asistente, selecciona usuario actual/elevado, SYSTEM, TrustedInstaller, token actual o reducción de privilegios; introduce el programa y cada argumento, revisa la confirmación y repite la consulta de estado. Para automatizarlo, registra el comando `winslim launch` con argumentos separados y `--yes` únicamente tras validar el efecto.",
+            "Si NSudo está disponible, abre el asistente, selecciona usuario actual/elevado, SYSTEM, TrustedInstaller, token actual o reducción de privilegios; introduce el programa y cada argumento, revisa la confirmación y repite la consulta de estado. Para automatizarlo, registra el comando `wtools launch` con argumentos separados y `--yes` únicamente tras validar el efecto. `winslim` queda como alias técnico compatible.",
         ),
         _ => (
             "Este menú no pide campos; sus consultas se ejecutan con valores nativos de Windows.",
@@ -1419,7 +1466,7 @@ fn windows_gui_index() -> String {
         pages.push(("winslim", 7));
     }
     let mut result = String::from(
-        "GUÍA GRÁFICA COMPLETA DE WINSLIM-TOOLS\n\nCada categoría abre un menú propio. Las guías contextuales enumeran las opciones de la interfaz Windows y no sustituyen sus botones por comandos.\n\nPanel principal:\n",
+        "GUÍA GRÁFICA COMPLETA DE WTOOLS\n\nCada categoría abre un menú propio. Las guías contextuales enumeran las opciones de la interfaz Windows y no sustituyen sus botones por comandos.\n\nPanel principal:\n",
     );
     for (topic, page) in pages {
         let Some((_, category)) = windows_gui_topic_page(topic) else {
@@ -1442,7 +1489,7 @@ fn windows_gui_index() -> String {
         }
     }
     result.push_str(&format!(
-        "\n{}:\n  Tema, idioma, elevación por defecto, visibilidad de estas categorías, aplicar ajustes y volver.\n  WinSlim solo aparece cuando el anfitrión ofrece WSCore.\n\nEl gestor de alias está disponible únicamente por CLI; no se anuncia como botón gráfico. El ejecutable Windows nativo tampoco ofrece el gestor de prefijos Wine/Proton ni opciones Linux. La guía de cada categoría vuelve a enumerar sus botones, argumentos y flujos.",
+        "\n{}:\n  Tema, idioma, elevación por defecto, visibilidad de estas categorías, aplicar ajustes y volver.\n  WTools solo aparece cuando el anfitrión ofrece WSCore.\n\nEl gestor de alias está disponible únicamente por CLI; no se anuncia como botón gráfico. El ejecutable Windows nativo tampoco ofrece el gestor de prefijos Wine/Proton ni opciones Linux. La guía de cada categoría vuelve a enumerar sus botones, argumentos y flujos.",
         crate::i18n::gui_text("settings_button")
     ));
     result.push_str("\n\n");
@@ -1523,7 +1570,7 @@ fn gui_catalog_guide(topic: &str) -> String {
             "guide",
         ]
         .into_iter()
-        .map(crate::i18n::gui_account_text)
+        .map(crate::i18n::gui_management_text)
         .chain(std::iter::once(crate::i18n::text("menu.back")))
         .collect::<Vec<_>>();
         let listed = options
@@ -1534,12 +1581,12 @@ fn gui_catalog_guide(topic: &str) -> String {
             .join("\n");
         return format!(
             "GUÍA GRÁFICA: {}\n\nMenú completo «{}» (opciones del menú Linux):\n{}\n\nCampos y argumentos de la GUI:\n  {}\n\nProceso simple:\n  {}\n\nProceso complejo:\n  {}\n\nLinux administra cuentas locales; los permisos de administrador se conceden solo mediante grupos sudo, wheel o admin que ya existan. No se muestran acciones Windows ni identidades de servicio.",
-            crate::i18n::accounts_label(),
-            crate::i18n::accounts_label(),
+            crate::i18n::menu_section_label(),
+            crate::i18n::menu_section_label(),
             listed,
-            crate::i18n::gui_account_text("guide_fields_linux"),
-            crate::i18n::gui_account_text("guide_simple"),
-            crate::i18n::gui_account_text("guide_complex_linux"),
+            crate::i18n::gui_management_text("guide_fields_linux"),
+            crate::i18n::gui_management_text("guide_simple"),
+            crate::i18n::gui_management_text("guide_complex_linux"),
         );
     }
     let (title, menu, options, fields, process) = match topic {
@@ -1578,7 +1625,7 @@ fn gui_catalog_guide(topic: &str) -> String {
         ),
         "system" => (
             "SISTEMA, RED Y SEGURIDAD", "Sistema",
-            &["Estado del sistema", "Usuarios, grupos y sesiones", "Red, rutas, DNS y puertos escuchando", "Arranque, EFI y cargador del sistema", crate::i18n::registry_label(), crate::i18n::diagnostics_label(), crate::i18n::system_page_text("native_security_status"), crate::i18n::system_page_text("native_security_scanners"), "Servicios del sistema", "Guía del sistema", "Volver"][..],
+            &["Estado del sistema", "Usuarios, grupos y sesiones", "Red, rutas, DNS y puertos escuchando", "Arranque, EFI y cargador del sistema", crate::i18n::registry_label(), crate::i18n::diagnostics_label(), crate::i18n::system_page_text("native_security_status"), crate::i18n::system_page_text("native_security_scanners"), "Servicios del sistema", crate::i18n::system_page_text("snapshots"), "Guía del sistema", "Volver"][..],
             "Los submenús tienen sus campos: servicios (ámbito, unidad, operación), red (interfaz/estado o conexión), arranque (entrada GRUB), cuentas (usuario/grupo) y Registro (clave/acción). Seguridad consulta firewall; analizadores enumera herramientas de código/CI sin ejecutar análisis.",
             "Abre Estado del sistema y Diagnóstico; consulta la seguridad y el inventario de analizadores, entra en el submenú de gestión, completa el objetivo exacto y verifica con una consulta posterior.",
         ),
@@ -2368,6 +2415,7 @@ fn common_guide(topic: &str) -> Result<&'static str, String> {
         "automation-register" => Ok(AUTOMATION),
         "clean" => Ok(CLEAN),
         "storage" | "storage-partitions" | "storage-filesystems" | "storage-volumes" => Ok(STORAGE),
+        "snapshots" => Ok(SNAPSHOTS),
         "updates" => Ok(UPDATES),
         "system" => Ok(SYSTEM),
         "services" => Ok(SERVICES),
@@ -2413,7 +2461,7 @@ pub fn run(_ctx: &Context, args: &[String]) -> Result<(), String> {
         "git" => "git",
         "gh" | "github" => "gh",
         #[cfg(windows)]
-        "winslim" if mode == "gui" => "winslim",
+        "wtools" | "winslim" if mode == "gui" => "winslim",
         "aliases" | "alias" => "aliases",
         "automation" | "automations" => "automation",
         "automation-register" | "register-script" => "automation-register",
@@ -2422,6 +2470,7 @@ pub fn run(_ctx: &Context, args: &[String]) -> Result<(), String> {
         "storage-partitions" | "partition-guide" => "storage-partitions",
         "storage-filesystems" | "filesystem-guide" => "storage-filesystems",
         "storage-volumes" | "volume-guide" => "storage-volumes",
+        "snapshots" | "snapshot" | "restore-points" => "snapshots",
         // «native» comparte el catálogo de herramientas nativas entre CLI y
         // GUI; no debe degradarse a la guía genérica de sistema porque sus
         // opciones y límites son distintos.
@@ -2472,7 +2521,14 @@ mod tests {
     #[test]
     fn index_mentions_all_major_families() {
         for topic in [
-            "git / gh", "network", "boot", "services", "wine", "updates", "actions",
+            "git / gh",
+            "network",
+            "boot",
+            "services",
+            "snapshots",
+            "wine",
+            "updates",
+            "actions",
         ] {
             assert!(INDEX.contains(topic), "falta {topic}");
         }
@@ -2548,6 +2604,20 @@ mod tests {
         assert!(guide.contains("--remote URL") && guide.contains("clona sin checkout"));
         assert!(guide.contains("ltools git status --repo"));
         assert!(guide.contains("ltools git gh auth-status"));
+    }
+
+    #[test]
+    fn action_guides_use_ids_from_the_backend_catalog() {
+        let _language_guard = crate::i18n::language_test_guard();
+        crate::i18n::set("es");
+        let git_guide = common_guide("git").unwrap();
+        let automation_guide = common_guide("automation").unwrap();
+        let actions_guide = common_guide("actions").unwrap();
+
+        assert!(git_guide.contains("ltools actions run storage.overview --dry-run"));
+        assert!(!git_guide.contains("native.git-status"));
+        assert!(automation_guide.contains("capabilities.actions"));
+        assert!(actions_guide.contains("actions run") && actions_guide.contains("actionKey"));
     }
 
     #[test]
@@ -2643,12 +2713,12 @@ mod tests {
             let guide = gui_guide("accounts");
             for key in action_keys {
                 assert!(
-                    guide.contains(crate::i18n::gui_account_text(key)),
+                    guide.contains(crate::i18n::gui_management_text(key)),
                     "Linux account GUI guide ({language}) omits {key}"
                 );
             }
-            assert!(guide.contains(crate::i18n::gui_account_text("guide_fields_linux")));
-            assert!(guide.contains(crate::i18n::gui_account_text("guide_complex_linux")));
+            assert!(guide.contains(crate::i18n::gui_management_text("guide_fields_linux")));
+            assert!(guide.contains(crate::i18n::gui_management_text("guide_complex_linux")));
             assert!(!guide.contains("TrustedInstaller"));
             assert!(!guide.contains("S-1-5-32-544"));
         }
@@ -3105,7 +3175,7 @@ mod tests {
                 if topic == "accounts" {
                     for key in ["guide_fields", "guide_simple", "guide_complex"] {
                         assert!(
-                            guide.contains(crate::i18n::gui_account_text(key)),
+                            guide.contains(crate::i18n::gui_management_text(key)),
                             "Windows account guide ({language}) is missing localized {key}"
                         );
                     }

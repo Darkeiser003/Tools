@@ -10,7 +10,7 @@
   ],
   "properties": {
     "schema": { "const": "ltools-release-v1" },
-    "application": { "enum": ["LTools", "WinSlim-Tools"] },
+    "application": { "enum": ["LTools", "WTools"] },
     "version": { "type": "string", "minLength": 1 },
     "tag": { "type": "string", "pattern": "^v.+" },
     "repository": { "type": "string", "pattern": "^[^/]+/[^/]+$" },

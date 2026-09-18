@@ -99,7 +99,8 @@ help_for() {
         e2fsck)
             if timeout 12 "$tool" --help >"$output" 2>&1; then status=0; else status=$?; fi
             [[ "$status" -ne 124 ]] || return 1
-            grep -Fq 'Usage: e2fsck' "$output" && grep -Fq 'Emergency help:' "$output"
+            grep -Fq 'Usage: e2fsck' "$output" &&
+                grep -Eiq 'Emergency help:|Ayuda de emergencia:' "$output"
             ;;
         xfs_admin)
             if timeout 12 "$tool" --help >"$output" 2>&1; then status=0; else status=$?; fi
@@ -327,6 +328,17 @@ help_for() {
             fi
             return 1
             ;;
+        podman|podman-compose)
+            if run_help "$output" "$tool" --help; then return 0; fi
+            # Podman puede fallar antes de imprimir su ayuda cuando el host de
+            # la E2E monta /run/user como solo lectura o conserva un pause.pid
+            # de otro namespace. Es una limitación del runtime, no una ayuda
+            # inválida; cualquier otro error sigue siendo un fallo.
+            if grep -Eiq 'read-only file system|set sticky bit|pause\.pid|operation not permitted' "$output"; then
+                return 2
+            fi
+            return 1
+            ;;
         lsof|tcpdump) run_help "$output" "$tool" -h || run_help "$output" "$tool" --help ;;
         lvm) run_help "$output" "$tool" help || run_help "$output" "$tool" --help ;;
         7z|unzip|zip|zstd) run_help "$output" "$tool" -h || run_help "$output" "$tool" --help ;;
@@ -409,9 +421,31 @@ if command -v jq >/dev/null 2>&1; then
         .platform == "linux" and
         (.actions | length > 0) and
         (([.actions[].id] | length) == ([.actions[].id] | unique | length)) and
+        (([.actions[].actionKey] | length) == ([.actions[].actionKey] | unique | length)) and
+        (([.actions[].operation] | length) == ([.actions[].operation] | unique | length)) and
+        (([.actions[].label] | length) == ([.actions[].label] | unique | length)) and
+        (([.actions[].shortLabel] | length) == ([.actions[].shortLabel] | unique | length)) and
+        (([.actions[].qualifiedActionKey] | length) == ([.actions[].qualifiedActionKey] | unique | length)) and
+        (([.actions[].canonicalKey] | length) == ([.actions[].canonicalKey] | unique | length)) and
         all(.actions[];
             (.id | type == "string" and length > 0) and
-            (.command | IN("audit", "packages", "games", "storage", "system", "accounts", "native", "defaults", "clean", "diagnostics", "automation", "boot", "wine")) and
+            (.id == .actionId) and (.legacyId | type == "string" and length > 0) and
+            (.actionKey | type == "string" and test("^[a-z0-9]+(?:[.-][a-z0-9]+)+$")) and
+            (.qualifiedActionKey == ("linux." + .actionKey)) and
+            (.canonicalKey == .qualifiedActionKey) and
+            (.scope | type == "string" and length > 0) and
+            (.operation | type == "string" and length > 0) and
+            (.operation == (.actionKey | gsub("\\."; "-"))) and
+            (.label | type == "string" and length > 0) and
+            (.shortLabel | type == "string" and length > 0) and
+            (.displayName | type == "string" and length > 0) and
+            (.menuPath | type == "array" and length == 2) and
+            (.description | type == "string" and length > 0) and
+            (.group | type == "string" and length > 0) and
+            (.invocation.executable == "ltools") and
+            (.invocation.args == ["actions", "run", .actionId]) and
+            (.invocation.target == .target) and
+            (.command | IN("audit", "packages", "games", "storage", "snapshots", "system", "accounts", "native", "defaults", "clean", "diagnostics", "automation", "boot", "wine")) and
             (.targetPolicy | type == "string" and length > 0) and
             (.profile | type == "string" and length > 0) and
             (.mutating | type == "boolean") and
@@ -435,6 +469,7 @@ mapfile -t tools < <(
 (( ${#tools[@]} > 0 )) || die 'el catálogo disponible no contiene comandos para auditar'
 printf 'E2E: ejecutando las ayudas nativas reales disponibles (%s comandos)...\n' "${#tools[@]}"
 checked=0
+declare -A help_skipped=()
 for tool in "${tools[@]}"; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         if [[ "$tool" == docker-compose ]] && command -v docker >/dev/null 2>&1; then
@@ -453,6 +488,7 @@ for tool in "${tools[@]}"; do
         if [[ "$help_status" -eq 2 ]]; then
             reason="$(head -n 1 "$help_file" | tr -d '\r')"
             printf '  SKIP  %s: %s\n' "$tool" "${reason:-el entorno impidió consultar la ayuda}"
+            help_skipped["$tool"]=1
             continue
         fi
         printf 'Salida recibida de %s (código de ayuda inválida):\n' "$tool" >&2
@@ -517,6 +553,10 @@ fi
 
 for engine in docker podman; do
     if command -v "$engine" >/dev/null 2>&1; then
+        if [[ "${help_skipped[$engine]:-0}" == 1 ]]; then
+            printf '  SKIP  %s: la ayuda base quedó omitida por una restricción del runtime del host\n' "$engine"
+            continue
+        fi
         check_surface "$engine" containers-lifecycle 19 "$HELP_DIR/$engine.out" \
             'pull:Descargar imagen' 'run:Crear y ejecutar contenedor' 'start:Iniciar contenedor' \
             'stop:Detener contenedor' 'restart:Reiniciar contenedor' 'rm:Eliminar contenedor' \

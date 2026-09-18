@@ -11,7 +11,7 @@
   ],
   "properties": {
     "schema": { "const": "ltools-terminal-integration-v1" },
-    "application": { "enum": ["LTools", "WinSlim-Tools"] },
+    "application": { "enum": ["LTools", "WTools"] },
     "version": { "type": "string" },
     "platform": { "enum": ["linux", "windows"] },
     "integration": {
@@ -28,14 +28,14 @@
       "type": "object",
       "required": ["id", "family", "product", "known_products"],
       "properties": {
-        "id": { "enum": ["lterminal", "winslim-terminal"] },
+        "id": { "enum": ["lterminal", "wtools"] },
         "family": { "const": "lterminal" },
-        "product": { "enum": ["LTerminal", "WinSlim Terminal"] },
+        "product": { "enum": ["LTerminal", "WTools"] },
         "known_products": {
           "type": "array",
           "contains": { "const": "LTerminal" },
           "minContains": 1,
-          "items": { "enum": ["LTerminal", "WinSlim Terminal"] }
+          "items": { "enum": ["LTerminal", "WTools"] }
         }
       },
       "additionalProperties": false
@@ -112,15 +112,32 @@
     "action": {
       "type": "object",
       "required": [
-        "id", "label", "shortLabel", "group", "description", "command",
+        "id", "legacyId", "actionId", "actionKey", "qualifiedActionKey", "canonicalKey", "scope", "operation", "label", "shortLabel", "displayName", "menuPath", "group", "description", "command",
         "executable", "args", "shell", "workingDirectory", "terminal",
         "interactive", "requiresAdmin", "confirmation", "safe", "supports",
         "requiresCommands"
       ],
       "properties": {
-        "id": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+        "id": { "type": "string", "pattern": "^(?:linux|windows)\\.[a-z0-9]+(?:[.-][a-z0-9]+)+$" },
+        "legacyId": { "type": "string", "minLength": 1 },
+        "actionId": { "type": "string", "pattern": "^(?:linux|windows)\\.[a-z0-9]+(?:[.-][a-z0-9]+)+$" },
+        "actionKey": { "type": "string", "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$" },
+        "qualifiedActionKey": { "type": "string", "pattern": "^(?:linux|windows)\\.[a-z0-9]+(?:[.-][a-z0-9]+)+$" },
+        "canonicalKey": { "type": "string", "pattern": "^(?:linux|windows)\\.[a-z0-9]+(?:[.-][a-z0-9]+)+$" },
+        "scope": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+        "operation": { "type": "string", "pattern": "^[a-z0-9-]+(?:[.][a-z0-9-]+)*$" },
         "label": { "type": "string", "minLength": 1 },
         "shortLabel": { "type": "string", "minLength": 1 },
+        "displayName": { "type": "string", "minLength": 1 },
+        "menuPath": {
+          "type": "array",
+          "prefixItems": [
+            { "type": "string", "minLength": 1 },
+            { "type": "string", "minLength": 1 }
+          ],
+          "minItems": 2,
+          "maxItems": 2
+        },
         "group": { "type": "string", "minLength": 1 },
         "description": { "type": "string", "minLength": 1 },
         "command": { "type": "string", "minLength": 1 },
@@ -145,7 +162,17 @@
           "items": { "type": "string", "minLength": 1 }
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": { "properties": { "safe": { "const": true } } },
+          "then": { "properties": { "confirmation": { "const": "none" } } }
+        },
+        {
+          "if": { "properties": { "confirmation": { "const": "none" } } },
+          "then": { "properties": { "safe": { "const": true } } }
+        }
+      ]
     }
   },
   "additionalProperties": false

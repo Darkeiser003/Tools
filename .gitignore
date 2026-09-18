@@ -9,6 +9,7 @@
 /out/
 /artifacts/
 /release/
+/.release.*
 /.ltools-build.*
 /.appimage-builder/
 
@@ -61,6 +62,8 @@ test-results/
 *-plan.tsv
 migrate-plan.tsv
 cleanup-plan.tsv
+snapshot-plan.tsv
+snapshot-*.tsv
 *.profraw
 *.junit.xml
 *.tap
@@ -98,6 +101,10 @@ Desktop.ini
 
 # Estado local de LTools y herramientas auxiliares.
 .ltools/
+# Fixtures y estados efímeros creados por pruebas del gestor de instantáneas;
+# se mantiene específico para no ocultar snapshots versionados del proyecto.
+.ltools-snapshots/
+.ltools-snapshot-*/
 .ltools-state/
 .cargo-local/
 

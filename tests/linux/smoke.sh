@@ -180,8 +180,8 @@ MENU_OUTPUT="$(printf 'q\n' | HOME="$TMP_DIR/menu-home" XDG_STATE_HOME="$TMP_DIR
 for marker in 'Auditar / Inventariar' 'Dependencias' 'Herramientas nativas' 'Herramientas instalables' 'Automatización' 'Rutas predeterminadas'; do
     grep -Fq -- "$marker" <<<"$MENU_OUTPUT" || die "el menú principal no muestra la categoría: $marker"
 done
-! grep -Fq -- 'WinSlim' <<<"$MENU_OUTPUT" || die 'la build Linux mostró la categoría exclusiva de WinSlim'
-ok 'menú principal Linux con categorías generales y sin WinSlim'
+! grep -Fq -- 'WTools' <<<"$MENU_OUTPUT" || die 'la build Linux mostró la categoría exclusiva de WTools'
+ok 'menú principal Linux con categorías generales y sin WTools'
 if command -v xvfb-run >/dev/null 2>&1 && command -v xdpyinfo >/dev/null 2>&1; then
     if timeout 10 xvfb-run -a -s "-screen 0 1280x900x24" xdpyinfo >/dev/null 2>&1; then
         set +e
@@ -522,7 +522,30 @@ if command -v xvfb-run >/dev/null 2>&1 && command -v xdpyinfo >/dev/null 2>&1; t
                 [[ "$file_type" == image/png ]] || die "captura GUI no es PNG: $capture ($file_type)"
             fi
         done
+        CAPTURE_MANIFEST="$GUI_CAPTURE_DIR/manifest.tsv"
+        {
+            printf 'capture\twidth\theight\tcolors\n'
+            for capture in "${GUI_CAPTURES[@]}"; do
+                width=''
+                height=''
+                colors=''
+                if command -v identify >/dev/null 2>&1; then
+                    dimensions="$(identify -format '%w %h' "$capture" 2>/dev/null || true)"
+                    read -r width height <<<"$dimensions"
+                    colors="$(identify -format '%k' "$capture" 2>/dev/null || true)"
+                else
+                    width='unknown'
+                    height='unknown'
+                    colors='unknown'
+                fi
+                printf '%s\t%s\t%s\t%s\n' "${capture#"$GUI_CAPTURE_DIR"/}" \
+                    "${width:-unknown}" "${height:-unknown}" "${colors:-unknown}"
+            done
+        } >"$CAPTURE_MANIFEST"
+        [[ "$(wc -l <"$CAPTURE_MANIFEST")" -eq $(( ${#GUI_CAPTURES[@]} + 1 )) ]] ||
+            die 'el manifiesto de capturas GUI no contiene todas las imágenes verificadas'
         ok 'capturas GUI verificadas con dimensiones visibles y no solo existencia'
+        ok "manifiesto de capturas GUI generado: $CAPTURE_MANIFEST"
 
         [[ -s "$GUI_AUDIT_MARKER" ]] || die 'la GUI no produjo el marcador estructural'
         grep -Fq 'GUI_AUDIT_BEGIN' "$GUI_AUDIT_MARKER" || die 'la auditoría GUI no comenzó'
@@ -644,7 +667,7 @@ grep -Fq '"schema": "ltools-capabilities-v1"' <<<"$LEGACY_CAPABILITIES_JSON" ||
     die 'el alias de capacidades usado por la integración no funciona'
 ok 'alias de capacidades para AppRun y terminales anfitrionas'
 if command -v jq >/dev/null 2>&1; then
-    jq -e '(.host_tools | length >= 10) and any(.host_tools[]; .category == "audit") and any(.host_tools[]; .category == "system") and any(.host_tools[]; .category == "utilities") and any(.host_tools[]; .category == "development") and any(.host_tools[]; .id == "curl" and .installable == true) and any(.host_tools[]; .id == "docker-compose" and .installable == true) and any(.host_tools[]; .id == "kubectl" and .installable == true) and any(.host_tools[]; .id == "lsblk" and .installable == true) and ([.host_tools[] | select(.category == "games" or .category == "virtualization" or .command == "steam")] | length == 0)' \
+jq -e '(.host_tools | length >= 10) and any(.host_tools[]; .category == "audit") and any(.host_tools[]; .category == "system") and any(.host_tools[]; .category == "utilities") and any(.host_tools[]; .category == "development") and any(.host_tools[]; .id == "curl" and .installable == true) and any(.host_tools[]; .id == "docker-compose" and .installable == true) and any(.host_tools[]; .id == "kubectl" and .installable == true) and any(.host_tools[]; .id == "lsblk" and .installable == true) and ([.host_tools[] | select(.category == "games" or .category == "virtualization" or .command == "steam")] | length == 0)' \
         <<<"$CAPABILITIES_JSON" >/dev/null \
         || die 'el catálogo JSON de herramientas del anfitrión está incompleto'
     jq -e 'all(.host_tools[]; (.version | type == "string")) and any(.host_tools[]; .id == "parted" and .installable == true) and all(.host_tools[] | select(.id == "docker" or .id == "podman" or .id == "podman-compose" or .id == "containerd" or .id == "crictl" or .id == "kubectl" or .id == "helm" or .id == "kubeadm" or .id == "kubelet" or .id == "kind" or .id == "minikube" or .id == "k3d" or .id == "k9s"); .installable == true and (.install_package | length > 0))' \
@@ -652,10 +675,19 @@ if command -v jq >/dev/null 2>&1; then
         || die 'el catálogo JSON no respeta versiones o no declara instaladores para las herramientas operativas'
 fi
 ok 'contrato JSON de capacidades e integración; catálogo nativo con instaladores operativos'
+grep -Fq '"snapshots"' <<<"$CAPABILITIES_JSON" || die 'capabilities no declara snapshots'
+SNAPSHOT_STATUS="$("$BIN" snapshots status)" || die 'snapshots status falló en Linux'
+grep -Fq 'Backends de instantáneas' <<<"$SNAPSHOT_STATUS" || die 'snapshots status no tiene salida verificable'
+SNAPSHOT_PLAN="$("$BIN" --dry-run snapshots create --backend btrfs --path "$TMP_DIR" --target "$TMP_DIR/snapshot")" || die 'snapshots dry-run falló en Linux'
+grep -Fq 'btrfs subvolume snapshot' <<<"$SNAPSHOT_PLAN" || die 'snapshots dry-run no publicó la orden nativa'
+if "$BIN" snapshots delete --backend zfs --volume pool/data >/dev/null 2>&1; then
+    die 'snapshots delete permitió una operación sin objetivo explícito'
+fi
+ok 'instantáneas: descubrimiento, dry-run, objetivos explícitos y contrato de capacidades'
 
 ACTIONS_JSON="$("$BIN" actions list --format json)"
 if command -v jq >/dev/null 2>&1; then
-    jq -e '.schema == "ltools-actions-v1" and .platform == "linux" and .safety.target_selection == "explicit-only" and (.actions | length >= 30) and any(.actions[]; .id == "storage.mount" and .targetPolicy == "explicit-only" and .mutating == true) and any(.actions[]; .id == "accounts.add" and .targetPolicy == "explicit-only" and .mutating == true and .confirmation != "none") and any(.actions[]; .id == "native.dns-flush" and .mutating == true and .confirmation != "none") and any(.actions[]; .id == "native.network-interface" and .mutating == true and .confirmation != "none") and any(.actions[]; .id == "wine.migrate" and .mutating == true and .confirmation != "none") and any(.actions[]; .id == "boot.status" and (.aliases | index("tboot status") != null) and .mutating == false) and all(.actions[]; (.command | IN("audit","packages","games","storage","system","accounts","native","defaults","clean","diagnostics","automation","boot","wine")))' \
+    jq -e '.schema == "ltools-actions-v1" and .platform == "linux" and .safety.target_selection == "explicit-only" and (.actions | length >= 30) and (([.actions[].actionKey] | unique | length) == (.actions | length)) and (([.actions[].qualifiedActionKey] | unique | length) == (.actions | length)) and (([.actions[].label] | unique | length) == (.actions | length)) and all(.actions[]; (.id == .actionId) and (.legacyId | type == "string" and length > 0) and (.qualifiedActionKey == ("linux." + .actionKey)) and (.label | type == "string" and length > 0) and (.shortLabel | type == "string" and length > 0) and (.group | type == "string" and length > 0) and (.description | type == "string" and length > 0) and (.operation == (.actionKey | gsub("\\."; "-"))) and (.invocation.executable == "ltools") and (.invocation.args == ["actions", "run", .actionId]) and (.invocation.target == .target)) and any(.actions[]; .actionId == "linux.snapshots.status" and .mutating == false) and any(.actions[]; .actionId == "linux.storage.mount" and .targetPolicy == "explicit-only" and .mutating == true) and any(.actions[]; .actionId == "linux.accounts.add" and .targetPolicy == "explicit-only" and .mutating == true and .confirmation != "none") and any(.actions[]; .actionId == "linux.native.network.flush-dns" and .mutating == true and .confirmation != "none") and any(.actions[]; .actionId == "linux.native.network.set-interface" and .mutating == true and .confirmation != "none") and any(.actions[]; .actionId == "linux.wine.migrate" and .mutating == true and .confirmation != "none") and any(.actions[]; .actionId == "linux.boot.status" and (.aliases | index("tboot status") != null) and .mutating == false) and all(.actions[]; (.command | IN("audit","packages","games","storage","system","accounts","native","defaults","clean","diagnostics","automation","boot","wine","snapshots")))' \
         <<<"$ACTIONS_JSON" >/dev/null || die 'el registro de acciones Linux no declara políticas o acciones válidas'
 else
     grep -Fq 'ltools-actions-v1' <<<"$ACTIONS_JSON" || die 'el registro de acciones Linux no se pudo generar'
@@ -749,12 +781,12 @@ grep -Fq '"standalone_releases_require_it": false' <<<"$TERMINAL_JSON" ||
     die 'el descriptor de terminal no declara su carácter opcional'
 grep -Fq '"exclusive_host_family": "lterminal"' <<<"$TERMINAL_JSON" ||
     die 'el descriptor de terminal no limita su integración a LTerminal'
-grep -Fq 'WinSlim Terminal' <<<"$TERMINAL_JSON" ||
-    die 'el descriptor de terminal no declara WinSlim Terminal'
+grep -Fq 'LTerminal' <<<"$TERMINAL_JSON" ||
+    die 'el descriptor Linux no declara LTerminal'
 grep -Fq '"action_catalog"' <<<"$TERMINAL_JSON" ||
     die 'el descriptor de terminal no enlaza el catálogo de acciones'
 if command -v jq >/dev/null 2>&1; then
-    jq -e '(.action_catalog.schema == "ltools-actions-v1") and (.action_catalog.shell == "none") and (.actions | length >= 20) and any(.actions[]; .id == "package-search") and any(.actions[]; .id == "package-install") and any(.actions[]; .id == "git-pull") and all(.actions[]; .id and .executable and (.args | type == "array") and .terminal == true and .shell == "none" and (.supports | index("dry-run") != null))' \
+    jq -e '(.action_catalog.schema == "ltools-actions-v1") and (.action_catalog.shell == "none") and (.actions | length >= 20) and (([.actions[].actionKey] | unique | length) == (.actions | length)) and (([.actions[].operation] | unique | length) == (.actions | length)) and any(.actions[]; .legacyId == "package-search" and .actionKey == "packages.search") and any(.actions[]; .legacyId == "package-install" and .actionKey == "packages.install") and any(.actions[]; .legacyId == "git-pull" and .actionKey == "git.pull") and all(.actions[]; .id and .legacyId and .actionId == .canonicalKey and .actionId == .qualifiedActionKey and .actionKey and .scope and .operation and (.operation == (.actionKey | gsub("\\."; "-"))) and .executable and (.args | type == "array") and .terminal == true and .shell == "none" and (.supports | index("dry-run") != null))' \
         <<<"$TERMINAL_JSON" >/dev/null || die 'las acciones declarativas no tienen el contrato esperado'
 fi
 ok 'descriptor JSON específico para terminales'

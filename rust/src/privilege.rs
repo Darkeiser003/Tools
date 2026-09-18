@@ -20,6 +20,7 @@ fn default_action(command: &str) -> &'static str {
         "boot" | "bootloader" | "efi" | "accounts" | "users" | "user-management" | "storage"
         | "disks" | "partitions" | "native" | "native-tools" => "menu",
         "system" | "services" | "systemctl" | "registry" | "records" => "status",
+        "snapshots" | "snapshot" | "restore-points" => "status",
         "software" => "search",
         _ => "",
     }
@@ -237,6 +238,9 @@ pub(crate) fn classify(command: &str, args: &[String]) -> ActionPrivilege {
             | "packages"
             | "registry"
             | "records"
+            | "snapshots"
+            | "snapshot"
+            | "restore-points"
     );
     if !mutating {
         return if matches!(
@@ -249,6 +253,7 @@ pub(crate) fn classify(command: &str, args: &[String]) -> ActionPrivilege {
                 | "automations"
                 | "import"
                 | "winslim"
+                | "wtools"
                 | "update"
                 | "self-update"
         ) {
@@ -260,7 +265,7 @@ pub(crate) fn classify(command: &str, args: &[String]) -> ActionPrivilege {
 
     match command {
         "git" | "git-tools" | "prefix" | "wine" | "automation" | "automations" | "import"
-        | "aliases" | "alias" | "winslim" => ActionPrivilege::Never,
+        | "aliases" | "alias" | "winslim" | "wtools" => ActionPrivilege::Never,
         "storage" | "disks" | "partitions" => match action {
             "menu" | "map" | "tree" | "paths" | "status" | "disks" | "overview" | "partitions"
             | "partition" | "mounts" | "mountpoints" | "usage" | "space" | "inodes"
@@ -476,6 +481,11 @@ pub(crate) fn classify(command: &str, args: &[String]) -> ActionPrivilege {
         // elevan internamente al gestor correcto. Elevar todo el proceso
         // cambiaría HOME y podría enviar datos personales a la papelera de root.
         "clean" | "cleanup" => ActionPrivilege::Never,
+        "snapshots" | "snapshot" | "restore-points" => match action {
+            "status" | "list" | "inventory" | "menu" => ActionPrivilege::ReadOnly,
+            "create" | "delete" | "restore" | "rollback" => ActionPrivilege::Required,
+            _ => ActionPrivilege::Required,
+        },
         "registry" | "records" => {
             if matches!(action, "status" | "paths" | "query" | "inspect" | "list") {
                 ActionPrivilege::ReadOnly

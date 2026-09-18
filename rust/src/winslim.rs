@@ -1,4 +1,4 @@
-//! Integración WinSlim/NSudo para lanzar procesos con un contexto explícito.
+//! Integración WTools/NSudo para lanzar procesos con un contexto explícito.
 //! NSudo puede cambiar la identidad y los privilegios del proceso hijo; nunca
 //! se usa como sustituto silencioso de UAC ni para modificar membresías.
 
@@ -101,7 +101,7 @@ struct LaunchRequest {
 
 #[cfg(any(windows, test))]
 fn usage() -> &'static str {
-    "WinSlim / NSudo (Windows):\n  winslim status\n  winslim guide\n  winslim menu\n  winslim launch --identity current|elevated|system|trustedinstaller|process|drop-rights --program PROGRAMA [--arg ARG ...] [--cwd RUTA] [--integrity system|high|medium|low] [--all-privileges] [--wait] [--console] [--window show|hide|maximize|minimize] [--yes]\n\nLos argumentos se pasan separados, sin shell. --yes es obligatorio para automatización no interactiva; --dry-run global muestra el plan sin lanzar nada."
+    "WTools / NSudo (Windows):\n  wtools status\n  wtools guide\n  wtools menu\n  wtools launch --identity current|elevated|system|trustedinstaller|process|drop-rights --program PROGRAMA [--arg ARG ...] [--cwd RUTA] [--integrity system|high|medium|low] [--all-privileges] [--wait] [--console] [--window show|hide|maximize|minimize] [--yes]\n\nLos argumentos se pasan separados, sin shell. `winslim` sigue siendo un alias técnico compatible. --yes es obligatorio para automatización no interactiva; --dry-run global muestra el plan sin lanzar nada."
 }
 
 #[cfg(any(windows, test))]
@@ -285,7 +285,7 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
             Ok(())
         }
         Some(action) => Err(format!(
-            "acción WinSlim desconocida: {action}\n\n{}",
+            "acción WTools desconocida: {action}\n\n{}",
             usage()
         )),
     }
@@ -293,7 +293,7 @@ pub fn run(ctx: &Context, args: &[String]) -> Result<(), String> {
 
 #[cfg(not(windows))]
 pub fn run(_ctx: &Context, _args: &[String]) -> Result<(), String> {
-    Err("WinSlim/NSudo solo se aplica al ejecutable Windows nativo; no se ejecutó nada.".into())
+    Err("WTools/NSudo solo se aplica al ejecutable Windows nativo; no se ejecutó nada.".into())
 }
 
 #[cfg(windows)]
@@ -393,7 +393,7 @@ fn launch(ctx: &Context, args: &[String]) -> Result<(), String> {
 fn menu(ctx: &Context) -> Result<(), String> {
     loop {
         let has_nsudo = crate::platform::nsudo_path().is_some();
-        println!("\nWinSlim / NSudo\n  1) Estado de WSCore y NSudo");
+        println!("\nWTools / NSudo\n  1) Estado de WSCore y NSudo");
         if has_nsudo {
             println!("  2) Lanzar proceso con contexto elegido");
             println!("  3) Guía y compatibilidad");
@@ -467,8 +467,8 @@ fn guide_text() -> &'static str {
         "Guía NSudo (solo Windows)\n\n",
         "NSudo puede lanzar procesos como usuario actual (C), usuario actual elevado (E), SYSTEM (S), TrustedInstaller (T), token del proceso actual (P) o con privilegios reducidos (D). Las versiones no ofrecen necesariamente todos los perfiles y opciones. LTools busca NSudo en WSCore y PATH; puedes indicar una ruta concreta con LTOOLS_NSUDO_PATH.\n\n",
         "Perfiles CLI: --identity current|elevated|system|trustedinstaller|process|drop-rights. Integridad: --integrity system|high|medium|low. También puedes indicar --cwd RUTA, --window show|hide|maximize|minimize, --all-privileges, --console y --wait.\n\n",
-        "Ejemplo de consulta: ltools winslim launch --identity elevated --program powershell.exe --arg -NoProfile --arg -Command --arg Get-Date --wait\n",
-        "Ejemplo de mantenimiento: ltools winslim launch --identity trustedinstaller --program notepad.exe --arg C:\\Windows\\System32\\drivers\\etc\\hosts\n\n",
+        "Ejemplo de consulta: ltools wtools launch --identity elevated --program powershell.exe --arg -NoProfile --arg -Command --arg Get-Date --wait\n",
+        "Ejemplo de mantenimiento: ltools wtools launch --identity trustedinstaller --program notepad.exe --arg C:\\Windows\\System32\\drivers\\etc\\hosts\n\n",
         "Los argumentos se pasan separados, sin shell. Para scripts PowerShell, ejecuta powershell.exe/pwsh.exe y pasa -File y la ruta del script; NSudo no interpreta scripts por sí mismo. `--all-privileges` habilita explícitamente todos los privilegios de NSudo; `--integrity`, `--cwd`, `--window`, `--console` y `--wait` controlan el proceso hijo. `--dry-run` no lo inicia. En automatizaciones, `--yes` evita la confirmación interactiva y solo debe añadirse tras revisar el efecto; LTools no almacena los argumentos en los informes.\n\n",
         "NSudo cambia el token de un proceso: no añade usuarios a Administradores ni inicia sesión como otra cuenta arbitraria. La concesión de Administrador se gestiona en Cuentas; TrustedInstaller es una identidad de servicio, no un grupo de usuarios. `LTOOLS_USE_NSUDO=1` selecciona el token elevado del usuario actual para suboperaciones compatibles que ya solicitan privilegios; no selecciona SYSTEM/TrustedInstaller ni cambia la preferencia persistente. Si falta NSudo, las acciones normales conservan UAC. Usa solo una copia de confianza."
     )

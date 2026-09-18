@@ -242,6 +242,7 @@ run_all_e2e() {
     run_suite_test 'Migración y rollback' "$ROOT_DIR/tests/linux/e2e.sh" --require-dependencies --binary "$RELEASE_BIN" || failures=$((failures + 1))
     run_suite_test 'Menús y acciones' "$ROOT_DIR/tests/linux/menu-e2e.sh" --require-gui --binary "$RELEASE_BIN" || failures=$((failures + 1))
     run_suite_test 'Stores y Git' "$ROOT_DIR/tests/linux/software-git-e2e.sh" --binary "$RELEASE_BIN" || failures=$((failures + 1))
+    run_suite_test 'Contrato proveedor LTools/LTerminal' "$ROOT_DIR/tests/ltools-integration-contract.sh" --binary "$RELEASE_BIN" || failures=$((failures + 1))
     mkdir -p -- "$ROOT_DIR/dist"
     captures="$(mktemp -d "$ROOT_DIR/dist/storage-map-gui.XXXXXX")"
     run_suite_test 'Acciones reales del mapa GUI' "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" \
@@ -346,9 +347,10 @@ test_menu() {
         printf '  8) E2E del tarball Linux\n'
         printf '  9) E2E de acciones reales del mapa GUI\n'
         printf ' 10) E2E de la CLI distribuible\n'
+        printf ' 11) Contrato de integración LTools/LTerminal\n'
         printf '  0) Volver\n'
         read -r -p 'Selecciona una opción: ' choice || return
-        if [[ "$choice" =~ ^[1-4]$ || "$choice" == 6 || "$choice" == 7 || "$choice" == 9 || "$choice" == 10 ]]; then
+        if [[ "$choice" =~ ^[1-4]$ || "$choice" == 6 || "$choice" == 7 || "$choice" == 9 || "$choice" == 10 || "$choice" == 11 ]]; then
             if [[ ! -x "$RELEASE_BIN" ]]; then printf 'No existe el backend release. Estas pruebas usan un binario ya compilado.\n'; pause; continue; fi
         fi
         case "$choice" in
@@ -369,6 +371,7 @@ test_menu() {
                 run_and_pause "$ROOT_DIR/tests/linux/storage-map-gui-e2e.sh" \
                     --require-gui --binary "$RELEASE_BIN" --tmp "$captures" --captures "$captures/captures" ;;
             10) run_and_pause "$ROOT_DIR/tests/linux/cli-e2e.sh" --binary "$RELEASE_BIN" ;;
+            11) run_and_pause "$ROOT_DIR/tests/ltools-integration-contract.sh" --binary "$RELEASE_BIN" --release-dir "$ROOT_DIR/release" ;;
             0|'') return ;;
             *) printf 'Opción no válida.\n'; pause ;;
         esac
@@ -387,6 +390,7 @@ build_menu() {
         printf '  7) Release Linux firmada y validada (incluye Wine/Proton)\n'
         printf '  8) Release Linux firmada sin etapa Wine/Proton\n'
         printf '  9) Build rápida de desarrollo: sin paquetes, tests, smoke, E2E ni Wine\n'
+        printf ' 10) Mostrar el plan efectivo sin ejecutar ni modificar archivos\n'
         printf '  0) Volver\n'
         read -r -p 'Selecciona una opción: ' choice || return
         case "$choice" in
@@ -402,6 +406,7 @@ build_menu() {
             7) run_and_pause "$LINUX_BUILDER" --non-interactive --appimage --windows-wine ;;
             8) run_and_pause "$LINUX_BUILDER" --non-interactive --appimage --no-windows-wine ;;
             9) run_and_pause "$LINUX_BUILDER" --non-interactive --fast --no-tests --no-package --no-appimage --no-windows-wine --no-smoke --no-e2e --no-menu-e2e --no-software-git-e2e --allow-unsigned ;;
+            10) run_and_pause "$LINUX_BUILDER" --plan --component all --non-interactive --no-log ;;
             0|'') return ;;
             *) printf 'Opción no válida.\n'; pause ;;
         esac
@@ -505,6 +510,7 @@ COMPONENT='all'
 TEST_EXISTING=''
 TEST_EXISTING_CLI=''
 PREVIEW=0
+PLAN=0
 CHECKS=1
 STRICT_SECURITY=0
 SECURITY_REVIEW=0
@@ -729,10 +735,11 @@ Opciones:
   --windows-wine-install-mono
                        Permite instalar wine-mono si el runner no lo incluye.
   --component NAME     Ejecuta solo backend|frontend|cli|tarball|appimage|windows o todo.
-  --test-existing PATH Ejecuta la matriz aplicable sobre un binario, AppImage o tarball ya creado.
+  --test-existing PATH Ejecuta la matriz aplicable sobre un binario, AppImage, tarball o release ya creada.
   --test-existing-cli PATH
                        Ejecuta únicamente la E2E de CLI sobre un perfil CLI ya creado.
   --preview            Abre el preview GUI vigilado en un target aislado, sin empaquetar.
+  --plan               Muestra el plan efectivo y la matriz de pruebas sin compilar ni modificar archivos.
   --no-package         Compila, pero no genera el tar.gz.
   --appimage           Exige y genera el AppImage.
   --no-appimage        No genera el AppImage.
@@ -927,6 +934,7 @@ parse_args() {
                 (($# >= 2)) || die '--test-existing-cli necesita la ruta de un perfil CLI'
                 TEST_EXISTING_CLI="$2"; shift ;;
             --preview) PREVIEW=1 ;;
+            --plan) PLAN=1 ;;
             --skip-checks|--no-checks) CHECKS=0 ;;
             --strict-security) STRICT_SECURITY=1; SECURITY_REVIEW=1 ;;
             --security-review) SECURITY_REVIEW=1 ;;
@@ -1004,10 +1012,76 @@ apply_component_defaults() {
     fi
 }
 
+show_build_plan() {
+    local component_label
+    case "$COMPONENT" in
+        backend) component_label='backend GUI Rust (release)' ;;
+        frontend) component_label='frontend/GUI Rust (alias compatible; no existe un frontend separado)' ;;
+        cli) component_label='perfil CLI Rust aislado' ;;
+        tarball) component_label='backend Rust + tarball Linux' ;;
+        appimage) component_label='backend Rust + AppImage Linux' ;;
+        windows) component_label='backend Linux + ejecutables Windows bajo Wine/Proton' ;;
+        all) component_label='pipeline Linux completo' ;;
+        *) component_label="$COMPONENT" ;;
+    esac
+    printf 'LTools — plan de build (sin ejecución)\n'
+    printf '  Plataforma: Linux (%s)\n' "$ARCH"
+    printf '  Componente: %s\n' "$component_label"
+    if [[ "$FAST" -eq 1 ]]; then
+        printf '  Perfil: fast/incremental\n'
+    else
+        printf '  Perfil: release optimizado\n'
+    fi
+    printf '  Salida: %s\n  Release: %s\n' "$OUTPUT_DIR" "$RELEASE_DIR"
+    printf '\nEtapas previstas:\n'
+    if [[ -n "$TEST_EXISTING" ]]; then
+        printf '  - Validar el artefacto existente: %s (sin recompilar)\n' "$TEST_EXISTING"
+    elif [[ -n "$TEST_EXISTING_CLI" ]]; then
+        printf '  - Validar únicamente el perfil CLI existente: %s (sin recompilar)\n' "$TEST_EXISTING_CLI"
+    elif (( PREVIEW )); then
+        printf '  - Preview Rust vigilado en target aislado (sin empaquetar)\n'
+    else
+        [[ "$CHECKS" -eq 1 ]] && printf '  - rustfmt, Clippy, contratos, sintaxis, seguridad y licencias\n'
+        [[ "$TESTS" -eq 1 ]] && printf '  - tests Rust con todas las features y targets\n'
+        printf '  - compilar %s\n' "$component_label"
+        [[ "$WINDOWS_WINE" -eq 1 ]] && printf '  - compilar y probar Windows con Wine/Proton\n'
+        [[ "$PACKAGE" -eq 1 ]] && printf '  - generar y validar tarball/manifest de release\n'
+        [[ "$APPIMAGE" -eq 1 ]] && printf '  - generar y probar AppImage GUI y CLI\n'
+        [[ "$SMOKE" -eq 1 ]] && printf '  - smoke GUI/CLI y capturas\n'
+        [[ "$E2E" -eq 1 || "$MENU_E2E" -eq 1 || "$SOFTWARE_GIT_E2E" -eq 1 ]] && printf '  - E2E funcionales, menús, mapa, ayudas nativas, stores y Git\n'
+    fi
+    printf '\nNo se ha compilado, empaquetado, firmado ni borrado nada.\n'
+}
+
 test_existing_artifact() {
     local artifact="$1" failures=0
     [[ -e "$artifact" ]] || die "no existe el artefacto a probar: $artifact"
-    if [[ "$artifact" == *.tar.gz ]]; then
+    if [[ -d "$artifact" ]]; then
+        [[ -f "$artifact/ltools-release.json" ]] || die "la carpeta no contiene ltools-release.json: $artifact"
+        local -a release_args=(--release-dir "$artifact" --version "$VERSION" --linux-arch "$ARCH")
+        local verifier="${LTOOLS_RELEASE_VERIFIER:-}"
+        local has_windows=0 has_appimage=0 has_package=0
+        [[ -x "$RELEASE_BIN" ]] && verifier="$RELEASE_BIN"
+        compgen -G "$artifact/ltools-$VERSION-windows-*.zip" >/dev/null && has_windows=1
+        [[ -f "$artifact/ltools-$VERSION-linux-$ARCH.AppImage" ]] && has_appimage=1
+        [[ -f "$artifact/ltools-$VERSION-linux-$ARCH.tar.gz" ]] && has_package=1
+        (( has_windows )) && release_args+=(--require-windows)
+        (( has_appimage )) || release_args+=(--no-appimage)
+        (( has_package )) || release_args+=(--no-package)
+        [[ -s "$artifact/SHA256SUMS.txt.sshsig" ]] && release_args+=(--require-ssh-signature)
+        if [[ -s "$artifact/SHA256SUMS.txt.sig" ]]; then
+            [[ -x "$verifier" ]] || die 'la release tiene firma Ed25519; indica LTOOLS_RELEASE_VERIFIER o conserva un backend ejecutable para verificarla'
+            release_args+=(--signature-verifier "$verifier")
+            # La modalidad sobre artefactos existentes también debe usar la
+            # misma precedencia de claves que la publicación: una clave de
+            # entorno tiene prioridad; si no, se pasa la clave configurada
+            # por defecto en ~/.config/lterminal.
+            if [[ "$SIGNING_PUBLIC_KEY_ENV_ACTIVE" -eq 0 && -r "$SIGNING_PUBLIC_KEY_FILE" ]]; then
+                release_args+=(--signature-public-key-file "$SIGNING_PUBLIC_KEY_FILE")
+            fi
+        fi
+        run_suite_test 'Release existente: manifiesto, hashes y firmas' "$ROOT_DIR/tests/release-e2e.sh" "${release_args[@]}" || failures=$((failures + 1))
+    elif [[ "$artifact" == *.tar.gz ]]; then
         run_suite_test 'Tarball existente' "$ROOT_DIR/tests/linux/tarball-e2e.sh" --tarball "$artifact" --require-gui || failures=$((failures + 1))
     elif [[ "$artifact" == *-cli.AppImage ]]; then
         run_suite_test 'CLI AppImage existente' "$ROOT_DIR/tests/linux/cli-e2e.sh" --binary "$artifact" || failures=$((failures + 1))
@@ -1018,6 +1092,7 @@ test_existing_artifact() {
         run_suite_test 'Menús del artefacto existente' "$ROOT_DIR/tests/linux/menu-e2e.sh" --require-gui --binary "$artifact" || failures=$((failures + 1))
         run_suite_test 'Stores y Git del artefacto existente' "$ROOT_DIR/tests/linux/software-git-e2e.sh" --binary "$artifact" || failures=$((failures + 1))
         run_suite_test 'Ayudas nativas del artefacto existente' "$ROOT_DIR/tests/linux/native-help-e2e.sh" --binary "$artifact" || failures=$((failures + 1))
+        run_suite_test 'Contrato proveedor del artefacto existente' "$ROOT_DIR/tests/ltools-integration-contract.sh" --binary "$artifact" --release-dir "$ROOT_DIR/release" || failures=$((failures + 1))
     fi
     (( failures == 0 )) || return 1
 }
@@ -1050,10 +1125,15 @@ configure_cargo_profile() {
 
 parse_args "$@"
 apply_component_defaults
+if (( PLAN )); then
+    show_build_plan
+    exit 0
+fi
 if (( PREVIEW )); then
     exec bash "$ROOT_DIR/scripts/live-preview.sh"
 fi
 if [[ -n "$TEST_EXISTING" ]]; then
+    load_signing_material
     test_existing_artifact "$TEST_EXISTING"
     exit $?
 fi
@@ -1212,6 +1292,8 @@ if [[ "$CHECKS" -eq 1 ]]; then
     ok 'codificaciones UTF-8/UTF-8 BOM/ANSI correctas'
     run_logged bash "$ROOT_DIR/tests/scripts-syntax.sh"
     ok 'sintaxis Bash/PowerShell correcta (PowerShell cuando pwsh está disponible)'
+    run_logged bash "$ROOT_DIR/tests/build-plan.sh"
+    ok 'plan de build Linux/Windows validado sin efectos laterales'
     step 'Revisando estáticamente scripts y workflows'
     if [[ "$SECURITY_REVIEW" -eq 1 ]]; then
         run_logged bash "$ROOT_DIR/tests/static-security.sh" --strict
@@ -1316,6 +1398,13 @@ fi
 step 'Validando contratos LTools'
 run_logged "$ROOT_DIR/tests/contracts.sh"
 ok 'contratos LTools correctos'
+step 'Validando integración LTools/LTerminal'
+# La release existente puede pertenecer al binario anterior y debe poder
+# regenerarse. Aquí solo se auditan las fuentes y esquemas; el descriptor
+# publicado se valida después, contra el staging recién generado.
+run_logged "$ROOT_DIR/tests/ltools-integration-contract.sh" --static-only \
+    --release-dir "$OUTPUT_DIR/.prebuild-release-not-present"
+ok 'contrato de integración estático correcto'
 
 step 'Compilando backend Rust release'
 run_logged cargo build --manifest-path "$MANIFEST" "${cargo_args[@]}" --release
@@ -1442,20 +1531,28 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
     # reales sin interpretar la ayuda humana.
     "$BIN" capabilities --format json >"$PACKAGE_DIR/ltools-capabilities.json"
     "$BIN" capabilities --format terminal-json >"$PACKAGE_DIR/ltools-terminal.json"
+    "$BIN" actions list --format json >"$PACKAGE_DIR/ltools-actions.json"
     TERMINAL_DESCRIPTOR_ARTIFACT="$LOCAL_PUBLISH_DIR/ltools-terminal.json"
     CAPABILITIES_ARTIFACT="$LOCAL_PUBLISH_DIR/ltools-capabilities.json"
+    ACTIONS_ARTIFACT="$LOCAL_PUBLISH_DIR/ltools-actions.json"
     CAPABILITIES_SCHEMA_ARTIFACT="$LOCAL_PUBLISH_DIR/ltools-capabilities.schema.json"
     TERMINAL_SCHEMA_ARTIFACT="$LOCAL_PUBLISH_DIR/ltools-terminal.schema.json"
+    ACTIONS_SCHEMA_ARTIFACT="$LOCAL_PUBLISH_DIR/ltools-actions.schema.json"
     cp -a -- "$PACKAGE_DIR/ltools-terminal.json" "$TERMINAL_DESCRIPTOR_ARTIFACT"
     cp -a -- "$PACKAGE_DIR/ltools-capabilities.json" "$CAPABILITIES_ARTIFACT"
+    cp -a -- "$PACKAGE_DIR/ltools-actions.json" "$ACTIONS_ARTIFACT"
     cp -a -- "$ROOT_DIR/appimage/ltools-capabilities.schema.json" "$CAPABILITIES_SCHEMA_ARTIFACT"
     cp -a -- "$ROOT_DIR/appimage/ltools-terminal.schema.json" "$TERMINAL_SCHEMA_ARTIFACT"
+    cp -a -- "$ROOT_DIR/appimage/ltools-actions.schema.json" "$ACTIONS_SCHEMA_ARTIFACT"
     copy_file appimage/ltools-capabilities.schema.json
     cp -a -- "$ROOT_DIR/appimage/ltools-terminal.schema.json" "$PACKAGE_DIR/ltools-terminal.schema.json"
+    cp -a -- "$ROOT_DIR/appimage/ltools-actions.schema.json" "$PACKAGE_DIR/ltools-actions.schema.json"
     grep -Fq '"schema": "ltools-capabilities-v1"' "$PACKAGE_DIR/ltools-capabilities.json" \
         || die 'el descriptor JSON de capacidades no es válido'
     grep -Fq '"schema": "ltools-terminal-integration-v1"' "$PACKAGE_DIR/ltools-terminal.json" \
         || die 'el descriptor JSON de terminal no es válido'
+    grep -Fq '"schema":"ltools-actions-v1"' "$PACKAGE_DIR/ltools-actions.json" \
+        || die 'el catálogo JSON de acciones no es válido'
     if command -v jq >/dev/null 2>&1; then
         jq -e '
           .schema == "ltools-capabilities-v1" and
@@ -1472,22 +1569,42 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
           .integration.standalone_releases_require_it == false and
           .integration.exclusive_host_family == "lterminal" and
           (.host.known_products | index("LTerminal")) != null and
-          (.host.known_products | index("WinSlim Terminal")) != null and
+          (.host.known_products | index("WTools")) != null and
           .required_terminal_capability == "lterminal-startup-v1" and
           (.open_arguments | index("--command")) != null and
           (.actions | length >= 15) and
-          all(.actions[]; (.id | length > 0) and (.executable | length > 0) and
+          (([.actions[].actionKey] | unique | length) == (.actions | length)) and
+          all(.actions[]; (.id | length > 0) and
+            (.actionKey | test("^[a-z0-9]+(?:[.-][a-z0-9]+)+$")) and
+            (.scope | length > 0) and (.operation | length > 0) and
+            (.executable | length > 0) and
             (.args | type == "array") and .terminal == true and .shell == "none")
         ' "$PACKAGE_DIR/ltools-terminal.json" >/dev/null \
             || die 'el descriptor JSON de integración no supera la validación estructural'
         jq -e . "$PACKAGE_DIR/ltools-terminal.schema.json" >/dev/null \
             || die 'el esquema JSON de integración de terminal no es válido'
+        jq -e . "$PACKAGE_DIR/ltools-actions.schema.json" >/dev/null \
+            || die 'el esquema JSON del catálogo de acciones no es válido'
+        jq -e '
+          .schema == "ltools-actions-v1" and (.actions | type == "array" and length > 0) and
+          (([.actions[].actionKey] | unique | length) == (.actions | length)) and
+          (([.actions[].operation] | unique | length) == (.actions | length)) and
+          (([.actions[].label] | unique | length) == (.actions | length)) and
+          (([.actions[].shortLabel] | unique | length) == (.actions | length)) and
+          (([.actions[].qualifiedActionKey] | unique | length) == (.actions | length)) and
+          all(.actions[]; (.id == .actionId) and (.legacyId | type == "string" and length > 0) and (.qualifiedActionKey == ("linux." + .actionKey)) and .actionKey and .scope and .operation and .label and .shortLabel and .description and
+            (.group | type == "string" and length > 0) and
+            (.invocation.args == ["actions", "run", .actionId]) and (.invocation.target == .target) and
+            (.scope == (.actionKey | split(".")[0])) and (.operation == (.actionKey | gsub("\\."; "-"))))
+        ' "$PACKAGE_DIR/ltools-actions.json" >/dev/null \
+            || die 'el catálogo JSON de acciones no supera la validación estructural'
         ok 'contratos JSON validados con jq'
     else
         warn 'jq no está disponible; se omite la validación estructural adicional de JSON.'
     fi
     mkdir -p "$PACKAGE_DIR/tests/linux"
     cp -a -- "$ROOT_DIR/tests/contracts.sh" "$PACKAGE_DIR/tests/"
+    cp -a -- "$ROOT_DIR/tests/ltools-integration-contract.sh" "$PACKAGE_DIR/tests/"
     cp -a -- "$ROOT_DIR/tests/encoding.sh" "$PACKAGE_DIR/tests/"
     cp -a -- "$ROOT_DIR/tests/linux"/*.sh "$PACKAGE_DIR/tests/linux/"
     chmod +x "$PACKAGE_DIR"/ltools "$PACKAGE_DIR"/ltools-cli "$PACKAGE_DIR"/*.sh \
@@ -1580,8 +1697,10 @@ EOF
     done < <(find "$LOCAL_PUBLISH_DIR" -maxdepth 1 -type f -print0 | sort -z)
     TERMINAL_DESCRIPTOR_ARTIFACT="$OUTPUT_DIR/ltools-terminal.json"
     CAPABILITIES_ARTIFACT="$OUTPUT_DIR/ltools-capabilities.json"
+    ACTIONS_ARTIFACT="$OUTPUT_DIR/ltools-actions.json"
     CAPABILITIES_SCHEMA_ARTIFACT="$OUTPUT_DIR/ltools-capabilities.schema.json"
     TERMINAL_SCHEMA_ARTIFACT="$OUTPUT_DIR/ltools-terminal.schema.json"
+    ACTIONS_SCHEMA_ARTIFACT="$OUTPUT_DIR/ltools-actions.schema.json"
     [[ "$PACKAGE" -eq 0 ]] || ARTIFACT="$OUTPUT_DIR/$PACKAGE_NAME.tar.gz"
     if [[ "$APPIMAGE" -eq 1 ]]; then
         APPIMAGE_ARTIFACT="$OUTPUT_DIR/$PACKAGE_NAME.AppImage"
@@ -1605,9 +1724,10 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
             \( -name 'ltools-*.AppImage' -o -name 'ltools-*.tar.gz' \
             -o -name 'ltools-*.zip' -o -name 'ltools-*.exe' \
             -o -name 'ltools-capabilities.json' -o -name 'ltools-capabilities-windows.json' \
+            -o -name 'ltools-actions.json' -o -name 'ltools-actions-windows.json' \
             -o -name 'ltools-terminal.json' -o -name 'ltools-terminal-windows.json' \
             -o -name 'ltools-release.json' -o -name 'ltools-project.json' \
-            -o -name 'ltools-capabilities.schema.json' -o -name 'ltools-terminal.schema.json' \
+            -o -name 'ltools-capabilities.schema.json' -o -name 'ltools-actions.schema.json' -o -name 'ltools-terminal.schema.json' \
             -o -name 'ltools-project.schema.json' -o -name 'ltools-release.schema.json' \
             -o -name 'THIRD-PARTY-LICENSES-windows.zip' \
             -o -name 'SHA256SUMS.txt' \
@@ -1625,30 +1745,50 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
         fi
     }
 
+    copy_windows_descriptor_to_release() {
+        local file="$1"
+        [[ -f "$file" ]] || return 0
+        if [[ "$(basename -- "$file")" == 'ltools-actions.json' ]]; then
+            copy_to_release_as "$file" 'ltools-actions-windows.json'
+        else
+            copy_to_release "$file"
+        fi
+    }
+
+    copy_to_release_as() {
+        local file="$1" name="$2" destination
+        [[ -f "$file" ]] || return 0
+        destination="$RELEASE_DIR/$name"
+        if [[ "$(readlink -f -- "$file" 2>/dev/null || realpath -- "$file")" != \
+            "$(readlink -f -- "$destination" 2>/dev/null || realpath -- "$destination")" ]]; then
+            cp -a -- "$file" "$destination"
+        fi
+    }
+
     # Publica los artefactos Linux recién generados y los artefactos Windows
     # que pueda haber dejado el builder nativo Windows en dist/windows.
     while IFS= read -r -d '' file; do copy_to_release "$file"; done < <(
         find "$OUTPUT_DIR" -maxdepth 1 -type f \
             \( -name "ltools-$VERSION-*" -o -name 'ltools-capabilities.json' \
-            -o -name 'ltools-terminal.json' -o -name 'ltools-*.schema.json' \) -print0
+            -o -name 'ltools-actions.json' -o -name 'ltools-terminal.json' -o -name 'ltools-*.schema.json' \) -print0
     )
     if [[ -d "$ROOT_DIR/dist/windows" ]]; then
-        while IFS= read -r -d '' file; do copy_to_release "$file"; done < <(
+        while IFS= read -r -d '' file; do copy_windows_descriptor_to_release "$file"; done < <(
             find "$ROOT_DIR/dist/windows" -maxdepth 1 -type f \
                 \( -name "ltools-$VERSION-windows-*" -o -name 'ltools-capabilities.json' \
-                -o -name 'ltools-terminal.json' -o -name 'ltools-capabilities-windows.json' \
+                -o -name 'ltools-actions.json' -o -name 'ltools-terminal.json' -o -name 'ltools-capabilities-windows.json' \
                 -o -name 'ltools-terminal-windows.json' -o -name 'ltools-*.schema.json' \
                 -o -name 'THIRD-PARTY-LICENSES-windows.zip' \) -print0
         )
     fi
     if [[ "$WINDOWS_WINE" -eq 1 && -d "$WINDOWS_WINE_ARTIFACT_DIR" ]]; then
-        while IFS= read -r -d '' file; do copy_to_release "$file"; done < <(
+        while IFS= read -r -d '' file; do copy_windows_descriptor_to_release "$file"; done < <(
         find "$WINDOWS_WINE_ARTIFACT_DIR" -maxdepth 1 -type f \
             \( -name "ltools-$VERSION-windows-*.exe" \
                 -o -name "ltools-$VERSION-windows-*.zip" \
                 -o -name 'THIRD-PARTY-LICENSES-windows.zip' \
                 -o -name 'ltools-capabilities-windows.json' \
-                -o -name 'ltools-terminal-windows.json' \) -print0
+                -o -name 'ltools-actions.json' -o -name 'ltools-terminal-windows.json' \) -print0
         )
         ok 'perfiles Windows GUI y CLI bajo Wine publicados en release/'
     fi
@@ -1684,7 +1824,11 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
             || die 'el descriptor de proyecto no supera la validación estructural'
         jq -e '.platforms.linux.runtime.appimage_requires_fuse == true and
             .platforms.linux.runtime.appimage_extract_override == "APPIMAGE_EXTRACT_AND_RUN=1" and
-            (.platforms.windows.runtime // null) == null' \
+            (.platforms.windows.runtime // null) == null and
+            .action_catalog.catalog == "ltools-actions.json" and
+            .action_catalog.schema == "ltools-actions.schema.json" and
+            .action_catalog.descriptors.linux == "ltools-actions.json" and
+            .action_catalog.descriptors.windows == "ltools-actions-windows.json"' \
             "$OUTPUT_DIR/ltools-project.json" >/dev/null \
             || die 'el descriptor de proyecto no declara correctamente el runtime AppImage por plataforma'
         jq -e '(.properties.schema.const == "ltools-project-v1") and ((.properties.platforms.required | index("linux")) != null) and ((.properties.platforms.required | index("windows")) != null)' \
@@ -1695,34 +1839,42 @@ if [[ "$PACKAGE" -eq 1 || "$APPIMAGE" -eq 1 ]]; then
         warn 'jq no está disponible; se omite la validación estructural adicional del manifiesto de release.'
     fi
     ok "manifiesto generado: $RELEASE_MANIFEST_ARTIFACT"
-    step 'Generando y firmando comprobaciones de artefactos'
-    prepare_release_signature
-    step 'Ejecutando E2E de artefactos release'
-    release_e2e_args=(--release-dir "$RELEASE_DIR" --version "$VERSION" --signature-verifier "$BIN")
-    release_e2e_args+=(--linux-arch "$ARCH")
-    [[ "$APPIMAGE" -eq 0 ]] && release_e2e_args+=(--no-appimage)
-    [[ "$PACKAGE" -eq 0 ]] && release_e2e_args+=(--no-package)
-    if [[ "$WINDOWS_WINE" -eq 1 ]]; then
-        release_e2e_args+=(--windows-arch "${WINDOWS_TARGET%%-*}")
-        if [[ "$PACKAGE" -eq 1 ]]; then
-            release_e2e_args+=(--require-windows)
-        else
-            release_e2e_args+=(--require-windows-executables)
+    # La carpeta temporal ya contiene todos los artefactos y su manifiesto,
+    # pero sigue siendo unsigned y nunca se publica aquí. La firma, la E2E
+    # específica de release y la promoción se dejan para después de todos los
+    # smoke/E2E funcionales del binario, de modo que una release publicada no
+    # pueda presentarse como validada antes de terminar la batería completa.
+    finalize_release_after_runtime_tests() {
+        step 'Generando y firmando comprobaciones de artefactos'
+        prepare_release_signature
+        step 'Ejecutando E2E de artefactos release'
+        release_e2e_args=(--release-dir "$RELEASE_DIR" --version "$VERSION" --signature-verifier "$BIN")
+        release_e2e_args+=(--linux-arch "$ARCH")
+        [[ "$APPIMAGE" -eq 0 ]] && release_e2e_args+=(--no-appimage)
+        [[ "$PACKAGE" -eq 0 ]] && release_e2e_args+=(--no-package)
+        if [[ "$WINDOWS_WINE" -eq 1 ]]; then
+            release_e2e_args+=(--windows-arch "${WINDOWS_TARGET%%-*}")
+            if [[ "$PACKAGE" -eq 1 ]]; then
+                release_e2e_args+=(--require-windows)
+            else
+                release_e2e_args+=(--require-windows-executables)
+            fi
         fi
-    fi
-    if [[ "$SIGNING_PUBLIC_KEY_ENV_ACTIVE" -eq 0 && -r "$SIGNING_PUBLIC_KEY_FILE" ]]; then
-        release_e2e_args+=(--signature-public-key-file "$SIGNING_PUBLIC_KEY_FILE")
-    fi
-    if (( SSH_SIGNING_AVAILABLE )); then
-        release_e2e_args+=(--require-ssh-signature
-            --ssh-public-key-file "$LTOOLS_SSH_SIGNING_PUBLIC_KEY_FILE"
-            --ssh-identity "$LTOOLS_SSH_SIGNING_IDENTITY")
-    fi
-    run_logged "$ROOT_DIR/tests/release-e2e.sh" "${release_e2e_args[@]}"
-    ok 'artefactos release verificados'
-    ltools_promote_release_staging || die 'falló la promoción de release; se conservó o restauró la publicación previa'
-    RELEASE_DIR="$FINAL_RELEASE_DIR"
-    ok "release verificada y promovida: $RELEASE_DIR"
+        if [[ "$SIGNING_PUBLIC_KEY_ENV_ACTIVE" -eq 0 && -r "$SIGNING_PUBLIC_KEY_FILE" ]]; then
+            release_e2e_args+=(--signature-public-key-file "$SIGNING_PUBLIC_KEY_FILE")
+        fi
+        if (( SSH_SIGNING_AVAILABLE )); then
+            release_e2e_args+=(--require-ssh-signature
+                --ssh-public-key-file "$LTOOLS_SSH_SIGNING_PUBLIC_KEY_FILE"
+                --ssh-identity "$LTOOLS_SSH_SIGNING_IDENTITY")
+        fi
+        run_logged "$ROOT_DIR/tests/release-e2e.sh" "${release_e2e_args[@]}"
+        ok 'artefactos release verificados'
+        ltools_promote_release_staging || die 'falló la promoción de release; se conservó o restauró la publicación previa'
+        RELEASE_DIR="$FINAL_RELEASE_DIR"
+        ok "release verificada y promovida: $RELEASE_DIR"
+    }
+    RELEASE_FINALIZE_PENDING=1
 fi
 
 if [[ "$SMOKE" -eq 1 ]]; then
@@ -1771,12 +1923,22 @@ if [[ "$MENU_E2E" -eq 1 ]]; then
     step 'Ejecutando E2E de ayudas nativas y correspondencia GUI'
     run_logged "$ROOT_DIR/tests/linux/native-help-e2e.sh" --binary "$BIN"
     ok 'ayudas nativas y correspondencia GUI correctas'
+    step 'Validando contrato de integración contra el binario generado'
+    run_logged "$ROOT_DIR/tests/ltools-integration-contract.sh" --binary "$BIN" --release-dir "$RELEASE_DIR"
+    ok 'contrato de integración contra binario correcto'
 fi
 
 if [[ "$SOFTWARE_GIT_E2E" -eq 1 ]]; then
     step 'Ejecutando E2E de stores y Git'
     run_logged "$ROOT_DIR/tests/linux/software-git-e2e.sh" --binary "$BIN"
     ok 'E2E de stores y Git correcta'
+fi
+
+# El cierre criptográfico y la promoción son deliberadamente el último paso
+# funcional: solo se firma/publica después de smoke, E2E, menús, ayudas,
+# integración y software/Git.
+if [[ "${RELEASE_FINALIZE_PENDING:-0}" -eq 1 ]]; then
+    finalize_release_after_runtime_tests
 fi
 
 if [[ "$NO_LOG" -eq 0 ]]; then

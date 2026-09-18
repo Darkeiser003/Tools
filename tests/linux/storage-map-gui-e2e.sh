@@ -85,6 +85,10 @@ printf 'LTools GUI map expansion fixture\n' >"$TREE_ROOT/child/grandchild/nested
 GUI_PID=""
 MAP_WINDOW=""
 ACTION_ROW_Y=0
+ACTION_TREE_ROW_Y=0
+ACTION_COPY_X=330
+ACTION_MOVE_X=410
+ACTION_TRASH_X=520
 
 close_gui() {
     if [[ -n "$GUI_PID" ]]; then
@@ -199,6 +203,11 @@ launch_map() {
         return 1
     fi
     wait_for_tree_layout "$layout_marker" 0
+    grep -Fq $'STORAGE_TREE_CONTROLS_LAYOUT\trows=2\tbuttons=7' "$layout_marker" || {
+        echo 'El mapa no registró las dos filas completas de acciones; puede haber recorte horizontal' >&2
+        cat "$layout_marker" >&2
+        return 1
+    }
     if [[ "$path" == */.cache/* ]] &&
         ! grep -Fq $'STORAGE_TREE_EXPLANATION\tCaché de usuario; suele poder limpiarse' "$layout_marker"; then
         echo "El árbol GTK no registró la explicación estándar de la ruta fixture: $layout_marker" >&2
@@ -265,7 +274,14 @@ launch_map() {
     }
     # La fila de acciones permanece anclada al pie del área de contenido; su
     # coordenada se deriva del tamaño real, no de una altura absoluta antigua.
-    ACTION_ROW_Y=$((large_height - 90))
+    ACTION_ROW_Y=$((large_height - 110))
+    # La fila inferior contiene siempre las acciones de archivos. En la
+    # disposición de dos filas no reutilizar las coordenadas de la antigua
+    # fila única: el botón largo de elevación ocupa la primera fila.
+    ACTION_COPY_X=65
+    ACTION_MOVE_X=140
+    ACTION_TRASH_X=245
+    ACTION_TREE_ROW_Y=$((ACTION_ROW_Y - 50))
     xdotool mousemove --window "$MAP_WINDOW" 120 110 click 1
     sleep 0.15
 }
@@ -447,7 +463,7 @@ done
     echo 'La flecha izquierda no contrajo la carpeta seleccionada del mapa' >&2
     exit 44
 }
-xdotool mousemove --window "$MAP_WINDOW" 55 "$ACTION_ROW_Y" click 1
+xdotool mousemove --window "$MAP_WINDOW" 55 "$ACTION_TREE_ROW_Y" click 1
 for _ in {1..30}; do
     grep -Fq 'STORAGE_TREE_EXPAND_ALL' "$RUN_DIR/map-tree-expansion.layout" && break
     sleep 0.05
@@ -456,7 +472,7 @@ grep -Fq 'STORAGE_TREE_EXPAND_ALL' "$RUN_DIR/map-tree-expansion.layout" || {
     echo 'El botón Expandir todo no activó el árbol' >&2
     exit 45
 }
-xdotool mousemove --window "$MAP_WINDOW" 185 "$ACTION_ROW_Y" click 1
+xdotool mousemove --window "$MAP_WINDOW" 185 "$ACTION_TREE_ROW_Y" click 1
 for _ in {1..30}; do
     grep -Fq 'STORAGE_TREE_COLLAPSE_ALL' "$RUN_DIR/map-tree-expansion.layout" && break
     sleep 0.05
@@ -491,13 +507,14 @@ echo 'OK: mapa GUI: cancelación durante el escaneo y estado final verificables'
 
 # Copiar: Enter debe cancelar; solo un clic explícito en Sí ejecuta la acción.
 launch_map "$SOURCE" map-copy
-# En la fila ancha el botón Cancelar ocupa la posición que antes tenía Copiar.
-open_path_form 330 "Copiar ruta seleccionada" "$COPY"
+# La fila inferior contiene Copiar; el test usa la coordenada que publica el
+# layout estable de dos filas y no depende del ancho del texto de los botones.
+open_path_form "$ACTION_COPY_X" "Copiar ruta seleccionada" "$COPY"
 capture_screen "$CAPTURE_DIR/linux-storage-map-confirm-no-es.png"
 xdotool key Return
 sleep 0.3
 [[ ! -e "$COPY" ]] || { echo "Enter no respetó la negativa predeterminada" >&2; exit 31; }
-open_path_form 330 "Copiar ruta seleccionada" "$COPY"
+open_path_form "$ACTION_COPY_X" "Copiar ruta seleccionada" "$COPY"
 capture_screen "$CAPTURE_DIR/linux-storage-map-confirm-yes-es.png"
 CONFIRM_ACTION=copy
 confirm_yes
@@ -508,7 +525,7 @@ close_gui
 # Mover en una sesión limpia para que ningún modal de resultado intercepte la
 # siguiente pulsación; se comprueba la desaparición del origen y los bytes.
 launch_map "$SOURCE" map-move
-xdotool mousemove --window "$MAP_WINDOW" 410 "$ACTION_ROW_Y" click 1
+xdotool mousemove --window "$MAP_WINDOW" "$ACTION_MOVE_X" "$ACTION_ROW_Y" click 1
 form=""
 for _ in {1..60}; do
     form="$(xdotool search --onlyvisible --name "Mover ruta seleccionada" 2>/dev/null | tail -n1 || true)"
@@ -534,7 +551,7 @@ echo "OK: mapa GUI: No predeterminado, Copiar y Mover"
 # Papelera: usa un XDG_DATA_HOME aislado; nunca toca la papelera real.
 if command -v gio >/dev/null || command -v trash-put >/dev/null; then
     launch_map "$MOVED" map-trash
-    xdotool mousemove --window "$MAP_WINDOW" 520 "$ACTION_ROW_Y" click 1
+    xdotool mousemove --window "$MAP_WINDOW" "$ACTION_TRASH_X" "$ACTION_ROW_Y" click 1
     sleep 0.65
     capture_screen "$CAPTURE_DIR/linux-storage-map-confirm-trash-es.png"
     CONFIRM_ACTION=trash

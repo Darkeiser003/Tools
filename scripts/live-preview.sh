@@ -16,8 +16,12 @@ usage() {
 
 if [[ "${1:-}" == -h || "${1:-}" == --help ]]; then usage; exit 0; fi
 if (($#)); then usage >&2; exit 2; fi
-if ! [[ "$INTERVAL" =~ ^([1-9][0-9]*)(\.[0-9]+)?$ ]]; then
+if ! [[ "$INTERVAL" =~ ^([1-9][0-9]*|0\.[0-9]+)$ ]]; then
     printf 'LTOOLS_PREVIEW_INTERVAL debe ser un número positivo de segundos.\n' >&2
+    exit 2
+fi
+if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
+    printf 'El preview GUI necesita una sesión gráfica (DISPLAY o WAYLAND_DISPLAY).\n' >&2
     exit 2
 fi
 
@@ -45,6 +49,19 @@ trap finish EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM HUP
 
+start_preview() {
+    # El preview debe demostrar la interfaz que se va a revisar. No debe
+    # ocultar un fallo GTK entrando silenciosamente en el menú de consola.
+    # En X11 desactivamos portales para que funcione igual bajo Xvfb y en una
+    # sesión local; en Wayland se conserva el backend elegido por el usuario.
+    if [[ -n "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
+        export GDK_BACKEND="${GDK_BACKEND:-x11}"
+    fi
+    LTOOLS_GUI_REQUIRED=1 LTOOLS_DISABLE_GUI=0 GTK_USE_PORTAL=0 \
+        "$PREVIEW_BIN" &
+    PREVIEW_PID=$!
+}
+
 printf 'Preview GUI vigilado (target aislado: %s). Ctrl+C para terminar.\n' "$TARGET_DIR"
 last_fingerprint=''
 while true; do
@@ -66,8 +83,7 @@ while true; do
         fi
         last_fingerprint="$after"
         printf 'Abriendo preview GUI.\n'
-        "$PREVIEW_BIN" &
-        PREVIEW_PID=$!
+        start_preview
     fi
 
     sleep "$INTERVAL"

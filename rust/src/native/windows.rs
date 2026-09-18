@@ -2122,11 +2122,22 @@ fn native(program: &str, args: &[&str]) -> Result<(), String> {
         .args(args)
         .output()
         .map_err(|e| e.to_string())?;
-    print!("{}", String::from_utf8_lossy(&output.stdout));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    print!("{stdout}");
     if output.status.success() {
+        // Wine y algunas ediciones reducidas de Windows pueden devolver
+        // éxito sin producir datos (por ejemplo, una consulta sin interfaces
+        // visibles). No ocultar ese estado: la salida sigue siendo útil para
+        // la GUI/E2E y deja claro que no es un inventario completo.
+        if stdout.trim().is_empty() && stderr.trim().is_empty() {
+            println!(
+                "Aviso: {program} terminó correctamente, pero no devolvió datos en este entorno."
+            );
+        }
         Ok(())
     } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        Err(stderr.trim().to_string())
     }
 }
 fn best_effort(program: &str, args: &[&str]) -> bool {

@@ -92,9 +92,9 @@ fi
 gui_pid=$!
 window_id=""
 for _ in {1..100}; do
-    # El título Win32 es «WinSlim-Tools <versión>»; buscar «LTools» nunca
+    # El título Win32 es «WTools <versión>»; buscar «LTools» nunca
     # encuentra esta ventana bajo Wine.
-    window_id="$(xdotool search --onlyvisible --name 'WinSlim-Tools' 2>/dev/null | head -n1 || true)"
+    window_id="$(xdotool search --onlyvisible --name 'WTools' 2>/dev/null | head -n1 || true)"
     [[ -n "$window_id" && -s "$ready_marker" ]] && break
     sleep 0.1
 done
@@ -115,7 +115,7 @@ for page in "${gui_pages[@]}"; do
         4) expected_title='Herramientas instalables' ;;
         5) expected_title='Automatización' ;;
         6) expected_title='Ajustes de LTools' ;;
-        7) expected_title='WinSlim' ;;
+        7) expected_title='WTools' ;;
         8) expected_title='Usuarios, grupos y sesiones' ;;
         *) printf 'Página Win32 desconocida: %s\n' "$page" >&2; exit 1 ;;
     esac
@@ -151,7 +151,7 @@ close_result_dialog() {
     for _ in {1..50}; do
         # UMU/Wine exposes MessageBoxW with the product title but with the
         # runner's own X11 class, not the usual Win32 #32770 class.
-        dialog_window="$(xdotool search --onlyvisible --name '^WinSlim-Tools$' 2>/dev/null | tail -n1 || true)"
+        dialog_window="$(xdotool search --onlyvisible --name '^WTools$' 2>/dev/null | tail -n1 || true)"
         if [[ -n "$dialog_window" && "$dialog_window" != "$window_id" ]]; then
             # Wine may destroy the modal between search and key delivery;
             # that is a normal close race, not a failed LTools action.

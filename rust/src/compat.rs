@@ -25,9 +25,9 @@ pub fn descriptor_json() -> String {
         "ltools"
     };
     let features = if cfg!(windows) {
-        "\"audit\", \"games\", \"packages\", \"protected-cleanup\",\n    \"storage\", \"registry\", \"defaults\", \"system-control\", \"native-diagnostics\", \"native-actions\",\n    \"rollback\", \"dry-run\", \"plans\", \"tsv-export\", \"json-export\", \"verified-updates\", \"verified-update-download\""
+        "\"audit\", \"games\", \"packages\", \"protected-cleanup\",\n    \"storage\", \"snapshots\", \"registry\", \"defaults\", \"system-control\", \"native-diagnostics\", \"native-actions\",\n    \"rollback\", \"dry-run\", \"plans\", \"tsv-export\", \"json-export\", \"verified-updates\", \"verified-update-download\""
     } else {
-        "\"audit\", \"games\", \"packages\", \"protected-cleanup\", \"wine-prefixes\",\n    \"storage\", \"registry\", \"defaults\", \"system-control\", \"native-diagnostics\", \"native-actions\",\n    \"rollback\", \"dry-run\", \"plans\", \"tsv-export\", \"json-export\", \"verified-updates\", \"verified-update-download\""
+        "\"audit\", \"games\", \"packages\", \"protected-cleanup\", \"wine-prefixes\",\n    \"storage\", \"snapshots\", \"registry\", \"defaults\", \"system-control\", \"native-diagnostics\", \"native-actions\",\n    \"rollback\", \"dry-run\", \"plans\", \"tsv-export\", \"json-export\", \"verified-updates\", \"verified-update-download\""
     };
     let language_values = crate::i18n::SUPPORTED
         .iter()
@@ -74,13 +74,13 @@ pub fn descriptor_json() -> String {
   "ui_context": {{
     "language": {{
       "argument": "--lang",
-      "environment": ["LTOOLS_LANG", "LTERMINAL_LANGUAGE", "LTERMINAL_LANG", "WINSLIM_TERMINAL_LANGUAGE", "WINSLIM_TERMINAL_LANG"],
+      "environment": ["LTOOLS_LANG", "LTERMINAL_LANGUAGE", "LTERMINAL_LANG", "WTOOLS_TERMINAL_LANGUAGE", "WTOOLS_TERMINAL_LANG", "WINSLIM_TERMINAL_LANGUAGE", "WINSLIM_TERMINAL_LANG"],
       "values": [{}],
       "fallback": "locale"
     }},
     "theme": {{
       "argument": "--theme",
-      "environment": ["LTOOLS_THEME", "LTERMINAL_THEME", "WINSLIM_TERMINAL_THEME", "TERMINAL_THEME"],
+      "environment": ["LTOOLS_THEME", "LTERMINAL_THEME", "WTOOLS_TERMINAL_THEME", "WINSLIM_TERMINAL_THEME", "TERMINAL_THEME"],
       "default": "ocean",
       "values": [{}],
       "color_argument": "--color",
@@ -152,7 +152,7 @@ pub fn terminal_descriptor_json() -> String {
 
 fn terminal_descriptor_json_for(platform: &str) -> String {
     let (command, host_product, host_id) = if platform == "windows" {
-        ("ltools.exe", "WinSlim Terminal", "winslim-terminal")
+        ("ltools.exe", "WTools", "wtools")
     } else {
         ("ltools", "LTerminal", "lterminal")
     };
@@ -181,7 +181,7 @@ fn terminal_descriptor_json_for(platform: &str) -> String {
     "id": "{}",
     "family": "lterminal",
     "product": "{}",
-    "known_products": ["LTerminal", "WinSlim Terminal"]
+    "known_products": ["LTerminal", "WTools"]
   }},
   "entrypoint": {{
     "command": "{}",
@@ -197,13 +197,13 @@ fn terminal_descriptor_json_for(platform: &str) -> String {
   "ui_context": {{
     "language": {{
       "argument": "--lang",
-      "environment": ["LTOOLS_LANG", "LTERMINAL_LANGUAGE", "LTERMINAL_LANG", "WINSLIM_TERMINAL_LANGUAGE", "WINSLIM_TERMINAL_LANG"],
+      "environment": ["LTOOLS_LANG", "LTERMINAL_LANGUAGE", "LTERMINAL_LANG", "WTOOLS_TERMINAL_LANGUAGE", "WTOOLS_TERMINAL_LANG", "WINSLIM_TERMINAL_LANGUAGE", "WINSLIM_TERMINAL_LANG"],
       "values": [{}],
       "fallback": "locale"
     }},
     "theme": {{
       "argument": "--theme",
-      "environment": ["LTOOLS_THEME", "LTERMINAL_THEME", "WINSLIM_TERMINAL_THEME", "TERMINAL_THEME"],
+      "environment": ["LTOOLS_THEME", "LTERMINAL_THEME", "WTOOLS_TERMINAL_THEME", "WINSLIM_TERMINAL_THEME", "TERMINAL_THEME"],
       "default": "ocean",
       "values": [{}],
       "color_argument": "--color",
@@ -235,7 +235,7 @@ fn terminal_descriptor_json_for(platform: &str) -> String {
     )
 }
 
-/// Acciones listas para convertirse en botones de LTerminal o WinSlim
+/// Acciones listas para convertirse en botones de LTerminal o WTools
 /// Terminal. `args` es la forma canónica: la terminal no tiene que dividir ni
 /// reinterpretar una cadena de shell. `command` se conserva como texto
 /// legible para hosts antiguos que solo conocían ese campo.
@@ -261,34 +261,27 @@ fn terminal_actions_json(platform: &str) -> String {
     } else {
         &[]
     };
-    let native_requirements: &[&str] = if platform == "windows" {
+    let native_diagnostics_requirements: &[&str] = if platform == "windows" {
         &["powershell"]
     } else {
-        &["ip"]
+        &["uname"]
+    };
+    let native_dns_flush_requirements: &[&str] = if platform == "windows" {
+        &["ipconfig"]
+    } else {
+        &["resolvectl"]
     };
     // Estas acciones tienen rutas integradas de compatibilidad. No deben
     // bloquearse en una GUI solo porque falte PowerShell: en Windows pueden
     // usar ipconfig/route/netstat/netsh, systeminfo/WMIC/cmd o netsh.
-    let native_network_requirements: &[&str] = if platform == "windows" {
-        &[]
-    } else {
-        native_requirements
-    };
-    let native_hardware_requirements: &[&str] = if platform == "windows" {
-        &[]
-    } else {
-        native_requirements
-    };
+    let native_network_requirements: &[&str] = &[];
+    let native_hardware_requirements: &[&str] = &[];
     let native_power_requirements: &[&str] = if platform == "windows" {
         &["powercfg"]
     } else {
-        native_requirements
-    };
-    let native_security_requirements: &[&str] = if platform == "windows" {
         &[]
-    } else {
-        native_requirements
     };
+    let native_security_requirements: &[&str] = &[];
     let mut actions = vec![
         action_json(
             "audit",
@@ -353,7 +346,7 @@ fn terminal_actions_json(platform: &str) -> String {
         action_json(
             "defaults",
             "Mostrar rutas predeterminadas",
-            "Rutas",
+            "Rutas predeterminadas",
             "Diagnóstico",
             "Muestra las rutas efectivas de las herramientas compatibles.",
             command,
@@ -436,11 +429,7 @@ fn terminal_actions_json(platform: &str) -> String {
             "Consulta salud, red, hardware y sesiones con herramientas nativas, sin modificar el sistema.",
             command,
             &["diagnostics", "health", "--format", "json"],
-            if platform == "windows" {
-                &["powershell"][..]
-            } else {
-                &["uname"][..]
-            },
+            native_diagnostics_requirements,
             false,
             false,
             "none",
@@ -547,12 +536,29 @@ fn terminal_actions_json(platform: &str) -> String {
             } else {
                 "Ver rutas de configuración"
             },
-            "Rutas",
+            "Rutas de configuración",
             "Sistema",
             "Muestra las ubicaciones de configuración sin editar datos.",
             command,
             &["registry", "paths"],
             registry_requirements,
+            false,
+            false,
+            "none",
+            true,
+        ),
+    );
+    actions.insert(
+        11,
+        action_json(
+            "snapshots-status",
+            "Consultar instantáneas y puntos de restauración",
+            "Instantáneas",
+            "Sistema",
+            "Detecta backends de snapshot y permite revisar sus puntos de restauración.",
+            command,
+            &["snapshots", "status"],
+            &[],
             false,
             false,
             "none",
@@ -673,7 +679,7 @@ fn terminal_actions_json(platform: &str) -> String {
         "Vacía la caché DNS nativa tras confirmación explícita.",
         command,
         &["native", "network", "flush-dns"],
-        native_requirements,
+        native_dns_flush_requirements,
         true,
         false,
         "required",
@@ -743,7 +749,10 @@ fn terminal_actions_json(platform: &str) -> String {
         "Crea un contenedor con un motor Docker o Podman explícito.",
         command,
         &["native", "tools", "container-run"],
-        &["docker"],
+        // El flujo pide el motor explícitamente y admite Docker o Podman;
+        // exigir Docker aquí ocultaría una acción válida en instalaciones
+        // que solo tienen Podman.
+        &[],
         true,
         false,
         "required",
@@ -873,7 +882,7 @@ fn terminal_actions_json(platform: &str) -> String {
         true,
         false,
         "required",
-        true,
+        false,
     ));
     actions.push(action_json(
         "git-clone",
@@ -929,7 +938,7 @@ fn terminal_actions_json(platform: &str) -> String {
         true,
         false,
         "required",
-        true,
+        false,
     ));
     actions.push(action_json(
         "git-log",
@@ -1041,7 +1050,7 @@ fn terminal_actions_json(platform: &str) -> String {
         true,
         false,
         "required",
-        true,
+        false,
     ));
     actions.push(action_json(
         "gh-repo",
@@ -1133,6 +1142,26 @@ fn action_json(
     confirmation: &str,
     safe: bool,
 ) -> String {
+    // `id` se conserva por compatibilidad con integraciones anteriores.  La
+    // identidad canónica es namespaced y no depende de una etiqueta visible,
+    // que puede repetirse entre grupos o idiomas.
+    let action_key = canonical_action_key(id);
+    let platform = if command.ends_with(".exe") {
+        "windows"
+    } else {
+        "linux"
+    };
+    let qualified_action_key = format!("{platform}.{action_key}");
+    let platform_label = if platform == "windows" {
+        "Windows"
+    } else {
+        "Linux"
+    };
+    let display_name = format!("{platform_label} · {group} · {label}");
+    let scope = action_key.split('.').next().unwrap_or("action");
+    // Algunos hosts muestran `operation` sin el campo `scope`. Conservamos
+    // toda la identidad para que nunca aparezca un ambiguo `status` repetido.
+    let operation = qualified_operation(&action_key);
     let args_json = args
         .iter()
         .map(|arg| format!("\"{}\"", json_escape(arg)))
@@ -1148,11 +1177,27 @@ fn action_json(
     } else {
         format!("{} {}", command, args.join(" "))
     };
+    // El registro interno conserva el nombre histórico `required`, pero el
+    // contrato JSON usa únicamente valores versionados por su esquema.
+    let confirmation = match confirmation {
+        "required" => "before-run",
+        value => value,
+    };
     format!(
-        "    {{\"id\":\"{}\",\"label\":\"{}\",\"shortLabel\":\"{}\",\"group\":\"{}\",\"description\":\"{}\",\"command\":\"{}\",\"executable\":\"{}\",\"args\":[{}],\"aliases\":{},\"shell\":\"none\",\"workingDirectory\":\"current\",\"terminal\":true,\"interactive\":{},\"requiresAdmin\":{},\"confirmation\":\"{}\",\"safe\":{},\"supports\":[\"dry-run\"],\"requiresCommands\":[{}]}}",
+        "    {{\"id\":\"{}\",\"legacyId\":\"{}\",\"actionId\":\"{}\",\"actionKey\":\"{}\",\"qualifiedActionKey\":\"{}\",\"canonicalKey\":\"{}\",\"scope\":\"{}\",\"operation\":\"{}\",\"label\":\"{}\",\"shortLabel\":\"{}\",\"displayName\":\"{}\",\"menuPath\":[\"{}\",\"{}\"],\"group\":\"{}\",\"description\":\"{}\",\"command\":\"{}\",\"executable\":\"{}\",\"args\":[{}],\"aliases\":{},\"shell\":\"none\",\"workingDirectory\":\"current\",\"terminal\":true,\"interactive\":{},\"requiresAdmin\":{},\"confirmation\":\"{}\",\"safe\":{},\"supports\":[\"dry-run\"],\"requiresCommands\":[{}]}}",
+        json_escape(&qualified_action_key),
         json_escape(id),
+        json_escape(&qualified_action_key),
+        json_escape(&action_key),
+        json_escape(&qualified_action_key),
+        json_escape(&qualified_action_key),
+        json_escape(scope),
+        json_escape(&operation),
         json_escape(label),
         json_escape(short_label),
+        json_escape(&display_name),
+        json_escape(group),
+        json_escape(label),
         json_escape(group),
         json_escape(description),
         json_escape(&command_line),
@@ -1165,6 +1210,78 @@ fn action_json(
         safe,
         requires_json
     )
+}
+
+fn qualified_operation(action_key: &str) -> String {
+    action_key.replace('.', "-")
+}
+
+/// Returns the stable, namespaced identity exposed to host integrations.
+///
+/// The short `id` values predate the integration contract and are kept as
+/// compatibility selectors.  These keys are deliberately independent from
+/// translated labels and from the order of the catalog.
+fn canonical_action_key(id: &str) -> String {
+    let mapped = match id {
+        "audit" => "audit.system",
+        "games" => "audit.games",
+        "packages" => "audit.packages",
+        "clean-preview" => "maintenance.clean.preview",
+        "defaults" => "diagnostics.defaults",
+        "system-status" => "system.status",
+        "system-services" => "system.services",
+        "system-processes" => "system.processes",
+        "system-journal" => "system.journal",
+        "storage-partitions" => "storage.partitions",
+        "registry-paths" => "system.registry.paths",
+        "snapshots-status" => "snapshots.status",
+        "storage" => "storage.status",
+        "registry" => "system.registry.status",
+        "doctor" => "maintenance.doctor",
+        "native-diagnostics" => "diagnostics.native.health",
+        "help" => "ltools.help",
+        "native-network" => "native.network.status",
+        "native-hardware" => "native.hardware.status",
+        "native-power" => "native.power.status",
+        "native-security" => "native.security.status",
+        "native-security-scanners" => "native.security.scanners",
+        "boot-status" => "boot.status",
+        "boot-plan" => "boot.plan",
+        "native-dns-flush" => "native.network.flush-dns",
+        "native-tools-menu" => "native.tools.menu",
+        "native-tools-install" => "native.tools.install",
+        "native-ssh-connect" => "native.ssh.connect",
+        "native-adb-install" => "native.adb.install",
+        "native-container-run" => "native.containers.run",
+        "native-container-compose" => "native.containers.compose",
+        "native-container-prune" => "native.containers.prune",
+        "native-image-build" => "native.containers.image-build",
+        "native-system-df" => "native.containers.disk-usage",
+        "native-kubernetes-apply" => "native.kubernetes.apply",
+        "package-search" => "packages.search",
+        "package-install" => "packages.install",
+        "git-status" => "git.status",
+        "git-lfs" => "git.lfs",
+        "git-clone" => "git.clone",
+        "git-fetch" => "git.fetch",
+        "git-pull" => "git.pull",
+        "git-login" => "git.identity",
+        "git-log" => "git.log",
+        "git-add" => "git.stage",
+        "git-commit" => "git.commit",
+        "git-push" => "git.push",
+        "git-branch" => "git.branches",
+        "git-tag" => "git.tags",
+        "gh-release" => "github.release",
+        "gh-login" => "github.login",
+        "gh-repo" => "github.repository",
+        "gh-prs" => "github.pull-requests",
+        "gh-releases" => "github.releases",
+        "gh-auth-status" => "github.authentication",
+        "prefixes" => "wine.prefixes",
+        _ => return id.replace('-', "."),
+    };
+    mapped.to_string()
 }
 
 fn option_value(args: &[String], name: &str) -> Option<String> {
@@ -1214,6 +1331,22 @@ fn json_escape(value: &str) -> String {
 mod tests {
     use super::{descriptor_json, terminal_descriptor_json};
 
+    fn namespaced_key_is_valid(value: &str) -> bool {
+        let mut parts = value.split('.');
+        let Some(first) = parts.next() else {
+            return false;
+        };
+        !first.is_empty()
+            && parts.clone().next().is_some()
+            && value.chars().all(|character| {
+                character.is_ascii_lowercase()
+                    || character.is_ascii_digit()
+                    || character == '.'
+                    || character == '-'
+            })
+            && parts.all(|part| !part.is_empty())
+    }
+
     #[test]
     fn descriptor_declara_esquema_y_arranque_de_terminal() {
         let json = descriptor_json();
@@ -1227,7 +1360,7 @@ mod tests {
         assert!(json.contains("native-container-compose"));
         assert!(json.contains("native-container-prune"));
         let expected_application = if cfg!(windows) {
-            "\"application\": \"WinSlim-Tools\""
+            "\"application\": \"WTools\""
         } else {
             "\"application\": \"LTools\""
         };
@@ -1301,16 +1434,16 @@ mod tests {
         assert!(json.contains("\"standalone_releases_require_it\": false"));
         assert!(json.contains("\"exclusive_host_family\": \"lterminal\""));
         let expected_application = if cfg!(windows) {
-            "\"application\": \"WinSlim-Tools\""
+            "\"application\": \"WTools\""
         } else {
             "\"application\": \"LTools\""
         };
         assert!(json.contains(expected_application));
-        assert!(json.contains("\"id\":\"audit\""));
+        assert!(json.contains("\"legacyId\":\"audit\""));
         assert!(json.contains("\"args\":[\"audit\"]"));
         assert!(json.contains("\"confirmation\":\"none\""));
         assert!(json.contains("LTerminal"));
-        assert!(json.contains("WinSlim Terminal"));
+        assert!(json.contains("WTools"));
         assert!(json.contains(crate::VERSION));
         assert!(json.contains("\"action_catalog\": {"));
         assert!(json.contains("ltools-actions-v1"));
@@ -1329,12 +1462,170 @@ mod tests {
     fn descriptor_de_terminal_declara_la_variante_windows() {
         let json = super::terminal_descriptor_json_for("windows");
         assert!(json.contains("\"platform\": \"windows\""));
-        assert!(json.contains("\"id\": \"winslim-terminal\""));
-        assert!(json.contains("\"product\": \"WinSlim Terminal\""));
+        assert!(json.contains("\"id\": \"wtools\""));
+        assert!(json.contains("\"product\": \"WTools\""));
         assert!(json.contains("\"command\": \"ltools.exe\""));
         assert!(json.contains("\"standalone_releases_require_it\": false"));
-        assert!(json.contains("\"id\":\"storage\""));
+        assert!(json.contains("\"legacyId\":\"storage\""));
         assert!(json.contains("\"executable\":\"ltools.exe\""));
-        assert!(!json.contains("\"id\":\"prefixes\""));
+        assert!(!json.contains("\"confirmation\":\"required\""));
+        assert!(!json.contains("\"legacyId\":\"prefixes\""));
+    }
+
+    #[test]
+    fn acciones_de_terminal_tienen_identidad_y_etiqueta_sin_colisiones() {
+        let parsed: serde_json::Value =
+            serde_json::from_str(&super::terminal_descriptor_json_for(if cfg!(windows) {
+                "windows"
+            } else {
+                "linux"
+            }))
+            .expect("el descriptor de terminal debe ser JSON válido");
+        let actions = parsed["actions"]
+            .as_array()
+            .expect("el descriptor debe publicar una lista de acciones");
+        assert!(!actions.is_empty());
+
+        let mut ids = std::collections::HashSet::new();
+        let mut action_ids = std::collections::HashSet::new();
+        let mut keys = std::collections::HashSet::new();
+        let mut qualified_keys = std::collections::HashSet::new();
+        let mut canonical_keys = std::collections::HashSet::new();
+        let mut operations = std::collections::HashSet::new();
+        let mut labels = std::collections::HashSet::new();
+        let mut short_labels = std::collections::HashSet::new();
+        let mut display_names = std::collections::HashSet::new();
+        let mut checked_dns_requirements = false;
+        let mut checked_optional_native_requirements = false;
+        for action in actions {
+            let id = action["id"].as_str().expect("cada acción necesita id");
+            let legacy_id = action["legacyId"]
+                .as_str()
+                .expect("cada acción necesita legacyId");
+            let action_id = action["actionId"]
+                .as_str()
+                .expect("cada acción necesita actionId");
+            let key = action["actionKey"]
+                .as_str()
+                .expect("cada acción necesita actionKey");
+            let qualified_key = action["qualifiedActionKey"]
+                .as_str()
+                .expect("cada acción necesita qualifiedActionKey");
+            let canonical_key = action["canonicalKey"]
+                .as_str()
+                .expect("cada acción necesita canonicalKey");
+            let scope = action["scope"]
+                .as_str()
+                .expect("cada acción necesita scope");
+            let operation = action["operation"]
+                .as_str()
+                .expect("cada acción necesita operation");
+            let label = action["label"]
+                .as_str()
+                .expect("cada acción necesita label");
+            let short_label = action["shortLabel"]
+                .as_str()
+                .expect("cada acción necesita shortLabel");
+            let display_name = action["displayName"]
+                .as_str()
+                .expect("cada acción necesita displayName");
+            let menu_path = action["menuPath"]
+                .as_array()
+                .expect("cada acción necesita menuPath");
+            let group = action["group"]
+                .as_str()
+                .expect("cada acción necesita group");
+            let description = action["description"]
+                .as_str()
+                .expect("cada acción necesita description");
+            let safe = action["safe"]
+                .as_bool()
+                .expect("cada acción necesita declarar safe");
+            let confirmation = action["confirmation"]
+                .as_str()
+                .expect("cada acción necesita declarar confirmation");
+
+            assert!(ids.insert(id), "id de acción duplicado: {id}");
+            assert!(
+                action_ids.insert(action_id),
+                "actionId duplicado: {action_id}"
+            );
+            assert!(keys.insert(key), "actionKey duplicado: {key}");
+            assert!(
+                qualified_keys.insert(qualified_key),
+                "qualifiedActionKey duplicado: {qualified_key}"
+            );
+            assert!(
+                canonical_keys.insert(canonical_key),
+                "canonicalKey duplicado: {canonical_key}"
+            );
+            assert!(
+                labels.insert(label),
+                "etiqueta de acción duplicada: {label}"
+            );
+            assert!(
+                short_labels.insert(short_label),
+                "shortLabel de acción duplicado: {short_label}"
+            );
+            assert!(
+                display_names.insert(display_name),
+                "displayName de acción duplicado: {display_name}"
+            );
+            assert!(namespaced_key_is_valid(key), "actionKey inválido: {key}");
+            assert_eq!(key.split('.').next(), Some(scope));
+            assert!(
+                operations.insert(operation),
+                "operation duplicada: {operation}"
+            );
+            assert_eq!(operation, key.replace('.', "-"));
+            let expected_platform = if cfg!(windows) { "windows" } else { "linux" };
+            assert_eq!(qualified_key, format!("{expected_platform}.{key}"));
+            assert_eq!(canonical_key, qualified_key);
+            assert_eq!(id, action_id);
+            assert!(!legacy_id.trim().is_empty());
+            assert!(!label.trim().is_empty());
+            assert!(!short_label.trim().is_empty());
+            assert!(!group.trim().is_empty());
+            assert!(!description.trim().is_empty());
+            assert_eq!(menu_path.len(), 2);
+            assert_eq!(menu_path[0].as_str(), Some(group));
+            assert_eq!(menu_path[1].as_str(), Some(label));
+            assert!(display_name.starts_with(if cfg!(windows) {
+                "Windows · "
+            } else {
+                "Linux · "
+            }));
+            assert_eq!(
+                safe,
+                confirmation == "none",
+                "safe y confirmation deben describir la misma política para {key}"
+            );
+
+            if key == "native.network.flush-dns" {
+                let requirements = action["requiresCommands"]
+                    .as_array()
+                    .expect("flush-dns necesita declarar requisitos");
+                let expected = if cfg!(windows) {
+                    "ipconfig"
+                } else {
+                    "resolvectl"
+                };
+                assert!(requirements.iter().any(|value| value == expected));
+                assert!(requirements.iter().all(|value| value != "ip"));
+                checked_dns_requirements = true;
+            }
+            if matches!(
+                key,
+                "native.network.status" | "native.hardware.status" | "native.security.status"
+            ) {
+                let requirements = action["requiresCommands"]
+                    .as_array()
+                    .expect("la acción nativa necesita declarar requisitos");
+                assert!(requirements.iter().all(|value| value != "ip"));
+                checked_optional_native_requirements = true;
+            }
+        }
+        assert!(checked_dns_requirements);
+        assert!(checked_optional_native_requirements);
     }
 }

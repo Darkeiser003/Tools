@@ -43,6 +43,7 @@ fn defaults() -> Vec<Alias> {
         ("tpower", "native", &["power"], "Energía nativa"),
         ("tsecurity", "native", &["security"], "Seguridad nativa"),
         ("tboot", "boot", &[], "Arranque y EFI"),
+        ("tsnap", "snapshots", &[], "Instantáneas y restauración"),
     ]
     .into_iter()
     .map(|(name, command, args, description)| Alias {
@@ -133,6 +134,9 @@ fn valid_command(value: &str) -> bool {
             | "storage"
             | "registry"
             | "capabilities"
+            | "snapshots"
+            | "snapshot"
+            | "restore-points"
     )
 }
 
@@ -302,40 +306,43 @@ fn create_launcher() -> Result<PathBuf, String> {
     fs::create_dir_all(&directory)
         .map_err(|error| format!("no se pudo crear {}: {error}", directory.display()))?;
     #[cfg(windows)]
-    let path = directory.join("ltools.cmd");
+    let names: &[&str] = &["wtools.cmd", "ltools.cmd"];
     #[cfg(not(windows))]
-    let path = directory.join("ltools");
-    if path.exists() {
-        let current = fs::read_to_string(&path).unwrap_or_default();
-        if !current.contains("LTOOLS MANAGED ALIAS") {
-            return Err(format!(
-                "no se sobrescribe el lanzador existente: {}",
-                path.display()
-            ));
+    let names: &[&str] = &["ltools"];
+    for name in names {
+        let path = directory.join(name);
+        if path.exists() {
+            let current = fs::read_to_string(&path).unwrap_or_default();
+            if !current.contains("LTOOLS MANAGED ALIAS") {
+                return Err(format!(
+                    "no se sobrescribe el lanzador existente: {}",
+                    path.display()
+                ));
+            }
+        }
+        #[cfg(windows)]
+        let content = format!(
+            "@echo off\r\nrem LTOOLS MANAGED ALIAS\r\n\"{}\" %*\r\n",
+            executable.display()
+        );
+        #[cfg(not(windows))]
+        let content = format!(
+            "#!/bin/sh\n# LTOOLS MANAGED ALIAS\nexec '{}' \"$@\"\n",
+            executable.display().to_string().replace('\'', "'\\''")
+        );
+        fs::write(&path, content)
+            .map_err(|error| format!("no se pudo crear {}: {error}", path.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&path)
+                .map_err(|error| error.to_string())?
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&path, permissions).map_err(|error| error.to_string())?;
         }
     }
-    #[cfg(windows)]
-    let content = format!(
-        "@echo off\r\nrem LTOOLS MANAGED ALIAS\r\n\"{}\" %*\r\n",
-        executable.display()
-    );
-    #[cfg(not(windows))]
-    let content = format!(
-        "#!/bin/sh\n# LTOOLS MANAGED ALIAS\nexec '{}' \"$@\"\n",
-        executable.display().to_string().replace('\'', "'\\''")
-    );
-    fs::write(&path, content)
-        .map_err(|error| format!("no se pudo crear {}: {error}", path.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut permissions = fs::metadata(&path)
-            .map_err(|error| error.to_string())?
-            .permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&path, permissions).map_err(|error| error.to_string())?;
-    }
-    Ok(path)
+    Ok(directory.join(names[0]))
 }
 
 fn path_contains(directory: &Path) -> bool {
@@ -381,7 +388,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         "doctor" => {
             let path = ensure_defaults()?;
             let launcher = managed_bin_dir().join(if cfg!(windows) {
-                "ltools.cmd"
+                "wtools.cmd"
             } else {
                 "ltools"
             });
@@ -398,6 +405,11 @@ pub fn run(args: &[String]) -> Result<(), String> {
             println!(
                 "PATH contiene el directorio: {}",
                 path_contains(launcher.parent().unwrap_or(Path::new(".")))
+            );
+            #[cfg(windows)]
+            println!(
+                "Compatibilidad ltools.cmd: {}",
+                managed_bin_dir().join("ltools.cmd").is_file()
             );
             println!(
                 "Alias activos: {}",
@@ -466,7 +478,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
                 managed_bin_dir().display()
             );
             println!(
-                "Windows: añade {} a PATH para usar ltools.cmd desde PowerShell o CMD.",
+                "Windows: añade {} a PATH para usar wtools.cmd desde PowerShell o CMD; ltools.cmd se conserva como alias técnico.",
                 managed_bin_dir().display()
             );
         }

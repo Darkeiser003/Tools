@@ -47,12 +47,12 @@ pub const SETTINGS_CATEGORY_KEYS: [&str; 6] = [
 /// Nombre visible de producto. El binario y sus identificadores técnicos
 /// siguen llamándose `ltools` en ambas plataformas para conservar compatibilidad.
 #[cfg(windows)]
-pub const PRODUCT_NAME: &str = "WinSlim-Tools";
+pub const PRODUCT_NAME: &str = "WTools";
 #[cfg(not(windows))]
 pub const PRODUCT_NAME: &str = "LTools";
 
 #[cfg(windows)]
-const MENU_TITLE: &str = "=== WinSlim-Tools ===";
+const MENU_TITLE: &str = "=== WTools ===";
 #[cfg(not(windows))]
 const MENU_TITLE: &str = "=== LTools ===";
 
@@ -126,6 +126,8 @@ pub fn current() -> &'static str {
         .ok()
         .or_else(|| env::var("LTERMINAL_LANGUAGE").ok())
         .or_else(|| env::var("LTERMINAL_LANG").ok())
+        .or_else(|| env::var("WTOOLS_TERMINAL_LANGUAGE").ok())
+        .or_else(|| env::var("WTOOLS_TERMINAL_LANG").ok())
         .or_else(|| env::var("WINSLIM_TERMINAL_LANGUAGE").ok())
         .or_else(|| env::var("WINSLIM_TERMINAL_LANG").ok())
         .or_else(|| env::var("LC_ALL").ok())
@@ -137,7 +139,7 @@ pub fn current() -> &'static str {
 
 /// Opciones de presentación comunes a CLI y hosts de terminal. Los valores
 /// son deliberadamente legibles para que también puedan aparecer en la ayuda
-/// de LTerminal o WinSlim Terminal.
+/// de LTerminal o WTools.
 pub fn visual_options() -> String {
     let themes = crate::theme::SUPPORTED.join(", ");
     match current() {
@@ -405,13 +407,13 @@ pub fn storage_label() -> &'static str {
     }
 }
 
-pub fn accounts_label() -> &'static str {
-    gui_account_text("title")
+pub fn menu_section_label() -> &'static str {
+    gui_management_text("title")
 }
 
 /// Labels of the account-management GUI. Keep the same order as `SUPPORTED`
 /// so both the GTK and Win32 screens use the selected locale consistently.
-pub fn gui_account_text(key: &str) -> &'static str {
+pub fn gui_management_text(key: &str) -> &'static str {
     const TEXT: &[(&str, [&str; 15])] = &[
         ("title", [
             "المستخدمون والمجموعات والجلسات", "Benutzer, Gruppen und Sitzungen", "Users, groups and sessions", "Usuarios, grupos y sesiones", "Utilisateurs, groupes et sessions", "उपयोगकर्ता, समूह और सत्र", "Utenti, gruppi e sessioni", "ユーザー、グループ、セッション", "사용자, 그룹 및 세션", "Użytkownicy, grupy i sesje", "Utilizadores, grupos e sessões", "Utilizatori, grupuri și sesiuni", "Пользователи, группы и сеансы", "Користувачі, групи та сеанси", "用户、组和会话",
@@ -1727,6 +1729,26 @@ pub fn system_page_text(key: &str) -> &'static str {
             ],
         ),
         (
+            "snapshots",
+            [
+                "اللقطات ونقاط الاستعادة",
+                "Snapshots und Wiederherstellungspunkte",
+                "Snapshots and restore points",
+                "Instantáneas y puntos de restauración",
+                "Instantanés et points de restauration",
+                "स्नैपशॉट और पुनर्स्थापना बिंदु",
+                "Snapshot e punti di ripristino",
+                "スナップショットと復元ポイント",
+                "스냅샷 및 복원 지점",
+                "Migawki i punkty przywracania",
+                "Snapshots e pontos de restauração",
+                "Instantanee și puncte de restaurare",
+                "Снимки и точки восстановления",
+                "Знімки та точки відновлення",
+                "快照和还原点",
+            ],
+        ),
+        (
             "network_title",
             [
                 "الشبكة والمسارات وDNS والمنافذ المستمعة",
@@ -2644,47 +2666,63 @@ pub fn actions_text(key: &str) -> &'static str {
         ("en", "help") => "Reusable safe-default actions for CLI, GUI and terminal hosts",
         ("en", "menu") => "Guided actions",
         ("en", "list") => "Show action details",
-        ("en", "hint") => "Run an ID with: actions run ID [TARGET]. Empty target input returns.",
+        ("en", "hint") => {
+            "Run an ID or actionKey with: actions run ID [TARGET]. Empty target input returns."
+        }
         ("de", "title") => "=== Geführte Systemaktionen ===",
         ("de", "help") => "Wiederverwendbare sichere Aktionen für CLI, GUI und Terminalhosts",
         ("de", "menu") => "Geführte Aktionen",
         ("de", "list") => "Aktionsdetails anzeigen",
-        ("de", "hint") => "ID ausführen mit: actions run ID [ZIEL]. Leeres Ziel geht zurück.",
+        ("de", "hint") => {
+            "ID oder actionKey ausführen mit: actions run ID [ZIEL]. Leeres Ziel geht zurück."
+        }
         ("fr", "title") => "=== Actions système guidées ===",
         ("fr", "help") => "Actions sûres réutilisables pour CLI, GUI et terminaux",
         ("fr", "menu") => "Actions guidées",
         ("fr", "list") => "Afficher les détails des actions",
-        ("fr", "hint") => "Exécuter un ID avec : actions run ID [CIBLE]. Entrée vide pour revenir.",
+        ("fr", "hint") => {
+            "Exécuter un ID ou actionKey avec : actions run ID [CIBLE]. Entrée vide pour revenir."
+        }
         ("pt", "title") => "=== Ações guiadas do sistema ===",
         ("pt", "help") => "Ações seguras reutilizáveis para CLI, GUI e terminais",
         ("pt", "menu") => "Ações guiadas",
         ("pt", "list") => "Mostrar detalhes das ações",
-        ("pt", "hint") => "Executar um ID com: actions run ID [ALVO]. Enter vazio para voltar.",
+        ("pt", "hint") => {
+            "Executar um ID ou actionKey com: actions run ID [ALVO]. Enter vazio para voltar."
+        }
         ("it", "title") => "=== Azioni di sistema guidate ===",
         ("it", "help") => "Azioni sicure riutilizzabili per CLI, GUI e terminali",
         ("it", "menu") => "Azioni guidate",
         ("it", "list") => "Mostra dettagli azioni",
-        ("it", "hint") => "Esegui un ID con: actions run ID [OBIETTIVO]. Invio vuoto per tornare.",
+        ("it", "hint") => {
+            "Esegui un ID o actionKey con: actions run ID [OBIETTIVO]. Invio vuoto per tornare."
+        }
         ("ca", "title") => "=== Accions guiades del sistema ===",
         ("ca", "help") => "Accions segures reutilitzables per a CLI, GUI i terminals",
         ("ca", "menu") => "Accions guiades",
         ("ca", "list") => "Mostrar detalls de les accions",
-        ("ca", "hint") => "Executa un ID amb: actions run ID [OBJECTIU]. Enter buit per tornar.",
+        ("ca", "hint") => {
+            "Executa un ID o actionKey amb: actions run ID [OBJECTIU]. Enter buit per tornar."
+        }
         ("nl", "title") => "=== Begeleide systeemacties ===",
         ("nl", "help") => "Herbruikbare veilige acties voor CLI, GUI en terminalhosts",
         ("nl", "menu") => "Begeleide acties",
         ("nl", "list") => "Actiedetails tonen",
-        ("nl", "hint") => "Voer een ID uit met: actions run ID [DOEL]. Leeg doel gaat terug.",
+        ("nl", "hint") => {
+            "Voer een ID of actionKey uit met: actions run ID [DOEL]. Leeg doel gaat terug."
+        }
         ("pl", "title") => "=== Prowadzone działania systemu ===",
         ("pl", "help") => "Bezpieczne działania wielokrotnego użytku dla CLI, GUI i terminali",
         ("pl", "menu") => "Prowadzone działania",
         ("pl", "list") => "Pokaż szczegóły działania",
-        ("pl", "hint") => "Uruchom ID przez: actions run ID [CEL]. Puste pole wraca.",
+        ("pl", "hint") => "Uruchom ID lub actionKey przez: actions run ID [CEL]. Puste pole wraca.",
         (_, "title") => "=== Acciones guiadas del sistema ===",
         (_, "help") => "Acciones seguras reutilizables para CLI, GUI y terminales",
         (_, "menu") => "Acciones guiadas",
         (_, "list") => "Mostrar detalles de las acciones",
-        (_, "hint") => "Ejecuta un ID con: actions run ID [OBJETIVO]. Enter vacío para volver.",
+        (_, "hint") => {
+            "Ejecuta un ID o actionKey con: actions run ID [OBJETIVO]. Enter vacío para volver."
+        }
         _ => "",
     }
 }
@@ -3127,7 +3165,7 @@ pub fn gui_text(key: &str) -> &'static str {
         return storage_action_text("guide");
     }
     if key == "accounts" {
-        return accounts_label();
+        return menu_section_label();
     }
     if key == "boot" {
         return boot_label();
@@ -3513,7 +3551,7 @@ pub fn gui_text(key: &str) -> &'static str {
         (_, "packages") => "Inventario de paquetes",
         (_, "prefixes") => "Prefijos Wine/Proton",
         (_, "defaults") => "Rutas predeterminadas",
-        (_, "winslim") => "WinSlim",
+        (_, "winslim") => "WTools",
         (_, "system") => "Estado del sistema",
         (_, "doctor") => "Dependencias y diagnóstico",
         (_, "storage") => "Discos y particiones",
@@ -4972,7 +5010,7 @@ pub fn category_text(key: &str) -> &'static str {
         ("es", "automation") => "Automatización",
         ("es", "import") => "Importar scripts",
         ("es", "settings") => "Ajustes",
-        ("es", "winslim") => "WinSlim",
+        ("es", "winslim") => "WTools",
         ("en", "audit_inventory") => "Audit / Inventory",
         ("en", "storage") => "Disk management",
         ("en", "services") => "Services / Dependencies",
@@ -4980,7 +5018,7 @@ pub fn category_text(key: &str) -> &'static str {
         ("en", "automation") => "Automation",
         ("en", "import") => "Import scripts",
         ("en", "settings") => "Settings",
-        ("en", "winslim") => "WinSlim",
+        ("en", "winslim") => "WTools",
         ("de", "audit_inventory") => "Prüfen / Inventarisieren",
         ("de", "storage") => "Datenträgerverwaltung",
         ("de", "services") => "Dienste / Abhängigkeiten",
@@ -4988,7 +5026,7 @@ pub fn category_text(key: &str) -> &'static str {
         ("de", "automation") => "Automatisierung",
         ("de", "import") => "Skripte importieren",
         ("de", "settings") => "Einstellungen",
-        ("de", "winslim") => "WinSlim",
+        ("de", "winslim") => "WTools",
         ("fr", "audit_inventory") => "Auditer / Inventorier",
         ("fr", "storage") => "Gestion des disques",
         ("fr", "services") => "Services / Dépendances",
@@ -4996,7 +5034,7 @@ pub fn category_text(key: &str) -> &'static str {
         ("fr", "automation") => "Automatisation",
         ("fr", "import") => "Importer des scripts",
         ("fr", "settings") => "Réglages",
-        ("fr", "winslim") => "WinSlim",
+        ("fr", "winslim") => "WTools",
         ("pt", "audit_inventory") => "Auditar / Inventariar",
         ("pt", "storage") => "Gestão de discos",
         ("pt", "services") => "Serviços / Dependências",
@@ -5004,7 +5042,7 @@ pub fn category_text(key: &str) -> &'static str {
         ("pt", "automation") => "Automação",
         ("pt", "import") => "Importar scripts",
         ("pt", "settings") => "Definições",
-        ("pt", "winslim") => "WinSlim",
+        ("pt", "winslim") => "WTools",
         ("it", "audit_inventory") => "Audit / Inventario",
         ("it", "storage") => "Gestione dischi",
         ("it", "services") => "Servizi / Dipendenze",
@@ -5012,7 +5050,7 @@ pub fn category_text(key: &str) -> &'static str {
         ("it", "automation") => "Automazione",
         ("it", "import") => "Importa script",
         ("it", "settings") => "Impostazioni",
-        ("it", "winslim") => "WinSlim",
+        ("it", "winslim") => "WTools",
         ("ca", "audit_inventory") => "Auditar / Inventariar",
         ("ca", "storage") => "Gestió de discs",
         ("ca", "services") => "Serveis / Dependències",
@@ -5020,7 +5058,7 @@ pub fn category_text(key: &str) -> &'static str {
         ("ca", "automation") => "Automatització",
         ("ca", "import") => "Importar scripts",
         ("ca", "settings") => "Configuració",
-        ("ca", "winslim") => "WinSlim",
+        ("ca", "winslim") => "WTools",
         ("nl", "audit_inventory") => "Auditeren / Inventariseren",
         ("nl", "storage") => "Schijfbeheer",
         ("nl", "services") => "Diensten / Afhankelijkheden",
@@ -5028,7 +5066,7 @@ pub fn category_text(key: &str) -> &'static str {
         ("nl", "automation") => "Automatisering",
         ("nl", "import") => "Scripts importeren",
         ("nl", "settings") => "Instellingen",
-        ("nl", "winslim") => "WinSlim",
+        ("nl", "winslim") => "WTools",
         ("pl", "audit_inventory") => "Audyt / Inwentaryzacja",
         ("pl", "storage") => "Zarządzanie dyskami",
         ("pl", "services") => "Usługi / Zależności",
@@ -5036,7 +5074,7 @@ pub fn category_text(key: &str) -> &'static str {
         ("pl", "automation") => "Automatyzacja",
         ("pl", "import") => "Import skryptów",
         ("pl", "settings") => "Ustawienia",
-        ("pl", "winslim") => "WinSlim",
+        ("pl", "winslim") => "WTools",
         ("ar", "audit_inventory") => "التدقيق / الجرد",
         ("ar", "storage") => "إدارة الأقراص",
         ("ar", "services") => "الخدمات / التبعيات",
@@ -5044,7 +5082,7 @@ pub fn category_text(key: &str) -> &'static str {
         ("ar", "automation") => "الأتمتة",
         ("ar", "import") => "استيراد البرامج النصية",
         ("ar", "settings") => "الإعدادات",
-        ("ar", "winslim") => "WinSlim",
+        ("ar", "winslim") => "WTools",
         ("hi", "audit_inventory") => "ऑडिट / इन्वेंटरी",
         ("hi", "storage") => "डिस्क प्रबंधन",
         ("hi", "services") => "सेवाएँ / निर्भरताएँ",
@@ -5052,7 +5090,7 @@ pub fn category_text(key: &str) -> &'static str {
         ("hi", "automation") => "स्वचालन",
         ("hi", "import") => "स्क्रिप्ट आयात करें",
         ("hi", "settings") => "सेटिंग्स",
-        ("hi", "winslim") => "WinSlim",
+        ("hi", "winslim") => "WTools",
         ("ja", "audit_inventory") => "監査 / インベントリ",
         ("ja", "storage") => "ディスク管理",
         ("ja", "services") => "サービス / 依存関係",
@@ -5060,7 +5098,7 @@ pub fn category_text(key: &str) -> &'static str {
         ("ja", "automation") => "自動化",
         ("ja", "import") => "スクリプトをインポート",
         ("ja", "settings") => "設定",
-        ("ja", "winslim") => "WinSlim",
+        ("ja", "winslim") => "WTools",
         ("ko", "audit_inventory") => "감사 / 인벤토리",
         ("ko", "storage") => "디스크 관리",
         ("ko", "services") => "서비스 / 종속성",
@@ -5068,7 +5106,7 @@ pub fn category_text(key: &str) -> &'static str {
         ("ko", "automation") => "자동화",
         ("ko", "import") => "스크립트 가져오기",
         ("ko", "settings") => "설정",
-        ("ko", "winslim") => "WinSlim",
+        ("ko", "winslim") => "WTools",
         ("ro", "audit_inventory") => "Audit / Inventar",
         ("ro", "storage") => "Gestionarea discurilor",
         ("ro", "services") => "Servicii / Dependențe",
@@ -5076,7 +5114,7 @@ pub fn category_text(key: &str) -> &'static str {
         ("ro", "automation") => "Automatizare",
         ("ro", "import") => "Importă scripturi",
         ("ro", "settings") => "Setări",
-        ("ro", "winslim") => "WinSlim",
+        ("ro", "winslim") => "WTools",
         ("ru", "audit_inventory") => "Проверка / Инвентаризация",
         ("ru", "storage") => "Управление дисками",
         ("ru", "services") => "Службы / Зависимости",
@@ -5084,7 +5122,7 @@ pub fn category_text(key: &str) -> &'static str {
         ("ru", "automation") => "Автоматизация",
         ("ru", "import") => "Импорт скриптов",
         ("ru", "settings") => "Настройки",
-        ("ru", "winslim") => "WinSlim",
+        ("ru", "winslim") => "WTools",
         ("uk", "audit_inventory") => "Аудит / Інвентаризація",
         ("uk", "storage") => "Керування дисками",
         ("uk", "services") => "Служби / Залежності",
@@ -5092,7 +5130,7 @@ pub fn category_text(key: &str) -> &'static str {
         ("uk", "automation") => "Автоматизація",
         ("uk", "import") => "Імпортувати скрипти",
         ("uk", "settings") => "Налаштування",
-        ("uk", "winslim") => "WinSlim",
+        ("uk", "winslim") => "WTools",
         ("zh", "audit_inventory") => "审计 / 清单",
         ("zh", "storage") => "磁盘管理",
         ("zh", "services") => "服务 / 依赖项",
@@ -5100,7 +5138,7 @@ pub fn category_text(key: &str) -> &'static str {
         ("zh", "automation") => "自动化",
         ("zh", "import") => "导入脚本",
         ("zh", "settings") => "设置",
-        ("zh", "winslim") => "WinSlim",
+        ("zh", "winslim") => "WTools",
         ("es", "dependencies") => "Dependencias",
         ("es", "native_tools") => "Herramientas nativas",
         ("es", "installable_tools") => "Herramientas instalables",
@@ -5207,7 +5245,7 @@ pub fn category_text(key: &str) -> &'static str {
         (_, "automation") => "Automatización",
         (_, "import") => "Importar scripts",
         (_, "settings") => "Ajustes",
-        (_, "winslim") => "WinSlim",
+        (_, "winslim") => "WTools",
         (_, "audits") => "Auditorías e inventarios",
         (_, "cleanup") => "Limpieza y almacenamiento",
         (_, "applications") => "Aplicaciones y compatibilidad",
@@ -5620,21 +5658,21 @@ fn automation_extended_text(key: &str) -> Option<&'static str> {
         (
             "winslim_opened",
             [
-                "تم فتح مساعد WinSlim / NSudo في وحدة تحكم مستقلة.",
-                "Der WinSlim-/NSudo-Assistent wurde in einer separaten Konsole geöffnet.",
-                "The WinSlim / NSudo assistant opened in a separate console.",
-                "Se abrió el asistente WinSlim / NSudo en una consola independiente.",
-                "L’assistant WinSlim / NSudo a été ouvert dans une console séparée.",
-                "WinSlim / NSudo सहायक अलग कंसोल में खुल गया।",
-                "L’assistente WinSlim / NSudo è stato aperto in una console separata.",
-                "WinSlim / NSudo アシスタントを別のコンソールで開きました。",
-                "WinSlim / NSudo 도우미가 별도 콘솔에서 열렸습니다.",
-                "Asystent WinSlim / NSudo został otwarty w osobnej konsoli.",
-                "O assistente WinSlim / NSudo foi aberto numa consola separada.",
-                "Asistentul WinSlim / NSudo a fost deschis într-o consolă separată.",
-                "Мастер WinSlim / NSudo открыт в отдельной консоли.",
-                "Помічник WinSlim / NSudo відкрито в окремій консолі.",
-                "WinSlim / NSudo 助手已在独立控制台中打开。",
+                "تم فتح مساعد WTools / NSudo في وحدة تحكم مستقلة.",
+                "Der WTools-/NSudo-Assistent wurde in einer separaten Konsole geöffnet.",
+                "The WTools / NSudo assistant opened in a separate console.",
+                "Se abrió el asistente WTools / NSudo en una consola independiente.",
+                "L’assistant WTools / NSudo a été ouvert dans une console séparée.",
+                "WTools / NSudo सहायक अलग कंसोल में खुल गया।",
+                "L’assistente WTools / NSudo è stato aperto in una console separata.",
+                "WTools / NSudo アシスタントを別のコンソールで開きました。",
+                "WTools / NSudo 도우미가 별도 콘솔에서 열렸습니다.",
+                "Asystent WTools / NSudo został otwarty w osobnej konsoli.",
+                "O assistente WTools / NSudo foi aberto numa consola separada.",
+                "Asistentul WTools / NSudo a fost deschis într-o consolă separată.",
+                "Мастер WTools / NSudo открыт в отдельной консоли.",
+                "Помічник WTools / NSudo відкрито в окремій консолі.",
+                "WTools / NSudo 助手已在独立控制台中打开。",
             ],
         ),
         (
@@ -5737,14 +5775,14 @@ pub fn automation_text(key: &str) -> &'static str {
         ("en", "removed") => "Registration removed.",
         ("en", "updated") => "Automation updated.",
         ("en", "command") => "Command",
-        ("en", "winslim_ready") => "WinSlim integration surface detected at:",
+        ("en", "winslim_ready") => "WTools integration surface detected at:",
         ("en", "winslim_placeholder") => "NSudo launches are available only through the explicit launch assistant; normal actions continue to use UAC.",
         ("en", "winslim_wscore_missing") => "WSCore: not detected",
         ("en", "winslim_nsudo_missing") => "NSudo: not detected; standard elevation continues to use UAC.",
         ("en", "winslim_nsudo_found") => "NSudo detected at:",
         ("en", "winslim_default") => "NSudo is used only by `winslim launch` or when LTOOLS_USE_NSUDO=1 explicitly selects it for a supported elevation; ordinary actions are not elevated automatically.",
         ("en", "winslim_unavailable") => {
-            "The WinSlim/NSudo surface appears only on Windows when C:\\WSCore or a supported NSudo launcher is detected."
+            "The WTools/NSudo surface appears only on Windows when C:\\WSCore or a supported NSudo launcher is detected."
         }
         ("de", "title") => "=== Automatisierung / importierte Skripte ===",
         ("de", "menu") => "Importierte Skripte und Automatisierungen",
@@ -5780,7 +5818,7 @@ pub fn automation_text(key: &str) -> &'static str {
         (_, "removed") => "Registro eliminado.",
         (_, "updated") => "Automatización actualizada.",
         (_, "command") => "Comando",
-        (_, "winslim_ready") => "Superficie de integración WinSlim detectada en:",
+        (_, "winslim_ready") => "Superficie de integración WTools detectada en:",
         (_, "winslim_placeholder") => {
             "El asistente NSudo solo se usa cuando se solicita expresamente; las acciones normales conservan UAC."
         }
@@ -5789,7 +5827,7 @@ pub fn automation_text(key: &str) -> &'static str {
         (_, "winslim_nsudo_found") => "NSudo detectado en:",
         (_, "winslim_default") => "NSudo solo se usa con `winslim launch` o si LTOOLS_USE_NSUDO=1 lo selecciona expresamente para una elevación compatible; las acciones normales no se elevan automáticamente.",
         (_, "winslim_unavailable") => {
-            "La superficie WinSlim/NSudo solo aparece en Windows cuando se detecta C:\\WSCore o un lanzador NSudo compatible."
+            "La superficie WTools/NSudo solo aparece en Windows cuando se detecta C:\\WSCore o un lanzador NSudo compatible."
         }
         (_, _) => "",
     }
@@ -6264,8 +6302,8 @@ pub fn gui_family_text(key: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        boot_label, category_text, gui_account_text, gui_action_text, gui_catalog_text,
-        gui_confirmation_text, gui_family_text, gui_text, help_extra, language_test_guard,
+        boot_label, category_text, gui_action_text, gui_catalog_text, gui_confirmation_text,
+        gui_family_text, gui_management_text, gui_text, help_extra, language_test_guard,
         native_tools_label, normalize, set, settings_text, storage_action_text,
         storage_section_text, SUPPORTED,
     };
@@ -6700,6 +6738,7 @@ mod tests {
             "native_power_status",
             "native_security_status",
             "native_security_scanners",
+            "snapshots",
             "network_title",
             "network_inspection",
             "network_status",
@@ -6862,14 +6901,14 @@ mod tests {
             set(language);
             for key in keys {
                 assert!(
-                    !gui_account_text(key).trim().is_empty(),
+                    !gui_management_text(key).trim().is_empty(),
                     "{language} missing account GUI string {key}"
                 );
             }
             if *language != "es" {
-                assert_ne!(gui_account_text("title"), "Usuarios, grupos y sesiones");
-                assert_ne!(gui_account_text("list"), "Listar cuentas locales");
-                assert_ne!(gui_account_text("password"), "Cambiar contraseña");
+                assert_ne!(gui_management_text("title"), "Usuarios, grupos y sesiones");
+                assert_ne!(gui_management_text("list"), "Listar cuentas locales");
+                assert_ne!(gui_management_text("password"), "Cambiar contraseña");
             }
         }
         set("es");

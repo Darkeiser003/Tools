@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ltools.dev/schema/ltools-actions-v1.json",
+  "title": "LTools executable action catalog",
+  "description": "Contrato del catálogo de acciones que ltools puede ejecutar mediante actions run.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "platform", "safety", "actions"],
+  "properties": {
+    "schema": { "const": "ltools-actions-v1" },
+    "platform": { "enum": ["linux", "windows"] },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["excluded_defaults", "target_selection"],
+      "properties": {
+        "excluded_defaults": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "target_selection": { "const": "explicit-only" }
+      }
+    },
+    "actions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id", "legacyId", "actionId", "actionKey", "qualifiedActionKey", "canonicalKey", "scope", "operation", "label", "shortLabel", "displayName", "menuPath",
+          "group", "description", "category", "command", "args", "target",
+          "targetPolicy", "invocation", "mutating", "confirmation", "safe", "profile",
+          "aliases", "supports"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^(?:linux|windows)\\.[a-z0-9]+(?:[.-][a-z0-9]+)+$" },
+          "legacyId": { "type": "string", "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$" },
+          "actionId": { "type": "string", "pattern": "^(?:linux|windows)\\.[a-z0-9]+(?:[.-][a-z0-9]+)+$" },
+          "actionKey": { "type": "string", "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$" },
+          "qualifiedActionKey": { "type": "string", "pattern": "^(?:linux|windows)\\.[a-z0-9]+(?:[.-][a-z0-9]+)+$" },
+          "canonicalKey": { "type": "string", "pattern": "^(?:linux|windows)\\.[a-z0-9]+(?:[.-][a-z0-9]+)+$" },
+          "scope": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+          "operation": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+          "label": { "type": "string", "minLength": 1 },
+          "shortLabel": { "type": "string", "minLength": 1 },
+          "displayName": { "type": "string", "minLength": 1 },
+          "menuPath": {
+            "type": "array",
+            "prefixItems": [
+              { "type": "string", "minLength": 1 },
+              { "type": "string", "minLength": 1 }
+            ],
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "group": { "type": "string", "minLength": 1 },
+          "description": { "type": "string", "minLength": 1 },
+          "category": { "type": "string", "minLength": 1 },
+          "command": { "type": "string", "minLength": 1 },
+          "args": { "type": "array", "items": { "type": "string" } },
+          "target": { "type": "string", "minLength": 1 },
+          "targetPolicy": { "enum": ["none", "explicit-only"] },
+          "invocation": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["executable", "args", "target"],
+            "properties": {
+              "executable": { "enum": ["ltools", "ltools.exe"] },
+              "args": {
+                "type": "array",
+                "prefixItems": [{ "const": "actions" }, { "const": "run" }, { "type": "string", "pattern": "^(?:linux|windows)\\.[a-z0-9]+(?:[.-][a-z0-9]+)+$" }],
+                "minItems": 3,
+                "maxItems": 3
+              },
+              "target": { "type": "string", "minLength": 1 }
+            }
+          },
+          "mutating": { "type": "boolean" },
+          "confirmation": { "enum": ["none", "backend"] },
+          "safe": { "type": "boolean" },
+          "profile": { "enum": ["safe-default", "advanced"] },
+          "aliases": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+          "supports": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "enum": ["dry-run", "plan"] }
+          }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "safe": { "const": true } } },
+            "then": {
+              "properties": {
+                "mutating": { "const": false },
+                "confirmation": { "const": "none" }
+              }
+            }
+          },
+          {
+            "if": { "properties": { "mutating": { "const": true } } },
+            "then": {
+              "properties": { "confirmation": { "const": "backend" } }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

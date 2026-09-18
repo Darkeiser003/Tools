@@ -47,7 +47,7 @@ function Get-LToolsBuildImpact($Old, $New) {
             $path -match '^scripts/lib/publish\.ps1$' -or
             $path -match '^scripts/lib/third-party-licenses\.ps1$' -or
             $path -match '^scripts/lib/ssh-signing\.ps1$' -or
-            $path -match '^appimage/ltools-(capabilities|terminal)\.schema\.json$' -or
+            $path -match '^appimage/ltools-(capabilities|actions|terminal)\.schema\.json$' -or
             $path -match '^distribution/' -or $path -in @('README.md', 'LICENSE')
 
         if ($rustBuild) { $impact.RustCompile.Add($path) }
@@ -147,17 +147,17 @@ function Get-LToolsBuildArtifactHashes(
     foreach ($name in @(
         "$prefix.exe", "$prefix-cli.exe", "$prefix.zip", 'THIRD-PARTY-LICENSES-windows.zip',
         'ltools-capabilities.json', 'ltools-capabilities-windows.json',
-        'ltools-terminal.json', 'ltools-terminal-windows.json',
-        'ltools-capabilities.schema.json', 'ltools-terminal.schema.json'
+        'ltools-actions.json', 'ltools-actions-windows.json', 'ltools-terminal.json', 'ltools-terminal-windows.json',
+        'ltools-capabilities.schema.json', 'ltools-actions.schema.json', 'ltools-terminal.schema.json'
     )) {
         $paths["output/$name"] = Join-Path $OutputDirectory $name
     }
     $portableNames = @(
-        'ltools.exe', 'ltools-cli.exe', 'ltools.ps1', 'ltools.cmd',
+        'ltools.exe', 'ltools-cli.exe', 'ltools.ps1', 'ltools.cmd', 'wtools.cmd',
         'ltools-cli.ps1', 'ltools-cli.cmd', 'README.md', 'LICENSE', 'ltools-capabilities.json',
-        'ltools-capabilities-windows.json', 'ltools-terminal.json',
+        'ltools-capabilities-windows.json', 'ltools-actions.json', 'ltools-terminal.json',
         'ltools-terminal-windows.json', 'ltools-capabilities.schema.json',
-        'ltools-terminal.schema.json', 'BUILD-INFO.txt', 'THIRD-PARTY-LICENSES/INDEX.txt'
+        'ltools-actions.schema.json', 'ltools-terminal.schema.json', 'BUILD-INFO.txt', 'THIRD-PARTY-LICENSES/INDEX.txt'
     )
     $portable = Join-Path $OutputDirectory $prefix
     foreach ($name in $portableNames) { $paths["portable/$name"] = Join-Path $portable $name }
@@ -172,8 +172,8 @@ function Get-LToolsBuildArtifactHashes(
     foreach ($name in @(
         "$prefix.exe", "$prefix-cli.exe", "$prefix.zip", 'THIRD-PARTY-LICENSES-windows.zip',
         'ltools-capabilities.json', 'ltools-capabilities-windows.json',
-        'ltools-terminal.json', 'ltools-terminal-windows.json',
-        'ltools-capabilities.schema.json', 'ltools-terminal.schema.json',
+        'ltools-actions.json', 'ltools-actions-windows.json', 'ltools-terminal.json', 'ltools-terminal-windows.json',
+        'ltools-capabilities.schema.json', 'ltools-actions.schema.json', 'ltools-terminal.schema.json',
         'ltools-project.json', 'ltools-project.schema.json', 'ltools-release.schema.json',
         'ltools-release.json', 'LICENSE', 'SHA256SUMS.txt', 'SHA256SUMS.txt.sig', 'SHA256SUMS.txt.sshsig'
     )) {

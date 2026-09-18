@@ -39,7 +39,7 @@ Uso: $0 [opciones]
   --signature-public-key-file FICHERO
                       Clave pública para verificar SHA256SUMS.txt.sig.
   --signature-verifier FICHERO
-                      Backend LTools/WinSlim-Tools que verifica la firma.
+                      Backend LTools/WTools que verifica la firma.
   --ssh-public-key-file FICHERO
                       Clave OpenSSH pública que valida SHA256SUMS.txt.sshsig.
   --ssh-identity IDENTIDAD
@@ -86,23 +86,179 @@ command -v stat >/dev/null 2>&1 || die 'stat es necesario para validar la releas
 manifest="$RELEASE_DIR/ltools-release.json"
 [[ -f "$manifest" && ! -L "$manifest" && -s "$manifest" ]] || die 'falta ltools-release.json regular'
 jq -e --arg version "$VERSION" \
-    '.schema == "ltools-release-v1" and (.application == "LTools" or .application == "WinSlim-Tools") and
+    '.schema == "ltools-release-v1" and (.application == "LTools" or .application == "WTools") and
      .version == $version and .hash_algorithm == "sha256" and
      (.artifacts | type == "array" and length > 0)' "$manifest" >/dev/null \
     || die 'el manifiesto no supera el contrato de release'
 
 for json in \
     ltools-capabilities.json \
+    ltools-actions.json \
     ltools-terminal.json \
     ltools-project.json; do
     [[ -f "$RELEASE_DIR/$json" && ! -L "$RELEASE_DIR/$json" && -s "$RELEASE_DIR/$json" ]] || die "falta $json regular"
     jq empty "$RELEASE_DIR/$json" >/dev/null || die "$json no es JSON válido"
 done
+
+jq -e --slurpfile schema "$RELEASE_DIR/ltools-capabilities.schema.json" '
+    (($schema[0].additionalProperties == false) and
+     (keys - ($schema[0].properties | keys) | length == 0) and
+     (($schema[0].properties.environment.required | index("cli_profile")) != null) and
+     (($schema[0].properties.terminal_integration.required | index("working_directory")) != null) and
+     ($schema[0]."$defs" | has("ui_context") and has("entrypoint") and has("distribution_entry")))
+' "$RELEASE_DIR/ltools-capabilities.json" >/dev/null ||
+    die 'ltools-capabilities.json y su esquema no cubren el contrato raíz real'
+jq -e --slurpfile schema "$RELEASE_DIR/ltools-terminal.schema.json" '
+    (($schema[0].additionalProperties == false) and (keys - ($schema[0].properties | keys) | length == 0))
+' "$RELEASE_DIR/ltools-terminal.json" >/dev/null ||
+    die 'ltools-terminal.json y su esquema no cubren el contrato raíz real'
+
+validate_action_descriptor() {
+    local path="$1" label="$2"
+    jq -e '
+        (.actions | type == "array" and length > 0) and
+        (([.actions[].id] | unique | length) == (.actions | length)) and
+        (([.actions[].actionId] | unique | length) == (.actions | length)) and
+        (([.actions[].actionKey] | unique | length) == (.actions | length)) and
+        (([.actions[].qualifiedActionKey] | unique | length) == (.actions | length)) and
+        (([.actions[].canonicalKey] | unique | length) == (.actions | length)) and
+        (([.actions[].displayName] | unique | length) == (.actions | length)) and
+        (([.actions[].label] | unique | length) == (.actions | length)) and
+        (([.actions[].shortLabel] | unique | length) == (.actions | length)) and
+        (.platform as $platform | all(.actions[];
+            (.id | type == "string" and length > 0) and
+            (.legacyId | type == "string" and length > 0) and
+            (.actionId | type == "string" and test("^(?:linux|windows)\\.[a-z0-9]+(?:[.-][a-z0-9]+)+$")) and
+            (.actionKey | type == "string" and test("^[a-z0-9]+(?:[.-][a-z0-9]+)+$")) and
+            (.qualifiedActionKey == ($platform + "." + .actionKey)) and
+            (.canonicalKey == .qualifiedActionKey) and
+            (.actionId == .canonicalKey) and
+            (.scope | type == "string" and length > 0) and
+            (.operation | type == "string" and length > 0) and
+            (.label | type == "string" and length > 0) and
+            (.shortLabel | type == "string" and length > 0) and
+            (.displayName | type == "string" and length > 0) and
+            (.menuPath | type == "array" and length == 2) and
+            (.group | type == "string" and length > 0) and
+            (.description | type == "string" and length > 0) and
+            ((.actionKey | split(".")[0]) == .scope) and
+            (.operation == (.actionKey | gsub("\\."; "-"))) and
+            (.command | type == "string" and length > 0) and
+            (.args | type == "array") and
+            (.safe | type == "boolean") and
+            (.confirmation | type == "string") and
+            (.confirmation == "none" or .confirmation == "before-run" or .confirmation == "always") and
+            ((.safe == true) == (.confirmation == "none"))
+        ))
+    ' "$path" >/dev/null || die "$label contiene acciones sin identidad canónica única"
+    jq -e '([.actions[].operation] | length) == ([.actions[].operation] | unique | length)' "$path" >/dev/null ||
+        die "$label contiene operaciones ambiguas o duplicadas"
+}
+validate_action_descriptor "$RELEASE_DIR/ltools-capabilities.json" 'ltools-capabilities.json'
+validate_action_descriptor "$RELEASE_DIR/ltools-terminal.json" 'ltools-terminal.json'
+
+validate_action_catalog() {
+    local path="$1" label="$2"
+    jq -e '
+        .schema == "ltools-actions-v1" and
+        (.platform | IN("linux", "windows")) and
+        (.safety.target_selection == "explicit-only") and
+        (.actions | type == "array" and length > 0) and
+        (([.actions[].id] | unique | length) == (.actions | length)) and
+        (([.actions[].actionId] | unique | length) == (.actions | length)) and
+        (([.actions[].actionKey] | unique | length) == (.actions | length)) and
+        (([.actions[].operation] | unique | length) == (.actions | length)) and
+        (([.actions[].label] | unique | length) == (.actions | length)) and
+        (([.actions[].shortLabel] | unique | length) == (.actions | length)) and
+        (([.actions[].qualifiedActionKey] | unique | length) == (.actions | length)) and
+        (([.actions[].canonicalKey] | unique | length) == (.actions | length)) and
+        (.platform as $platform | all(.actions[];
+            (.id | type == "string" and length > 0) and
+            (.id == .actionId) and
+            (.legacyId | type == "string" and length > 0) and
+            (.actionId | type == "string" and test("^(?:linux|windows)\\.[a-z0-9]+(?:[.-][a-z0-9]+)+$")) and
+            (.actionKey | type == "string" and test("^[a-z0-9]+(?:[.-][a-z0-9]+)+$")) and
+            (.qualifiedActionKey == ($platform + "." + .actionKey)) and
+            (.canonicalKey == .qualifiedActionKey) and
+            (.actionId == .canonicalKey) and
+            (.scope == (.actionKey | split(".")[0])) and
+            (.operation == (.actionKey | gsub("\\."; "-"))) and
+            (.label | type == "string" and length > 0) and
+            (.shortLabel | type == "string" and length > 0) and
+            (.displayName | type == "string" and length > 0) and
+            (.menuPath | type == "array" and length == 2) and
+            (.group | type == "string" and length > 0) and
+            (.description | type == "string" and length > 0) and
+            (.invocation.executable | IN("ltools", "ltools.exe")) and
+            (.invocation.args == ["actions", "run", .actionId]) and
+            (.invocation.target == .target) and
+            (.args | type == "array" and all(.[]; type == "string")) and
+            (.targetPolicy | IN("none", "explicit-only")) and
+            (.mutating | type == "boolean") and
+            (.confirmation | IN("none", "backend")) and
+            (.safe | type == "boolean") and
+            ((.safe == true) == (.confirmation == "none"))
+        ))
+    ' "$path" >/dev/null || die "$label no cumple el contrato del catálogo de acciones"
+}
+validate_action_catalog "$RELEASE_DIR/ltools-actions.json" 'ltools-actions.json'
+if [[ -s "$RELEASE_DIR/ltools-actions-windows.json" ]]; then
+    validate_action_catalog "$RELEASE_DIR/ltools-actions-windows.json" 'ltools-actions-windows.json'
+    jq -e '.platform == "windows"' "$RELEASE_DIR/ltools-actions-windows.json" >/dev/null ||
+        die 'ltools-actions-windows.json no declara la plataforma Windows'
+fi
+for json in ltools-capabilities-windows.json ltools-terminal-windows.json; do
+    if [[ -s "$RELEASE_DIR/$json" ]]; then
+        validate_action_descriptor "$RELEASE_DIR/$json" "$json"
+    fi
+done
+
+validate_cross_platform_identities() {
+    local linux_path="$1" windows_path="$2" label="$3"
+    [[ -s "$linux_path" && -s "$windows_path" ]] || return 0
+    jq -s -e '
+        length == 2 and
+        (.[0].platform == "linux") and (.[1].platform == "windows") and
+        (([.[].actions[].qualifiedActionKey] | length) ==
+            ([.[].actions[].qualifiedActionKey] | unique | length)) and
+        (([.[].actions[].actionId] | length) ==
+            ([.[].actions[].actionId] | unique | length)) and
+        (([.[].actions[].canonicalKey] | length) ==
+            ([.[].actions[].canonicalKey] | unique | length)) and
+        (([.[].actions[].displayName] | length) ==
+            ([.[].actions[].displayName] | unique | length)) and
+        all(.[]; .platform as $platform | all(.actions[];
+            (.qualifiedActionKey == ($platform + "." + .actionKey)) and
+            (.canonicalKey == .qualifiedActionKey) and
+            (.actionId == .canonicalKey) and
+            (.displayName | type == "string" and length > 0)
+        ))
+    ' "$linux_path" "$windows_path" >/dev/null ||
+        die "$label contiene identidades canónicas o nombres visibles duplicados entre plataformas"
+}
+
+validate_cross_platform_identities \
+    "$RELEASE_DIR/ltools-capabilities.json" \
+    "$RELEASE_DIR/ltools-capabilities-windows.json" \
+    'ltools-capabilities'
+validate_cross_platform_identities \
+    "$RELEASE_DIR/ltools-terminal.json" \
+    "$RELEASE_DIR/ltools-terminal-windows.json" \
+    'ltools-terminal'
+validate_cross_platform_identities \
+    "$RELEASE_DIR/ltools-actions.json" \
+    "$RELEASE_DIR/ltools-actions-windows.json" \
+    'ltools-actions'
+ok 'descriptores de release: identidades locales y canónicas únicas por plataforma y entre plataformas'
 project_json="$RELEASE_DIR/ltools-project.json"
 if (( REQUIRE_APPIMAGE || REQUIRE_PACKAGE )); then
     jq -e '.platforms.linux.runtime.appimage_requires_fuse == true and
             .platforms.linux.runtime.appimage_extract_override == "APPIMAGE_EXTRACT_AND_RUN=1" and
-            (.platforms.windows.runtime // null) == null' "$project_json" >/dev/null \
+            (.platforms.windows.runtime // null) == null and
+            .action_catalog.catalog == "ltools-actions.json" and
+            .action_catalog.schema == "ltools-actions.schema.json" and
+            .action_catalog.descriptors.linux == "ltools-actions.json" and
+            .action_catalog.descriptors.windows == "ltools-actions-windows.json"' "$project_json" >/dev/null \
         || die 'ltools-project.json no declara correctamente el requisito Linux de FUSE y su ausencia en Windows'
     ok 'metadatos de runtime AppImage/FUSE coherentes por plataforma'
 fi
@@ -115,16 +271,18 @@ done
 if (( REQUIRE_WINDOWS_EXECUTABLES )); then
     [[ -f "$RELEASE_DIR/ltools-capabilities-windows.json" && ! -L "$RELEASE_DIR/ltools-capabilities-windows.json" && -s "$RELEASE_DIR/ltools-capabilities-windows.json" ]] || die 'falta el descriptor regular de capacidades Windows'
     [[ -f "$RELEASE_DIR/ltools-terminal-windows.json" && ! -L "$RELEASE_DIR/ltools-terminal-windows.json" && -s "$RELEASE_DIR/ltools-terminal-windows.json" ]] || die 'falta el descriptor regular de terminal Windows'
-    jq -e '.platform == "windows" and .application == "WinSlim-Tools"' \
+    [[ -f "$RELEASE_DIR/ltools-actions-windows.json" && ! -L "$RELEASE_DIR/ltools-actions-windows.json" && -s "$RELEASE_DIR/ltools-actions-windows.json" ]] || die 'falta el descriptor regular de acciones Windows'
+    jq -e '.platform == "windows" and .application == "WTools"' \
         "$RELEASE_DIR/ltools-capabilities-windows.json" >/dev/null \
         || die 'el descriptor de capacidades Windows no declara la plataforma correcta'
-    jq -e '.platform == "windows" and .host.product == "WinSlim Terminal"' \
+    jq -e '.platform == "windows" and .host.product == "WTools"' \
         "$RELEASE_DIR/ltools-terminal-windows.json" >/dev/null \
-        || die 'el descriptor de terminal Windows no declara WinSlim Terminal'
+        || die 'el descriptor de terminal Windows no declara WTools'
     ok 'descriptores Windows separados presentes y coherentes'
 fi
 for schema in \
     ltools-capabilities.schema.json \
+    ltools-actions.schema.json \
     ltools-terminal.schema.json \
     ltools-project.schema.json \
     ltools-release.schema.json; do

@@ -1,10 +1,10 @@
 @echo off
 setlocal
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0ltools.ps1" %*
-set "LTOOLS_EXIT=%ERRORLEVEL%"
-if not "%LTOOLS_EXIT%"=="0" (
+set "WTOOLS_EXIT=%ERRORLEVEL%"
+if not "%WTOOLS_EXIT%"=="0" (
     echo.
-    echo WTools no pudo ejecutarse. Codigo: %LTOOLS_EXIT%
+    echo WTools no pudo ejecutarse. Codigo: %WTOOLS_EXIT%
     if /i not "%LTOOLS_NO_PAUSE%"=="1" pause
 )
-exit /b %LTOOLS_EXIT%
+exit /b %WTOOLS_EXIT%

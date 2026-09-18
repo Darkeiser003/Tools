@@ -1,0 +1,296 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Etiqueta SemVer que se va a publicar, por ejemplo v1.0.0
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  linux:
+    name: Linux AppImage, tarball y Wine
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout de la etiqueta
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+
+      - name: Instalar dependencias Linux, AppImage y Wine
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential pkg-config libgtk-3-dev libglib2.0-dev \
+            libpango1.0-dev libcairo2-dev libgdk-pixbuf2.0-dev \
+            libx11-dev libxtst-dev gcc-mingw-w64-x86-64 \
+            wine wine64 xvfb xdotool imagemagick x11-utils fuse3 \
+            rsync trash-cli jq zip unzip file ripgrep shellcheck
+
+      - name: Instalar actionlint
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Instalar Rust y herramientas de seguridad verificadas
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable + fmt/clippy
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+          targets: x86_64-pc-windows-gnu
+
+      - name: Instalar cargo-audit y cargo-deny
+        uses: taiki-e/install-action@6c6fd71fe4fb72c3697d269963d0e15df8adedad # v2.85.10
+        with:
+          tool: cargo-audit,cargo-deny
+
+      - name: Ejecutar build Linux completa, AppImage y Wine
+        env:
+          LTOOLS_REQUIRE_LOOPBACK_TESTS: '1'
+          LTOOLS_GITHUB_TAG: ${{ inputs.tag || github.ref_name }}
+        run: >-
+          bash scripts/build.sh --appimage --windows-wine --allow-unsigned
+          --strict-security --security-review --non-interactive --jobs 2
+          --output "$RUNNER_TEMP/ltools-linux-dist"
+          --release-dir "$RUNNER_TEMP/ltools-linux-release"
+          --log "$RUNNER_TEMP/ltools-linux-build.log"
+
+      - name: Conservar artefactos Linux y diagnósticos
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ltools-linux-release
+          path: ${{ runner.temp }}/ltools-linux-release/
+          if-no-files-found: error
+
+      - name: Conservar logs Linux
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ltools-linux-diagnostics
+          path: |
+            ${{ runner.temp }}/ltools-linux-build.log
+            ${{ runner.temp }}/ltools-linux-dist/build-*-timings.tsv
+          if-no-files-found: warn
+
+  windows:
+    name: Windows nativo MSVC
+    runs-on: windows-2025
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout de la etiqueta
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+
+      - name: Instalar Rust estable
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable + fmt/clippy
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+          targets: x86_64-pc-windows-msvc
+
+      - name: Validar que la etiqueta coincide con Cargo.toml
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          $expected = ($env:RELEASE_TAG -replace '^v', '')
+          $cargo = Get-Content -Raw -LiteralPath 'rust/Cargo.toml'
+          if ($cargo -notmatch ('(?m)^version\s*=\s*"' + [regex]::Escape($expected) + '"')) {
+            throw "La etiqueta $env:RELEASE_TAG no coincide con la versión de rust/Cargo.toml ($expected)."
+          }
+
+      - name: Ejecutar build, smoke y E2E Windows nativos
+        shell: pwsh
+        env:
+          LTOOLS_REQUIRE_LOOPBACK_TESTS: '1'
+          LTOOLS_GITHUB_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          $dist = Join-Path $env:RUNNER_TEMP 'ltools-windows-dist'
+          $release = Join-Path $env:RUNNER_TEMP 'ltools-windows-release'
+          $log = Join-Path $env:RUNNER_TEMP 'ltools-windows-build.log'
+          & ./scripts/build.ps1 -Force -AllowUnsigned -NonInteractive `
+            -Output $dist -ReleaseOutput $release -Log $log
+
+      - name: Conservar artefactos Windows y diagnósticos
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ltools-windows-release
+          path: ${{ runner.temp }}/ltools-windows-release/
+          if-no-files-found: error
+
+      - name: Conservar logs Windows
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ltools-windows-diagnostics
+          path: |
+            ${{ runner.temp }}/ltools-windows-build.log
+            ${{ runner.temp }}/ltools-windows-build*-timings.tsv
+          if-no-files-found: warn
+
+  publish:
+    name: Unir, firmar y publicar release
+    runs-on: ubuntu-24.04
+    needs: [linux, windows]
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Checkout de la etiqueta
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+
+      - name: Descargar artefactos de ambas plataformas
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$RUNNER_TEMP/ltools-artifacts/linux" "$RUNNER_TEMP/ltools-artifacts/windows"
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name ltools-linux-release --dir "$RUNNER_TEMP/ltools-artifacts/linux"
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name ltools-windows-release --dir "$RUNNER_TEMP/ltools-artifacts/windows"
+
+      - name: Preparar release combinada
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -Eeuo pipefail
+          version="${RELEASE_TAG#v}"
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "Etiqueta inválida: $RELEASE_TAG" >&2
+            exit 1
+          }
+          linux="$RUNNER_TEMP/ltools-artifacts/linux"
+          windows="$RUNNER_TEMP/ltools-artifacts/windows"
+          mkdir -p release
+
+          shopt -s nullglob
+          linux_files=(
+            "$linux"/ltools-"$version"-linux-*.AppImage
+            "$linux"/ltools-"$version"-linux-*.tar.gz
+            "$linux"/LICENSE
+            "$linux"/ltools-capabilities.json
+            "$linux"/ltools-actions.json
+            "$linux"/ltools-terminal.json
+            "$linux"/ltools-capabilities.schema.json
+            "$linux"/ltools-actions.schema.json
+            "$linux"/ltools-terminal.schema.json
+            "$linux"/ltools-project.json
+            "$linux"/ltools-project.schema.json
+            "$linux"/ltools-release.schema.json
+          )
+          ((${#linux_files[@]} > 0)) || { echo 'No hay artefactos Linux descargados.' >&2; exit 1; }
+          cp -- "${linux_files[@]}" release/
+
+          windows_files=(
+            "$windows"/ltools-"$version"-windows-*.exe
+            "$windows"/ltools-"$version"-windows-*.zip
+            "$windows"/THIRD-PARTY-LICENSES-windows.zip
+            "$windows"/ltools-capabilities-windows.json
+            "$windows"/ltools-actions-windows.json
+            "$windows"/ltools-terminal-windows.json
+          )
+          ((${#windows_files[@]} > 0)) || { echo 'No hay artefactos Windows descargados.' >&2; exit 1; }
+          cp -- "${windows_files[@]}" release/
+          rm -f -- release/SHA256SUMS.txt release/SHA256SUMS.txt.sig \
+            release/SHA256SUMS.txt.sshsig release/ltools-release.json
+
+      - name: Extraer backend desde el tarball Linux
+        id: backend
+        run: |
+          set -Eeuo pipefail
+          tarball=(release/ltools-*-linux-*.tar.gz)
+          ((${#tarball[@]} == 1)) || { echo 'Se esperaba exactamente un tarball Linux.' >&2; exit 1; }
+          mkdir -p "$RUNNER_TEMP/ltools-backend"
+          tar -xzf "${tarball[0]}" -C "$RUNNER_TEMP/ltools-backend"
+          backend="$(find "$RUNNER_TEMP/ltools-backend" -type f -path '*/rust/target/release/ltools' -print -quit)"
+          [[ -n "$backend" && -x "$backend" ]] || { echo 'No se encontró el backend Linux en el tarball.' >&2; exit 1; }
+          echo "path=$backend" >> "$GITHUB_OUTPUT"
+
+      - name: Crear manifiesto, hashes y firmas verificables
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          LTOOLS_BACKEND_PATH: ${{ steps.backend.outputs.path }}
+          LTOOLS_SIGNING_PRIVATE_KEY: ${{ secrets.LTOOLS_SIGNING_PRIVATE_KEY }}
+          LTOOLS_UPDATE_PUBLIC_KEY: ${{ secrets.LTOOLS_UPDATE_PUBLIC_KEY }}
+          LTOOLS_SSH_SIGNING_PRIVATE_KEY: ${{ secrets.LTOOLS_SSH_SIGNING_PRIVATE_KEY }}
+          LTOOLS_SSH_SIGNING_PUBLIC_KEY: ${{ secrets.LTOOLS_SSH_SIGNING_PUBLIC_KEY }}
+          LTOOLS_SSH_SIGNING_IDENTITY: ${{ secrets.LTOOLS_SSH_SIGNING_IDENTITY }}
+        run: |
+          set -Eeuo pipefail
+          : "${LTOOLS_SIGNING_PRIVATE_KEY:?Falta el secreto LTOOLS_SIGNING_PRIVATE_KEY}"
+          : "${LTOOLS_UPDATE_PUBLIC_KEY:?Falta el secreto LTOOLS_UPDATE_PUBLIC_KEY}"
+          : "${LTOOLS_SSH_SIGNING_PRIVATE_KEY:?Falta el secreto LTOOLS_SSH_SIGNING_PRIVATE_KEY}"
+          : "${LTOOLS_SSH_SIGNING_PUBLIC_KEY:?Falta el secreto LTOOLS_SSH_SIGNING_PUBLIC_KEY}"
+          : "${LTOOLS_SSH_SIGNING_IDENTITY:?Falta el secreto LTOOLS_SSH_SIGNING_IDENTITY}"
+          umask 077
+          ssh_private="$RUNNER_TEMP/ltools-release-signing-key"
+          ssh_public="$RUNNER_TEMP/ltools-release-signing-key.pub"
+          printf '%s\n' "$LTOOLS_SSH_SIGNING_PRIVATE_KEY" > "$ssh_private"
+          printf '%s\n' "$LTOOLS_SSH_SIGNING_PUBLIC_KEY" > "$ssh_public"
+          export LTOOLS_SSH_SIGNING_KEY_FILE="$ssh_private"
+          export LTOOLS_SSH_SIGNING_PUBLIC_KEY_FILE="$ssh_public"
+          backend="$LTOOLS_BACKEND_PATH"
+          "$backend" release-manifest --output release/ltools-release.json \
+            --repository "$GITHUB_REPOSITORY" --tag "$RELEASE_TAG" --artifacts-dir release
+          "$backend" release-checksums --output release/SHA256SUMS.txt --artifacts-dir release
+          "$backend" release-signature --manifest release/SHA256SUMS.txt \
+            --signature release/SHA256SUMS.txt.sig
+          "$backend" release-signature --manifest release/SHA256SUMS.txt \
+            --signature release/SHA256SUMS.txt.sig --verify
+          source scripts/lib/ssh-signing.sh
+          ltools_ssh_sign_manifest release/SHA256SUMS.txt release/SHA256SUMS.txt.sshsig
+          ltools_ssh_verify_manifest release/SHA256SUMS.txt release/SHA256SUMS.txt.sshsig
+
+      - name: Ejecutar E2E final de release y comprobar hashes
+        env:
+          LTOOLS_BACKEND_PATH: ${{ steps.backend.outputs.path }}
+          LTOOLS_UPDATE_PUBLIC_KEY: ${{ secrets.LTOOLS_UPDATE_PUBLIC_KEY }}
+          LTOOLS_SSH_SIGNING_PUBLIC_KEY: ${{ secrets.LTOOLS_SSH_SIGNING_PUBLIC_KEY }}
+          LTOOLS_SSH_SIGNING_IDENTITY: ${{ secrets.LTOOLS_SSH_SIGNING_IDENTITY }}
+        run: |
+          set -Eeuo pipefail
+          printf '%s\n' "$LTOOLS_UPDATE_PUBLIC_KEY" > "$RUNNER_TEMP/ltools-release-public.hex"
+          printf '%s\n' "$LTOOLS_SSH_SIGNING_PUBLIC_KEY" > "$RUNNER_TEMP/ltools-release-signing-key.pub"
+          (cd release && sha256sum -c SHA256SUMS.txt)
+          bash tests/release-e2e.sh --release-dir release --require-windows \
+            --require-windows-executables --require-ssh-signature \
+            --signature-public-key-file "$RUNNER_TEMP/ltools-release-public.hex" \
+            --signature-verifier "$LTOOLS_BACKEND_PATH" \
+            --ssh-public-key-file "$RUNNER_TEMP/ltools-release-signing-key.pub" \
+            --ssh-identity "$LTOOLS_SSH_SIGNING_IDENTITY"
+
+      - name: Publicar assets en GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -Eeuo pipefail
+          mapfile -d '' assets < <(find release -maxdepth 1 -type f -print0 | sort -z)
+          ((${#assets[@]} >= 10)) || { echo 'La release combinada tiene pocos artefactos.' >&2; exit 1; }
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
+          fi
+          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" "${assets[@]}" --clobber
